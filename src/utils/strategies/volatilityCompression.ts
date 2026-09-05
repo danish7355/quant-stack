@@ -353,6 +353,19 @@ export function isFakeBreakout(nextCandle: Candle, direction: 'LONG' | 'SHORT', 
 export function scoreBreakout(m: BreakoutMetrics, settings: AppSettings): number {
   if (m.direction === null || m.isOverextended || m.isWickRejection) return 0;
   
+  // 1. Strict RVOL Hard Filter (Minimum 1.5x volume expansion required)
+  if (m.rvol < 1.5) {
+    return 0;
+  }
+
+  // 2. Anti-Wick Hard Filter (Must close in top 25% for Longs, bottom 25% for Shorts)
+  if (m.direction === 'LONG' && m.closeLocationValue < 0.75) {
+    return 0;
+  }
+  if (m.direction === 'SHORT' && m.closeLocationValue > 0.25) {
+    return 0;
+  }
+
   const rangeExpMin = settings.vcbRangeExpansionMin ?? 1.4;
   const volExpMin = settings.vcbVolumeExpansionMin ?? 1.3;
   const closeStrMin = settings.vcbCloseStrengthMin ?? 0.60;
@@ -367,15 +380,10 @@ export function scoreBreakout(m: BreakoutMetrics, settings: AppSettings): number
     score += 20;
   }
 
-  // Close Location Ratio Bonus: Close in top 25% for Longs (CLV >= 0.75) or bottom 25% for Shorts (CLV <= 0.25)
-  if ((m.direction === 'LONG' && m.closeLocationValue >= 0.75) || (m.direction === 'SHORT' && m.closeLocationValue <= 0.25)) {
-    score = Math.min(100, score + 15);
-  }
-
   // RVOL > 2.0x institutional surge bonus
   if (m.rvol >= 2.0) {
     score = Math.min(100, score + 15);
-  } else if (m.rvol >= 1.3) {
+  } else if (m.rvol >= 1.5) {
     score = Math.min(100, score + 8);
   }
   
@@ -528,21 +536,25 @@ export function determineStopLoss(
 }
 
 export function calculateInitialTp(entryPrice: number, direction: 'LONG' | 'SHORT', atr: number, settings: AppSettings): number {
+  const mult = settings.vcbInitialTpAtrMult ?? 2.0;
   return direction === 'LONG' 
-    ? entryPrice + settings.vcbInitialTpAtrMult * atr 
-    : Math.max(0.0001, entryPrice - settings.vcbInitialTpAtrMult * atr);
+    ? entryPrice + mult * atr 
+    : Math.max(0.0001, entryPrice - mult * atr);
 }
 
 export function updateChandelierStop(trade: { direction: 'LONG' | 'SHORT'; extremeSinceEntry: number; stopPrice: number }, atr: number, settings: AppSettings): number {
+  const mult = settings.vcbChandelierAtrMult ?? 1.5;
   const candidate = trade.direction === 'LONG'
-    ? trade.extremeSinceEntry - settings.vcbChandelierAtrMult * atr
-    : trade.extremeSinceEntry + settings.vcbChandelierAtrMult * atr;
+    ? trade.extremeSinceEntry - mult * atr
+    : trade.extremeSinceEntry + mult * atr;
   return trade.direction === 'LONG' ? Math.max(trade.stopPrice, candidate) : Math.min(trade.stopPrice, candidate);
 }
 
 export function checkStall(barsOpen: number, unrealizedMoveInAtr: number, initialTpHit: boolean, settings: AppSettings): boolean {
   // only relevant before the initial TP — once it's hit, the chandelier trail is already doing its job
-  return !initialTpHit && barsOpen >= settings.vcbStallCheckBar && unrealizedMoveInAtr < settings.vcbStallMinProgressAtr;
+  const checkBar = settings.vcbStallCheckBar ?? 3; // Aggressive time stop: Blast or Bail within 3 candles
+  const minProgress = settings.vcbStallMinProgressAtr ?? 0.5;
+  return !initialTpHit && barsOpen >= checkBar && unrealizedMoveInAtr < minProgress;
 }
 
 export interface ProductSpec {

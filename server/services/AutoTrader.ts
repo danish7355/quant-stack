@@ -265,6 +265,23 @@ export class AutoTrader {
         return; // Max concurrent trade limit reached
       }
 
+      // BTC Macro Filter Check
+      let btcMacroTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+      try {
+        const btcKlines = await this.getKlines("BTCUSDT", "1h");
+        if (btcKlines && btcKlines.length >= 50) {
+          const closes = btcKlines.map(k => k.close);
+          const currentBtcPrice = closes[closes.length - 1];
+          // simple inline SMA/EMA
+          let sum = 0;
+          for(let i = closes.length - 50; i < closes.length; i++) sum += closes[i];
+          const btcSma50 = sum / 50;
+          btcMacroTrend = currentBtcPrice >= btcSma50 ? 'BULLISH' : 'BEARISH';
+        }
+      } catch (e) {
+        // Soft fail, remain neutral
+      }
+
       // 1. Fetch top volume futures tickers
       const topSymbols = await this.getTopVolumeSymbols(this.settings.coinCount || 25);
       
@@ -306,6 +323,12 @@ export class AutoTrader {
         }
         
         if (signal && signal.score >= this.settings.autoTradeThreshold) {
+          
+          // BTC Macro Filter for Altcoin Longs
+          if (symbol !== 'BTCUSDT' && signal.direction === 'LONG' && btcMacroTrend === 'BEARISH') {
+            console.log(`[AutoTrader] Rejected LONG on ${symbol} because BTC is currently BEARISH (Macro filter)`);
+            continue;
+          }
 
           const currentTotal = positionMonitor.getActivePositions().length + this.pendingSymbols.size;
           if (currentTotal >= this.settings.maxConcurrentTrades) break;
