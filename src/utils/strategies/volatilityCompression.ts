@@ -425,17 +425,17 @@ export function validateHigherTimeframeTrend(
   const htfEma200 = ema200Series[ema200Series.length - 1] || htfEma50;
 
   if (direction === 'LONG') {
-    // Bullish HTF: Price must be above HTF EMA 50 or EMA 200
-    const isBullish = currentHtfPrice >= htfEma50 || currentHtfPrice >= htfEma200;
+    // Bullish HTF: Price MUST be above BOTH HTF EMA 50 AND EMA 200 for VCB (Very Strict)
+    const isBullish = currentHtfPrice >= htfEma50 && currentHtfPrice >= htfEma200;
     if (!isBullish) {
-      return { isAligned: false, reason: `1H Trend Bearish: Price ($${currentHtfPrice}) is below 1H EMA 50 ($${htfEma50.toFixed(2)}) & 200`, penalty: -35 };
+      return { isAligned: false, reason: `1H Trend Bearish/Mixed: Price ($${currentHtfPrice}) must be above BOTH 1H EMA 50 ($${htfEma50.toFixed(2)}) & 200`, penalty: -100 };
     }
     return { isAligned: true, reason: '1H Trend Bullish: Price above 1H EMAs', penalty: 0 };
   } else {
-    // Bearish HTF: Price must be below HTF EMA 50 or EMA 200
-    const isBearish = currentHtfPrice <= htfEma50 || currentHtfPrice <= htfEma200;
+    // Bearish HTF: Price MUST be below BOTH HTF EMA 50 AND EMA 200 for VCB (Very Strict)
+    const isBearish = currentHtfPrice <= htfEma50 && currentHtfPrice <= htfEma200;
     if (!isBearish) {
-      return { isAligned: false, reason: `1H Trend Bullish: Price ($${currentHtfPrice}) is above 1H EMA 50 ($${htfEma50.toFixed(2)}) & 200`, penalty: -35 };
+      return { isAligned: false, reason: `1H Trend Bullish/Mixed: Price ($${currentHtfPrice}) must be below BOTH 1H EMA 50 ($${htfEma50.toFixed(2)}) & 200`, penalty: -100 };
     }
     return { isAligned: true, reason: '1H Trend Bearish: Price below 1H EMAs', penalty: 0 };
   }

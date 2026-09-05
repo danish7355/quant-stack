@@ -607,7 +607,9 @@ export class AutoTrader {
     }
 
     // 4. Default: BINANCE_COMPOSITE Trend & Momentum Strategy
-    const compSig = this.evaluateCompositeStrategy(klines, currentPrice);
+    let htfCandlesForComp: any[] | undefined = undefined;
+    try { htfCandlesForComp = await this.getKlines(symbol, '1h'); } catch(e) {}
+    const compSig = this.evaluateCompositeStrategy(klines, currentPrice, htfCandlesForComp);
     if (!compSig) return null;
     return { ...compSig, strategy: 'BINANCE_COMPOSITE', marketRegime: 'Trending [10-Gate Momentum]' };
   }
@@ -734,7 +736,9 @@ export class AutoTrader {
     }
 
     // 4. REGIME: MOMENTUM EXPANSION (Composite 10-Gate Scanner)
-    const compositeSignal = this.evaluateCompositeStrategy(klines, currentPrice);
+    let htfCandlesForComp: any[] | undefined = undefined;
+    try { htfCandlesForComp = await this.getKlines(symbol, '1h'); } catch(e) {}
+    const compositeSignal = this.evaluateCompositeStrategy(klines, currentPrice, htfCandlesForComp);
     if (compositeSignal && compositeSignal.score >= this.settings.autoTradeThreshold) {
       return {
         ...compositeSignal,
@@ -763,7 +767,9 @@ export class AutoTrader {
       candidates.push({ signal: vs, strategy: 'VOLATILITY_COMPRESSION', regime: 'Consolidation Squeeze', priority: vs.score });
     }
 
-    const comp = this.evaluateCompositeStrategy(klines, currentPrice);
+    let htfCandlesForCompFallback: any[] | undefined = undefined;
+    try { htfCandlesForCompFallback = await this.getKlines(symbol, '1h'); } catch(e) {}
+    const comp = this.evaluateCompositeStrategy(klines, currentPrice, htfCandlesForCompFallback);
     if (comp && comp.score >= this.settings.autoTradeThreshold) {
       candidates.push({ signal: comp, strategy: 'BINANCE_COMPOSITE', regime: 'Trending [10-Gate Momentum]', priority: comp.score });
     }
@@ -786,7 +792,7 @@ export class AutoTrader {
   /**
    * Internal Composite 10-Gate evaluator
    */
-  private evaluateCompositeStrategy(klines: any[], currentPrice: number): {
+  private evaluateCompositeStrategy(klines: any[], currentPrice: number, htfCandles?: any[]): {
     direction: 'LONG' | 'SHORT';
     score: number;
     atr: number;
@@ -857,6 +863,14 @@ export class AutoTrader {
     }
 
     if (!direction || score < this.settings.autoTradeThreshold) return null;
+
+    if (htfCandles && htfCandles.length >= 50) {
+      const htfCheck = validateHigherTimeframeTrend(htfCandles, direction);
+      if (!htfCheck.isAligned && htfCheck.penalty < 0) {
+        // Enforce strict alignment: if it fails the strict test, do not trade composite
+        return null;
+      }
+    }
 
     const slDist = atr * 1.0; // Tight stop loss (1.0x ATR invalidation)
     const sl = direction === 'LONG' ? Math.max(0.0001, currentPrice - slDist) : currentPrice + slDist;

@@ -193,6 +193,7 @@ app.get("/api/health", (req, res) => {
       const q = query(collection(db, 'positions'), where('status', '==', 'OPEN'));
       const snapshot = await getDocs(q);
       const positions = snapshot.docs.map(doc => doc.data());
+      positions.sort((a, b) => new Date(b.time_open).getTime() - new Date(a.time_open).getTime());
       res.json(positions);
     } catch(e) {
       res.status(500).json({ error: String(e) });
