@@ -1,0 +1,6 @@
+{
+  "name": "Crypto Futures Trading Dashboard",
+  "description": "An algorithmic crypto futures paper-trading dashboard featuring multi-indicator scoring, real-time Binance WebSocket streaming, fake breakout filters, automated trade execution, risk management, and performance analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
