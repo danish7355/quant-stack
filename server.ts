@@ -659,7 +659,10 @@ async function startServer() {
   }
 
   const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`\n============================================================`);
+    console.log(`  🚀 QUANT PRO Dashboard: http://localhost:${PORT}`);
+    console.log(`  ⚡ Real-Time Trading Engine & WebSocket Active`);
+    console.log(`============================================================\n`);
   });
 
   // Graceful shutdown handler for cloud providers (like Render)
