@@ -47,6 +47,7 @@ export function isQuotaError(error: any): boolean {
     msg.includes('resource-exhausted') ||
     msg.includes('RESOURCE_EXHAUSTED') ||
     msg.includes('Quota limit exceeded') ||
+    msg.includes('Firestore timeout') ||
     error?.code === 'resource-exhausted'
   );
 }
@@ -60,7 +61,7 @@ export function markQuotaExhausted(cooldownMs: number = 30 * 60 * 1000) {
   if (!hasLoggedQuotaNotice) {
     hasLoggedQuotaNotice = true;
     console.warn(
-      `⚠️ [Firestore] Free daily write quota reached (RESOURCE_EXHAUSTED). Switching automatically to local offline-first storage (data/) for the next ${Math.round(cooldownMs / 60000)} minutes.`
+      `⚠️ [Firestore] Remote write quota reached or connection timed out. Switched to high-speed local disk storage (data/) for the next ${Math.round(cooldownMs / 60000)} minutes.`
     );
     // Reset notice log flag after cooldown
     setTimeout(() => {
