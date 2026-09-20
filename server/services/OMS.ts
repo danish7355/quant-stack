@@ -21,6 +21,7 @@ export class OMS {
     score: number,
     atr: number,
     customOpts?: {
+      balance?: number;
       qty?: number;
       leverage?: number;
       allocatedBalance?: number;
@@ -53,12 +54,14 @@ export class OMS {
     }
 
     if (this.processingOrder.has(symbol)) {
-      throw new Error(`Order for ${symbol} already processing. Preventing duplicate.`);
+      console.warn(`OMS: Order already processing for ${symbol}, skipping duplicate`);
+      return null;
     }
+
     this.processingOrder.add(symbol);
 
     try {
-      const balance = 10000;
+      const balance = customOpts?.balance || 10000;
       const riskPct = 2;
       const leverage = customOpts?.leverage || 1;
       

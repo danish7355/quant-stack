@@ -881,6 +881,7 @@ export class AutoTrader {
           }
 
           oms.placeOrder(symbol, signal.direction, currentPrice, signal.score, signal.atr, {
+            balance: dummyBalance,
             qty: quantity,
             leverage,
             allocatedBalance,
