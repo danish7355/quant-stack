@@ -553,45 +553,60 @@ async function startServer() {
   });
 
   app.post("/api/git/push", async (req, res) => {
-    const { token, repoUrl, commitMessage = "Auto-commit from Trading Bot Settings UI", force = false } = req.body;
+    let { token, repoUrl, commitMessage = "Auto-commit from Trading Bot Settings UI", force = false } = req.body;
+    
+    // Resolve real token from stored settings if frontend sent masked/redacted value
+    const storedSettings = autoTrader.getSettings();
+    if (!token || typeof token !== 'string' || !token.trim() || token.includes('*') || token.includes('•')) {
+      const diskSettings = readLocalJson<any>('settings.json', {});
+      token = storedSettings.githubPat || diskSettings.githubPat || '';
+    }
+
     if (!token || typeof token !== 'string' || !token.trim()) {
-      return res.status(400).json({ success: false, error: "GitHub token required. Please provide a Personal Access Token with repo scope." });
+      return res.status(400).json({ success: false, error: "GitHub token required. Please provide a Personal Access Token with repo scope in Settings." });
     }
 
     const cleanToken = token.trim();
 
+    if (!repoUrl || typeof repoUrl !== 'string' || !repoUrl.trim()) {
+      const diskSettings = readLocalJson<any>('settings.json', {});
+      repoUrl = storedSettings.githubRepoUrl || diskSettings.githubRepoUrl || 'https://github.com/danish7355/quant-stack.git';
+    }
+
+    const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+
     try {
       // 1. Ensure git global configuration is set universally
-      await execAsync('git config --global --add safe.directory "*"').catch(() => {});
-      await execAsync('git config --global user.name "AI Studio Bot"').catch(() => {});
-      await execAsync('git config --global user.email "bot@aistudio.local"').catch(() => {});
+      await execAsync('git config --global --add safe.directory "*"', { env: gitEnv }).catch(() => {});
+      await execAsync('git config --global user.name "AI Studio Bot"', { env: gitEnv }).catch(() => {});
+      await execAsync('git config --global user.email "bot@aistudio.local"', { env: gitEnv }).catch(() => {});
 
       // 2. Ensure repository is initialized
       try {
-        await execAsync('git rev-parse --is-inside-work-tree');
+        await execAsync('git rev-parse --is-inside-work-tree', { env: gitEnv });
       } catch {
-        await execAsync('git init -b main');
+        await execAsync('git init -b main', { env: gitEnv });
       }
 
-      await execAsync('git config user.name "AI Studio Bot"').catch(() => {});
-      await execAsync('git config user.email "bot@aistudio.local"').catch(() => {});
-      await execAsync('git branch -M main').catch(() => {});
+      await execAsync('git config user.name "AI Studio Bot"', { env: gitEnv }).catch(() => {});
+      await execAsync('git config user.email "bot@aistudio.local"', { env: gitEnv }).catch(() => {});
+      await execAsync('git branch -M main', { env: gitEnv }).catch(() => {});
 
       // 3. Stage all files
-      await execAsync('git add -A');
+      await execAsync('git add -A', { env: gitEnv });
 
       // 4. Commit changes if working tree is dirty, or ensure initial commit exists
-      const statusRes = await execAsync('git status --porcelain').catch(() => ({ stdout: '' }));
+      const statusRes = await execAsync('git status --porcelain', { env: gitEnv }).catch(() => ({ stdout: '' }));
       const hasChanges = statusRes.stdout && statusRes.stdout.trim().length > 0;
       
       if (hasChanges) {
-        // S4 fix: Sanitize commit message to prevent command injection
-        const safeMessage = commitMessage.replace(/[`$(){}|;&<>\\"]/g, '');
-        await execAsync(`git commit -m "${safeMessage}"`);
+        // Sanitize commit message to prevent command injection
+        const safeMessage = (commitMessage || 'Auto-commit from Trading Bot Settings UI').replace(/[`$(){}|;&<>\\"]/g, '');
+        await execAsync(`git commit -m "${safeMessage}"`, { env: gitEnv });
       } else {
-        const hasCommits = await execAsync('git rev-parse --verify HEAD').then(() => true).catch(() => false);
+        const hasCommits = await execAsync('git rev-parse --verify HEAD', { env: gitEnv }).then(() => true).catch(() => false);
         if (!hasCommits) {
-          await execAsync('git commit --allow-empty -m "Initial commit from Trading Bot"');
+          await execAsync('git commit --allow-empty -m "Initial commit from Trading Bot"', { env: gitEnv });
         }
       }
 
@@ -606,20 +621,20 @@ async function startServer() {
         cleanRepo = `${cleanRepo}.git`;
       }
 
-      const authRepoUrl = `https://${encodeURIComponent(cleanToken)}@${cleanRepo}`;
+      const authRepoUrl = `https://x-access-token:${encodeURIComponent(cleanToken)}@${cleanRepo}`;
 
       // 6. Set origin remote
       try {
-        await execAsync(`git remote add origin ${authRepoUrl}`);
+        await execAsync(`git remote add origin ${authRepoUrl}`, { env: gitEnv });
       } catch {
-        await execAsync(`git remote set-url origin ${authRepoUrl}`);
+        await execAsync(`git remote set-url origin ${authRepoUrl}`, { env: gitEnv });
       }
 
       // 7. Execute push with smart conflict resolution
       const pushCommand = force ? 'git push -u origin main --force' : 'git push -u origin main';
       
       try {
-        await execAsync(pushCommand);
+        await execAsync(pushCommand, { env: gitEnv });
       } catch (pushErr: any) {
         const errStr = pushErr.message || String(pushErr);
         if (errStr.includes('fetch first') || errStr.includes('non-fast-forward') || errStr.includes('Updates were rejected')) {
@@ -628,10 +643,10 @@ async function startServer() {
           }
           try {
             // Attempt to merge remote history with -X ours so local workspace code takes precedence without blocking conflicts
-            await execAsync('git pull origin main --allow-unrelated-histories -X ours --no-edit');
-            await execAsync('git push -u origin main');
+            await execAsync('git pull origin main --allow-unrelated-histories -X ours --no-edit', { env: gitEnv });
+            await execAsync('git push -u origin main', { env: gitEnv });
           } catch (mergeErr) {
-            await execAsync('git merge --abort').catch(() => {});
+            await execAsync('git merge --abort', { env: gitEnv }).catch(() => {});
             throw new Error('Remote repository has conflicting commits. Enable "Force Push" in Settings to overwrite the remote repository.');
           }
         } else if (errStr.includes('Authentication failed') || errStr.includes('Invalid username or personal access token')) {
