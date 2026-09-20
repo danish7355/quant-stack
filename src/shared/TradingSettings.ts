@@ -89,6 +89,11 @@ export interface TradingSettings {
   rmrRsiOverbought?: number;
   rmrRiskRewardRatio?: number;
   rmrStopBufferPct?: number;
+  rmrMaxAdx?: number;
+  rmrMaxAtrRatio?: number;
+  rmrMinScore?: number;
+  rmrOuterRangePct?: number;
+  rmrMinRrRatio?: number;
 
   forceClearCredentials?: boolean;
 
@@ -202,6 +207,11 @@ export const NUMERIC_BOUNDS: Record<string, { min: number; max: number; step?: n
   tpbMinScore: { min: 5, max: 10, step: 1, label: 'Trend Pullback Min Confirmation Score' },
   vcbChecklistMinScore: { min: 5, max: 11, step: 1, label: 'VCB Checklist Min Score' },
   vcbMinRrRatio: { min: 1.5, max: 5.0, step: 0.1, label: 'VCB Min Risk-to-Reward Ratio' },
+  rmrMaxAdx: { min: 10, max: 40, step: 1, label: 'Ranging MR Max ADX' },
+  rmrMaxAtrRatio: { min: 1.0, max: 2.0, step: 0.05, label: 'Ranging MR Max ATR Ratio' },
+  rmrMinScore: { min: 5, max: 11, step: 1, label: 'Ranging MR Min Score' },
+  rmrOuterRangePct: { min: 0.10, max: 0.35, step: 0.01, label: 'Ranging MR Outer Boundary Zone' },
+  rmrMinRrRatio: { min: 1.0, max: 5.0, step: 0.1, label: 'Ranging MR Min Risk/Reward Ratio' },
 };
 
 export interface ValidationResult {
@@ -448,5 +458,13 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   tpbMinRrRatio: 1.5,
   tpbMinScore: 8,
   tpbAtrBuffer: 0.3,
+
+  rmrMaxAdx: 22,
+  rmrMaxAtrRatio: 1.25,
+  rmrMinScore: 8,
+  rmrOuterRangePct: 0.20,
+  rmrRsiOversold: 35,
+  rmrRsiOverbought: 65,
+  rmrMinRrRatio: 1.5,
 };
 

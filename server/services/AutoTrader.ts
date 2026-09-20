@@ -1787,11 +1787,15 @@ export class AutoTrader {
     if (!klines || klines.length < 35) return null;
 
     const sig = evaluateRangeMeanReversion(klines, currentPrice, {
+      maxAdx: this.settings.rmrMaxAdx ?? 22,
+      maxAtrRatio: this.settings.rmrMaxAtrRatio ?? 1.25,
+      minScore: this.settings.rmrMinScore ?? 8,
+      outerRangePct: this.settings.rmrOuterRangePct ?? 0.20,
+      rsiOversold: this.settings.rmrRsiOversold ?? 35,
+      rsiOverbought: this.settings.rmrRsiOverbought ?? 65,
+      minRrRatio: this.settings.rmrMinRrRatio ?? 1.2,
       bbPeriod: (this.settings as any).bbPeriod || 20,
       bbStdDev: (this.settings as any).bbStdDev || 2.0,
-      rsiPeriod: this.settings.rsiPeriod || 14,
-      rsiOversold: (this.settings as any).rsiLongMin || 30,
-      rsiOverbought: (this.settings as any).rsiLongMax || 70,
       rangeSmaPct: (this.settings as any).rangeSmaPct || 0.05,
       maxSmaSlope: (this.settings as any).rangeMaxSmaSlope || 0.02,
       stopMult: (this.settings as any).rangeStopMult || 1.5,
