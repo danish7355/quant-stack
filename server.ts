@@ -663,6 +663,21 @@ async function startServer() {
     console.log(`  🚀 QUANT PRO Dashboard: http://localhost:${PORT}`);
     console.log(`  ⚡ Real-Time Trading Engine & WebSocket Active`);
     console.log(`============================================================\n`);
+
+    // Auto-open browser on local startup once server is accepting connections
+    if (process.env.AUTO_OPEN !== "false" && process.env.NODE_ENV !== "production") {
+      const url = `http://localhost:${PORT}`;
+      const openCmd = process.platform === "win32"
+        ? `start ${url}`
+        : process.platform === "darwin"
+        ? `open ${url}`
+        : `xdg-open ${url}`;
+      exec(openCmd, (err) => {
+        if (err && process.platform === "win32") {
+          exec(`powershell -NoProfile -Command "Start-Process '${url}'"`);
+        }
+      });
+    }
   });
 
   // Graceful shutdown handler for cloud providers (like Render)

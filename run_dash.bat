@@ -1,5 +1,4 @@
 @echo off
-setlocal enabledelayedexpansion
 title QUANT PRO Trading Dashboard
 cd /d "%~dp0"
 
@@ -11,54 +10,70 @@ echo  [URL]  http://localhost:3000
 echo ============================================================
 echo.
 
-:: 1. Verify Node.js installation
+REM 1. Check Node.js
 where node >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Node.js was not found in your system PATH!
-    echo Please download and install Node.js from https://nodejs.org/ (v20+ recommended).
-    echo.
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto NO_NODE
 
-:: 2. Verify npm installation
+REM 2. Check npm
 where npm >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] npm was not found in your system PATH!
-    echo.
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto NO_NPM
 
-:: 3. Check for dependencies
+REM 3. Check if server is already running on port 3000
+netstat -ano | findstr /R /C:":3000 .*LISTENING" >nul 2>&1
+if not errorlevel 1 goto ALREADY_RUNNING
+
+REM 4. Check dependencies
 if not exist "node_modules\" (
-    echo [INFO] First run detected: Installing dependencies (npm install)...
-    echo Please wait, this may take a couple of minutes...
-    echo.
+    echo [INFO] First-time setup: Installing dependencies...
     call npm install
-    if %errorlevel% neq 0 (
-        echo.
-        echo [ERROR] Dependency installation failed. Please check your network and retry.
-        echo.
-        pause
-        exit /b 1
-    )
-    echo [OK] Dependencies installed successfully!
-    echo.
+    if errorlevel 1 goto INSTALL_FAILED
 )
 
-:: 4. Auto-launch the Dashboard in the default browser once server initializes
-echo [INFO] Launching Trading Engine and Dashboard server...
-echo [INFO] Automatically opening http://localhost:3000 in your browser...
+REM 5. Launch Trading Engine and Dashboard
+echo [INFO] Starting Trading Engine and Dashboard...
+echo [INFO] Browser will automatically open at http://localhost:3000 once ready...
 echo.
-start /b cmd /c "ping -n 4 127.0.0.1 >nul & start http://localhost:3000"
 
-:: 5. Start development server
 call npm run dev
+if errorlevel 1 goto RUN_ERROR
+goto END
 
-if %errorlevel% neq 0 (
-    echo.
-    echo [NOTICE] Dashboard server terminated with exit code %errorlevel%.
-    echo.
-    pause
-)
+:ALREADY_RUNNING
+echo [INFO] Dashboard is ALREADY running on port 3000!
+echo [INFO] Landing to site: http://localhost:3000 ...
+echo.
+start http://localhost:3000
+timeout /t 3 >nul 2>&1
+exit /b 0
+
+:NO_NODE
+echo.
+echo [ERROR] Node.js was not found in your system PATH!
+echo Please download and install Node.js (v20+ recommended) from https://nodejs.org/
+echo.
+pause
+exit /b 1
+
+:NO_NPM
+echo.
+echo [ERROR] npm was not found in your system PATH!
+echo.
+pause
+exit /b 1
+
+:INSTALL_FAILED
+echo.
+echo [ERROR] Failed to install dependencies. Please verify network and try again.
+echo.
+pause
+exit /b 1
+
+:RUN_ERROR
+echo.
+echo [NOTICE] Dashboard server terminated with error code %errorlevel%.
+echo.
+pause
+exit /b %errorlevel%
+
+:END
+exit /b 0
