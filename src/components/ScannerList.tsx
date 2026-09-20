@@ -319,16 +319,11 @@ export default function ScannerList({
                   <ArrowUpDown className="w-3 h-3 ml-1" />
                 </div>
               </th>
-              <th className="py-3 px-4 font-bold text-center">EMA Setup</th>
-              <th className="py-3 px-4 font-bold text-center">SuperTrend</th>
-              <th className="py-3 px-4 font-bold cursor-pointer hover:text-white text-right" onClick={() => handleSort('volumeRatio')}>
-                <div className="flex items-center justify-end">
-                  <span>Vol Ratio</span>
-                  <ArrowUpDown className="w-3 h-3 ml-1" />
-                </div>
-              </th>
-              <th className="py-3 px-4 font-bold text-left">Gate Conditions</th>
-              <th className="py-3 px-4 font-bold text-center">Pattern</th>
+              <th className="py-3 px-4 font-bold text-center">Regime</th>
+              <th className="py-3 px-4 font-bold text-center">Liquidity</th>
+              <th className="py-3 px-4 font-bold text-right">Risk (SL)</th>
+              <th className="py-3 px-4 font-bold text-left">Decision</th>
+              <th className="py-3 px-4 font-bold text-center">Setup</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-800/50">
@@ -444,42 +439,35 @@ export default function ScannerList({
                       </span>
                     </td>
 
-                    {/* 9. EMA cross check */}
+                    {/* 9. Regime */}
                     <td className="py-2.5 px-4 text-center text-[10px] font-medium">
-                      {(coin.indicators?.emaFast || 0) > (coin.indicators?.emaSlow || 0) ? (
-                        <span className="text-emerald-400">FAST &gt; SLOW</span>
-                      ) : (
-                        <span className="text-rose-400">FAST &lt; SLOW</span>
-                      )}
+                      {coin.regime?.regime || 'UNKNOWN'}
                     </td>
 
-                    {/* 10. SuperTrend direction */}
+                    {/* 10. Spread/Liquidity */}
                     <td className="py-2.5 px-4 text-center text-[10px] font-bold">
-                      {coin.indicators?.superTrend?.direction === 'uptrend' ? (
-                        <span className="text-emerald-400 uppercase">UPTREND</span>
-                      ) : (
-                        <span className="text-rose-400 uppercase">DOWNTREND</span>
-                      )}
+                       {coin.gates?.g10 ? <span className="text-emerald-400">PASS</span> : <span className="text-rose-400">FAIL</span>}
                     </td>
 
-                    {/* 11. Volume ratio */}
+                    {/* 11. Risk / SL */}
                     <td className="py-2.5 px-4 text-right font-medium">
-                      <span className={isHighVol ? 'text-emerald-400 font-bold' : 'text-gray-400'}>
-                        {(coin.indicators?.volumeRatio || 1.0).toFixed(1)}x
+                      <span className="text-gray-400">
+                        {coin.sl ? `$${coin.sl.toFixed(2)}` : 'N/A'}
                       </span>
                     </td>
 
-                    {/* 12. Gate Conditions */}
+                    {/* 12. Decision / Gate Status */}
                     <td className="py-2.5 px-4 text-left max-w-xs truncate" title={coin.statusReason || 'Pending gate check'}>
                       {allPassed ? (
-                        <span className="inline-flex items-center space-x-1 text-emerald-400 font-bold text-[10px]">
-                          <CheckCircle2 className="w-3 h-3" />
-                          <span>{coin.statusReason === 'All gates passed' ? '10 Gates Passed' : 'Setup Confirmed'}</span>
+                        <span className="inline-flex items-center space-x-1 text-emerald-400 font-bold text-[10px] uppercase tracking-wider">
+                          <CheckCircle2 className="w-3 h-3 shrink-0" />
+                          <span>ARMED</span>
                         </span>
                       ) : (
-                        <span className="text-[10px] text-gray-500 truncate block">
-                          {coin.statusReason || 'Pending validation'}
-                        </span>
+                         <span className="inline-flex items-center space-x-1 text-rose-400 font-bold text-[10px] uppercase tracking-wider truncate">
+                           <XCircle className="w-3 h-3 shrink-0" />
+                           <span className="truncate">{coin.statusReason || 'BLOCKED'}</span>
+                         </span>
                       )}
                     </td>
 

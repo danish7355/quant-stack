@@ -2,8 +2,10 @@ import { db } from '../firebase.js';
 import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
 import { priceStream } from './PriceStream.js';
 import { oms } from './OMS.js';
+import { executionAdapter } from './ExecutionAdapter.js';
 import { telegramService } from './TelegramService.js';
 import { riskManager } from './RiskManager.js';
+import { isQuotaExhausted, safeUpdateDoc, readLocalJson, writeLocalJson } from './firestoreSafe.js';
 
 export interface MonitoredPosition {
   id: string;
@@ -26,6 +28,9 @@ export interface MonitoredPosition {
   strategy?: string;
   market_regime?: string;
   is_auto_regime?: boolean;
+  macroColor?: 'GREEN' | 'AMBER' | 'RED';
+  regimeConfidence?: number;
+  tradeQuality?: string;
   extremeSinceEntry?: number;
   initialTpHit?: boolean;
   tp2Hit?: boolean;
@@ -53,22 +58,56 @@ export class PositionMonitor {
       this.evaluatePositions(prices);
     });
 
-    // Refresh positions from Firestore every 4 seconds to catch new trades or manual adjustments
+    // Refresh positions from Firestore or local store every 25 seconds to sync state
     if (this.syncInterval) clearInterval(this.syncInterval);
     this.syncInterval = setInterval(() => {
       this.refreshOpenPositions();
-    }, 4000);
+    }, 25000);
+  }
+
+  public addPosition(pos: MonitoredPosition) {
+    const idx = this.activePositions.findIndex(p => p.id === pos.id);
+    if (idx >= 0) {
+      this.activePositions[idx] = pos;
+    } else {
+      this.activePositions.push(pos);
+    }
+    writeLocalJson('positions.json', this.activePositions);
+    const totalAllocated = this.activePositions.reduce((sum, p) => sum + (p.allocated_balance || 0), 0);
+    riskManager.updateCurrentExposure(totalAllocated);
+  }
+
+  public removePosition(posId: string) {
+    this.activePositions = this.activePositions.filter(p => p.id !== posId);
+    this.closingSet.delete(posId);
+    writeLocalJson('positions.json', this.activePositions);
+    const totalAllocated = this.activePositions.reduce((sum, p) => sum + (p.allocated_balance || 0), 0);
+    riskManager.updateCurrentExposure(totalAllocated);
   }
 
   public async refreshOpenPositions() {
     try {
+      if (isQuotaExhausted()) {
+        const local = readLocalJson<MonitoredPosition[]>('positions.json', []);
+        if (local && local.length > 0) {
+          this.activePositions = local.filter(p => p.status === 'OPEN');
+          const totalAllocated = this.activePositions.reduce((sum, p) => sum + (p.allocated_balance || 0), 0);
+          riskManager.updateCurrentExposure(totalAllocated);
+        }
+        return;
+      }
       const q = query(collection(db, 'positions'), where('status', '==', 'OPEN'));
       const snapshot = await getDocs(q);
       this.activePositions = snapshot.docs.map(doc => doc.data() as MonitoredPosition);
+      writeLocalJson('positions.json', this.activePositions);
       const totalAllocated = this.activePositions.reduce((sum, p) => sum + (p.allocated_balance || 0), 0);
       riskManager.updateCurrentExposure(totalAllocated);
     } catch (e) {
-      console.warn('PositionMonitor: Error refreshing positions from Firestore:', e);
+      const local = readLocalJson<MonitoredPosition[]>('positions.json', []);
+      if (local && local.length > 0) {
+        this.activePositions = local.filter(p => p.status === 'OPEN');
+      }
+      console.warn('PositionMonitor: Could not refresh from Firestore, maintained local/in-memory positions.');
     }
   }
 
@@ -89,32 +128,46 @@ export class PositionMonitor {
         const minutesOpen = (Date.now() - timeOpenMs) / (60 * 1000);
         const barsOpen = Math.floor(minutesOpen / 15);
 
+        
+        // Track MFE (Maximum Favorable Excursion) and MAE (Maximum Adverse Excursion) in R-multiples
+        const initialRisk = Math.abs(pos.entry_price - (pos.sl || (pos.entry_price * 0.015)));
+        if (initialRisk > 0) {
+          const currentR = isLong ? (currentPrice - pos.entry_price) / initialRisk : (pos.entry_price - currentPrice) / initialRisk;
+          if ((pos as any).mfe === undefined || currentR > (pos as any).mfe) {
+            (pos as any).mfe = parseFloat(currentR.toFixed(2));
+          }
+          if ((pos as any).mae === undefined || (-currentR) > (pos as any).mae) {
+            (pos as any).mae = parseFloat((-currentR).toFixed(2));
+          }
+        }
+
         let exitReason: string | null = null;
 
+        const spreadBuffer = currentPrice * 0.0015; // 0.15% buffer
+        const effectiveSl = isLong ? pos.sl - spreadBuffer : pos.sl + spreadBuffer;
+        const effectiveTp1 = isLong ? pos.tp1 + spreadBuffer : pos.tp1 - spreadBuffer;
+        const effectiveTp2 = isLong ? pos.tp2 + spreadBuffer : pos.tp2 - spreadBuffer;
+        const effectiveTp3 = pos.tp3 ? (isLong ? pos.tp3 + spreadBuffer : pos.tp3 - spreadBuffer) : null;
+
         // VCB specific trend-following & validation logic
-        if (pos.strategy === 'EARLY_COIL_BREAKOUT') {
-          const maxSetupAge = 6; 
-          const entryAtr = pos.entryAtr || (pos.entry_price * 0.02);
-          const unrealizedMove = isLong ? (currentPrice - pos.entry_price) : (pos.entry_price - currentPrice);
-          const unrealizedR = unrealizedMove / Math.abs(pos.entry_price - pos.sl);
+        // Universal 1:3 & Time-Based Trade Management (Applied to ALL Strategies)
+        
+        // 1. Time-Based Stall Check: Give positions room to breathe (at least 16-20 bars / 4-5 hours)
+        if (!exitReason) {
+          const stallCheckBar = Math.max(16, this.settings?.vcbStallCheckBar ?? 16);
+          const tp1Hit = pos.initialTpHit || (isLong ? currentPrice >= effectiveTp1 : currentPrice <= effectiveTp1);
           
-          if (barsOpen > maxSetupAge && unrealizedR < 0.3) {
-            exitReason = 'STALL_TIMEOUT';
-          }
-          
-          if (!exitReason) {
-            const stopHit = isLong ? currentPrice <= pos.sl : currentPrice >= pos.sl;
-            if (stopHit) exitReason = 'SL';
-            const tp1Hit = isLong ? currentPrice >= pos.tp1 : currentPrice <= pos.tp1;
-            const tp2Hit = pos.tp2 && (isLong ? currentPrice >= pos.tp2 : currentPrice <= pos.tp2);
-            if (tp2Hit) exitReason = 'TP2';
-            else if (tp1Hit && !pos.initialTpHit) {
-              pos.initialTpHit = true;
-              oms.partialClosePosition(pos.id, currentPrice, 0.35, 'INITIAL_TP_35PCT');
-              pos.sl = pos.entry_price;
+          if (barsOpen >= stallCheckBar && !tp1Hit) {
+            const inProfit = isLong ? currentPrice > pos.entry_price : currentPrice < pos.entry_price;
+            const entryAtr = pos.entryAtr || (Math.abs(pos.tp1 - pos.entry_price) / 1.5) || (pos.entry_price * 0.015);
+            const moveInAtr = Math.abs(currentPrice - pos.entry_price) / entryAtr;
+            if (!inProfit && moveInAtr < 0.25) {
+              exitReason = 'STALL_TIMEOUT';
+              console.log(`⏱️ [PositionMonitor] Stall timeout triggered on ${pos.symbol} after ${barsOpen} bars (move: ${moveInAtr.toFixed(2)} ATR)`);
             }
           }
-        } else 
+        }
+        
         if (pos.strategy === 'VOLATILITY_COMPRESSION') {
           // Initialize extremeSinceEntry if missing
           if (pos.extremeSinceEntry === undefined) pos.extremeSinceEntry = pos.entry_price;
@@ -133,7 +186,7 @@ export class PositionMonitor {
 
           // Check TP3 (Macro Home Run Target - full exit)
           if (pos.tp3 && !exitReason) {
-            const tp3Reached = isLong ? currentPrice >= pos.tp3 : currentPrice <= pos.tp3;
+            const tp3Reached = effectiveTp3 ? (isLong ? currentPrice >= effectiveTp3 : currentPrice <= effectiveTp3) : false;
             if (tp3Reached) {
               exitReason = 'TP3';
               console.log(`🚀 [PositionMonitor] VCB Home Run TP3 reached for ${pos.symbol}! Locking in full macro move.`);
@@ -142,12 +195,12 @@ export class PositionMonitor {
 
           // Check TP2 (Core Structural Target - 35% scale-out)
           if (!pos.tp2Hit && !exitReason && pos.tp2) {
-            const tp2Reached = isLong ? currentPrice >= pos.tp2 : currentPrice <= pos.tp2;
+            const tp2Reached = isLong ? currentPrice >= effectiveTp2 : currentPrice <= effectiveTp2;
             if (tp2Reached) {
               pos.tp2Hit = true;
               console.log(`🎯 [PositionMonitor] VCB TP2 reached for ${pos.symbol}. Securing 35% profit and locking in TP1 as floor stop.`);
               // Lock stop to TP1 level
-              pos.sl = pos.tp1;
+              pos.sl = isLong ? Math.max(pos.sl || 0, pos.tp1) : Math.min(pos.sl || 999999, pos.tp1);
               oms.partialClosePosition(pos.id, currentPrice, 0.35, 'TP2_35PCT')
                 .then(() => this.refreshOpenPositions())
                 .catch(err => console.error('PositionMonitor: Error in TP2 partialClosePosition:', err));
@@ -163,7 +216,7 @@ export class PositionMonitor {
               console.log(`🎯 [PositionMonitor] VCB Initial TP1 reached for ${pos.symbol}. Securing ${(closePct * 100).toFixed(0)}% profit.`);
               
               // Move stop to true breakeven (entry price) to let the trade breathe
-              pos.sl = pos.entry_price;
+              pos.sl = isLong ? Math.max(pos.sl || 0, pos.entry_price) : Math.min(pos.sl || 999999, pos.entry_price);
 
               // Execute 25% partial market close via OMS
               oms.partialClosePosition(pos.id, currentPrice, closePct, 'INITIAL_TP_25PCT')
@@ -195,7 +248,7 @@ export class PositionMonitor {
 
           // Check if Stop Loss or Chandelier Stop is hit
           if (!exitReason) {
-            const stopHit = isLong ? currentPrice <= pos.sl : currentPrice >= pos.sl;
+            const stopHit = isLong ? currentPrice <= effectiveSl : currentPrice >= effectiveSl;
             if (stopHit) {
               exitReason = pos.initialTpHit ? 'CHANDELIER_SL' : 'SL';
             }
@@ -205,50 +258,70 @@ export class PositionMonitor {
           // Initialize extremeSinceEntry if missing
           if (pos.extremeSinceEntry === undefined) pos.extremeSinceEntry = pos.entry_price;
           
+          const isLong = pos.direction === 'LONG';
+          const updateExtreme = () => {
+             if (isLong && currentPrice > pos.extremeSinceEntry) pos.extremeSinceEntry = currentPrice;
+             if (!isLong && currentPrice < pos.extremeSinceEntry) pos.extremeSinceEntry = currentPrice;
+          };
+          updateExtreme();
+
+          // Check Aggressive Partials at 1:3 (TP2)
+          const tp2Reached = pos.tp2 && (isLong ? currentPrice >= effectiveTp2 : currentPrice <= effectiveTp2);
+          if (tp2Reached && !pos.tp2Hit && !exitReason) {
+             pos.tp2Hit = true;
+             pos.sl = isLong ? Math.max(pos.sl || 0, pos.entry_price) : Math.min(pos.sl || 999999, pos.entry_price); // move SL to breakeven (if not already better)
+             console.log(`🎯 [PositionMonitor] Aggressive 1:3 TP2 hit on ${pos.symbol}. Securing 60%.`);
+             // Persist tp2Hit + breakeven SL to Firestore immediately to prevent re-trigger after refresh
+             safeUpdateDoc(doc(db, 'positions', pos.id), { tp2Hit: true, sl: pos.sl }).catch(() => {});
+             oms.partialClosePosition(pos.id, currentPrice, 0.60, 'TP2_1_3_PARTIAL')
+               .then(() => this.refreshOpenPositions())
+               .catch(err => console.log('Partial error:', err));
+          }
+
           if (isLong) {
-            if (currentPrice > pos.extremeSinceEntry) {
-              pos.extremeSinceEntry = currentPrice;
-            }
-            if (pos.tp1 && currentPrice >= pos.tp1) {
+            if (pos.tp1 && currentPrice >= effectiveTp1) {
               const entryAtr = pos.entryAtr || (Math.abs(pos.tp1 - pos.entry_price) / 1.5) || (pos.entry_price * 0.015);
-              const chandelierMult = 2.5; // Custom ATR Multiplier
+              const chandelierMult = pos.macroColor === 'GREEN' ? 3.0 : 2.0; // Dynamic trailing based on macro
               const candidate = pos.extremeSinceEntry - chandelierMult * entryAtr;
               const newSl = Math.max(pos.entry_price, candidate, pos.sl || 0);
               
               if (newSl > (pos.sl || 0)) {
                 pos.sl = newSl;
                 pos.trailing_stop_active = 1;
-                updateDoc(doc(db, 'positions', pos.id), { sl: newSl, trailing_stop_active: 1, extremeSinceEntry: pos.extremeSinceEntry }).catch(() => {});
+                safeUpdateDoc(doc(db, 'positions', pos.id), { sl: newSl, trailing_stop_active: 1, extremeSinceEntry: pos.extremeSinceEntry }).catch(() => {});
+                writeLocalJson('positions.json', this.activePositions);
+                // C4 fix: Update exchange stop-loss to match trailed stop
+                executionAdapter.replaceStopOrder(pos.symbol, 'sell', pos.quantity, newSl)
+                  .catch(err => console.warn(`[PositionMonitor] Failed to update exchange SL for ${pos.symbol}:`, err));
               }
             }
 
-            // Check TP3 Target Hit
-            if (pos.tp3 && currentPrice >= pos.tp3) {
+            if (pos.tp3 && currentPrice >= effectiveTp3) {
               exitReason = 'TP3';
-            } else if (pos.sl && currentPrice <= pos.sl) {
+            } else if (pos.sl && currentPrice <= effectiveSl) {
               exitReason = pos.trailing_stop_active === 1 ? 'TRAIL_BE' : 'SL';
             }
           } else {
-            if (currentPrice < pos.extremeSinceEntry) {
-              pos.extremeSinceEntry = currentPrice;
-            }
-            if (pos.tp1 && currentPrice <= pos.tp1) {
+            if (pos.tp1 && currentPrice <= effectiveTp1) {
               const entryAtr = pos.entryAtr || (Math.abs(pos.tp1 - pos.entry_price) / 1.5) || (pos.entry_price * 0.015);
-              const chandelierMult = 2.5; // Custom ATR Multiplier
+              const chandelierMult = pos.macroColor === 'GREEN' ? 3.0 : 2.0; // Dynamic trailing based on macro
               const candidate = pos.extremeSinceEntry + chandelierMult * entryAtr;
               const newSl = Math.min(pos.entry_price, candidate, pos.sl || 999999);
               
               if (newSl < (pos.sl || 999999)) {
                 pos.sl = newSl;
                 pos.trailing_stop_active = 1;
-                updateDoc(doc(db, 'positions', pos.id), { sl: newSl, trailing_stop_active: 1, extremeSinceEntry: pos.extremeSinceEntry }).catch(() => {});
+                safeUpdateDoc(doc(db, 'positions', pos.id), { sl: newSl, trailing_stop_active: 1, extremeSinceEntry: pos.extremeSinceEntry }).catch(() => {});
+                writeLocalJson('positions.json', this.activePositions);
+                // C4 fix: Update exchange stop-loss to match trailed stop
+                executionAdapter.replaceStopOrder(pos.symbol, 'buy', pos.quantity, newSl)
+                  .catch(err => console.warn(`[PositionMonitor] Failed to update exchange SL for ${pos.symbol}:`, err));
               }
             }
 
-            // Check TP3 Target Hit
-            if (pos.tp3 && currentPrice <= pos.tp3) {
+            if (pos.tp3 && currentPrice <= effectiveTp3) {
               exitReason = 'TP3';
-            } else if (pos.sl && currentPrice >= pos.sl) {
+            } else if (pos.sl && currentPrice >= effectiveSl) {
               exitReason = pos.trailing_stop_active === 1 ? 'TRAIL_BE' : 'SL';
             }
           }
@@ -256,10 +329,18 @@ export class PositionMonitor {
 
         if (exitReason) {
           this.closingSet.add(pos.id);
-          console.log(`⚡ [24/7 PositionMonitor] Triggering AUTO CLOSE for ${pos.symbol} (${pos.direction}) at $${currentPrice} [Reason: ${exitReason}]`);
+          console.log(`⚡ [24/7 PositionMonitor] AUTO CLOSE triggered:
+  - Symbol: ${pos.symbol} (${pos.direction})
+  - Exit Reason: ${exitReason}
+  - Exec Price (Last Tick): ${currentPrice}
+  - Entry Price: ${pos.entry_price}
+  - Spread Buffer Applied: ${(spreadBuffer).toFixed(5)}
+  - Effective SL Evaluated: ${effectiveSl}
+  - True SL in DB: ${pos.sl}
+  - Condition: ${isLong ? (exitReason === 'SL' || exitReason === 'TRAIL_BE' ? `${currentPrice} <= ${effectiveSl}` : `${currentPrice} >= ${effectiveTp1 || effectiveTp3}`) : (exitReason === 'SL' || exitReason === 'TRAIL_BE' ? `${currentPrice} >= ${effectiveSl}` : `${currentPrice} <= ${effectiveTp1 || effectiveTp3}`)}`);
           
-          // Execute closing via OMS
-          oms.closePosition(pos.id, currentPrice, exitReason)
+          // Execute closing via OMS with recorded MFE/MAE
+          oms.closePosition(pos.id, currentPrice, exitReason, { mfe: (pos as any).mfe, mae: (pos as any).mae })
             .then(async (pnl) => {
               if (pnl !== null) {
                 const pct = (pnl / pos.allocated_balance) * 100;

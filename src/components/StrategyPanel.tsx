@@ -1,25 +1,98 @@
 import React, { useState } from 'react';
-import { AppSettings, StrategyBucketItem, TradableRegimeType } from '../types';
+import { AppSettings, StrategyBucketItem, MarketRegimeType } from '../types';
 import { GATES_REGISTRY, GateImportance } from '../utils/gatesRegistry';
 import { DEFAULT_STRATEGY_BUCKET } from '../utils/strategyBucket';
-import { ShieldAlert, ShieldCheck, Zap, AlertTriangle, Flame, Info, Check, Cpu, Sparkles, RotateCcw, Layers, ArrowUpRight, Filter } from 'lucide-react';
+import { VcbChecklistPanel } from './VcbChecklistPanel';
+import { ShieldAlert, ShieldCheck, Zap, AlertTriangle, Flame, Info, Check, Cpu, Sparkles, RotateCcw, Layers, ArrowUpRight, Filter, Activity, Target, Compass } from 'lucide-react';
 
 interface StrategyPanelProps {
   settings: AppSettings;
   setSettings: (s: AppSettings) => void;
+  globalFilterState?: { isPausing: boolean; reason: string | null };
 }
 
-const ALL_REGIMES: { key: TradableRegimeType; label: string; desc: string; color: string; badgeBg: string }[] = [
-  { key: 'trending', label: 'Trending', desc: 'Directional EMA stack & ADX > 20', color: 'text-blue-400', badgeBg: 'bg-blue-500/10 border-blue-500/30 text-blue-300' },
-  { key: 'ranging', label: 'Ranging', desc: 'Mean reversion, oscillating near 200 SMA', color: 'text-emerald-400', badgeBg: 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' },
-  { key: 'exhaustion', label: 'Exhaustion', desc: 'Climax capitulation > 1.8x ATR, delta divergence', color: 'text-amber-400', badgeBg: 'bg-amber-500/10 border-amber-500/30 text-amber-300' },
-  { key: 'breakout', label: 'Breakout', desc: 'Volatility compression & Darvas box release', color: 'text-purple-400', badgeBg: 'bg-purple-500/10 border-purple-500/30 text-purple-300' }
+export const AVAILABLE_STRATEGIES: {
+  id: 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'DELTA_CLIMAX' | 'SMC_LIQUIDITY_SWEEP' | 'BINANCE_COMPOSITE' | 'EARLY_COIL_BREAKOUT' | 'MACRO_RANGE_BREAKOUT';
+  name: string;
+  shortName: string;
+  type: string;
+  badgeBg: string;
+  description: string;
+  icon: any;
+}[] = [
+  {
+    id: 'VOLATILITY_COMPRESSION',
+    name: 'Volatility Compression Breakout (VCB)',
+    shortName: 'VCB Breakout',
+    type: 'Breakout / Squeeze',
+    badgeBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+    description: 'Identifies tight Bollinger Band squeeze & range compression, enforcing the 7-gate checklist on explosive volume breakouts.',
+    icon: ShieldCheck,
+  },
+  {
+    id: 'TREND_PULLBACK',
+    name: 'Trend Pullback (HTF + MTF Retest)',
+    shortName: 'Trend Pullback',
+    type: 'Trend Following',
+    badgeBg: 'bg-blue-500/20 text-blue-300 border-blue-500/40',
+    description: 'Higher-timeframe trend alignment with 5-point confirmation on EMA20/50 pullbacks, ADX momentum, and closed-candle structure.',
+    icon: Target,
+  },
+  {
+    id: 'DELTA_CLIMAX',
+    name: 'Delta Climax Exhaustion Reversal',
+    shortName: 'Delta Climax',
+    type: 'Exhaustion Reversal',
+    badgeBg: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+    description: 'Detects extreme capitulation volume, overextended ATR beyond baseline, and multi-bar candle reversal triggers.',
+    icon: Zap,
+  },
+  {
+    id: 'SMC_LIQUIDITY_SWEEP',
+    name: 'Smart Money Liquidity Sweep (SMC)',
+    shortName: 'SMC Liquidity',
+    type: 'Liquidity & FVG',
+    badgeBg: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
+    description: 'Exploits stop hunts beyond prior swing highs/lows with Fair Value Gap (FVG) retest entries and asymmetric 1:3+ targets.',
+    icon: Sparkles,
+  },
+  {
+    id: 'BINANCE_COMPOSITE',
+    name: 'Ranging 1:3 R:R Mean-Reversion',
+    shortName: 'Ranging 1:3 R:R',
+    type: 'Mean-Reversion',
+    badgeBg: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
+    description: 'Mean-reversion at Bollinger Band extremes and RSI overbought/oversold levels within ±5% of 200-SMA in sideways markets.',
+    icon: Activity,
+  },
+  {
+    id: 'EARLY_COIL_BREAKOUT',
+    name: 'Early Coil Breakout (Fractal)',
+    shortName: 'Early Coil',
+    type: 'Fractal Squeeze',
+    badgeBg: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40',
+    description: 'Fractal coil compression that triggers early at the boundary of narrowing consolidation triangles.',
+    icon: Flame,
+  },
+  {
+    id: 'MACRO_RANGE_BREAKOUT',
+    name: 'Macro Range Box Breakout',
+    shortName: 'Macro Range',
+    type: 'Accumulation Breakout',
+    badgeBg: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
+    description: 'Darvas box accumulation breakout targeting long-term trending expansions above multi-week range highs.',
+    icon: Compass,
+  },
 ];
 
-const StrategyPanel: React.FC<StrategyPanelProps> = ({ settings, setSettings }) => {
+const StrategyPanel: React.FC<StrategyPanelProps> = ({ settings, setSettings, globalFilterState }) => {
   const [expandedGateId, setExpandedGateId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'bucket' | 'parameters' | 'gates'>('bucket');
+  const [activeTab, setActiveTab] = useState<'checklist' | 'parameters' | 'gates' | 'bucket'>('checklist');
+
+  const enabledStrategies: string[] = (settings.enabledStrategies && settings.enabledStrategies.length > 0)
+    ? settings.enabledStrategies
+    : [settings.activeStrategy || 'VOLATILITY_COMPRESSION'];
 
   const bucket: StrategyBucketItem[] = (settings.strategyBucket && settings.strategyBucket.length > 0)
     ? settings.strategyBucket
@@ -43,24 +116,70 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({ settings, setSettings }) 
     }).catch(console.error);
   };
 
+  const handleToggleStrategy = (stratId: any) => {
+    let nextEnabled: any[];
+    if (enabledStrategies.includes(stratId)) {
+      nextEnabled = enabledStrategies.filter(s => s !== stratId);
+    } else {
+      nextEnabled = [...enabledStrategies, stratId];
+    }
+    const nextSettings = {
+      ...settings,
+      enabledStrategies: nextEnabled,
+      activeStrategy: (nextEnabled[0] || 'VOLATILITY_COMPRESSION') as any,
+    };
+    setSettings(nextSettings);
+    fetch('/api/bot/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(nextSettings)
+    }).catch(console.error);
+    setSaveStatus(`Active strategies updated (${nextEnabled.length} active)`);
+    setTimeout(() => setSaveStatus(null), 2500);
+  };
+
+  const handleSetPresets = (preset: 'ALL' | 'VCB' | 'TREND' | 'REVERSAL' | 'CLEAR') => {
+    let nextEnabled: any[] = [];
+    if (preset === 'ALL') {
+      nextEnabled = [
+        'VOLATILITY_COMPRESSION',
+        'TREND_PULLBACK',
+        'DELTA_CLIMAX',
+        'SMC_LIQUIDITY_SWEEP',
+        'BINANCE_COMPOSITE',
+        'EARLY_COIL_BREAKOUT',
+        'MACRO_RANGE_BREAKOUT'
+      ];
+    } else if (preset === 'VCB') {
+      nextEnabled = ['VOLATILITY_COMPRESSION'];
+    } else if (preset === 'TREND') {
+      nextEnabled = ['VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'EARLY_COIL_BREAKOUT'];
+    } else if (preset === 'REVERSAL') {
+      nextEnabled = ['DELTA_CLIMAX', 'BINANCE_COMPOSITE', 'SMC_LIQUIDITY_SWEEP'];
+    } else if (preset === 'CLEAR') {
+      nextEnabled = [];
+    }
+    const nextSettings = {
+      ...settings,
+      enabledStrategies: nextEnabled,
+      activeStrategy: (nextEnabled[0] || 'VOLATILITY_COMPRESSION') as any,
+    };
+    setSettings(nextSettings);
+    fetch('/api/bot/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(nextSettings)
+    }).catch(console.error);
+    setSaveStatus(`Applied preset (${nextEnabled.length} active)`);
+    setTimeout(() => setSaveStatus(null), 2500);
+  };
+
   const handleUpdateBucket = (newBucket: StrategyBucketItem[]) => {
     handleInputChange('strategyBucket', newBucket);
   };
 
   const handleToggleBucketStrategy = (id: string) => {
     const updated = bucket.map(item => item.id === id ? { ...item, enabled: !item.enabled } : item);
-    handleUpdateBucket(updated);
-  };
-
-  const handleToggleRegimeForStrategy = (id: string, regime: TradableRegimeType) => {
-    const updated = bucket.map(item => {
-      if (item.id !== id) return item;
-      const exists = item.regimes.includes(regime);
-      const newRegimes = exists 
-        ? item.regimes.filter(r => r !== regime)
-        : [...item.regimes, regime];
-      return { ...item, regimes: newRegimes };
-    });
     handleUpdateBucket(updated);
   };
 
@@ -95,7 +214,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({ settings, setSettings }) 
   };
 
   const strategyGates = GATES_REGISTRY.filter(
-    (g) => settings.activeStrategy === 'AUTO_REGIME' || g.strategy === settings.activeStrategy || g.strategy === 'RISK_ENGINE'
+    (g) => enabledStrategies.includes(g.strategy as any) || g.strategy === 'RISK_ENGINE'
   );
 
   const getImportanceBadge = (importance: GateImportance, score: number) => {
@@ -148,18 +267,48 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({ settings, setSettings }) 
     <div className="h-full overflow-y-auto custom-scrollbar p-6 space-y-8 pb-32 font-mono text-xs">
       <div className="max-w-4xl mx-auto space-y-8">
         
+        {/* Global Market & BTC Safety Filter Warning Banner */}
+        {settings.useGlobalBtcFilter !== false && globalFilterState?.isPausing && (
+          <div className="rounded-xl p-4 border bg-amber-950/40 border-amber-500/50 shadow-xl flex items-start gap-3.5">
+            <div className="p-2.5 rounded-lg shrink-0 bg-amber-500/20 text-amber-400 border border-amber-500/30">
+              <AlertTriangle className="w-6 h-6 text-amber-400 animate-pulse" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm font-bold text-amber-300">
+                  Global Market & BTC Safety Filter Active
+                </h3>
+                <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold tracking-wider uppercase">
+                  Macro Risk Management Active
+                </span>
+              </div>
+              <p className="text-xs text-amber-200/90 mt-1 leading-relaxed">
+                Macro risk management to pause trading during extreme market distress. This pauses new trade entries across all coins.
+              </p>
+              {globalFilterState.reason && (
+                <p className="text-[11px] font-mono text-amber-300/80 mt-1.5 bg-black/30 px-2.5 py-1 rounded border border-amber-500/20">
+                  {globalFilterState.reason}
+                </p>
+              )}
+              <p className="text-[10.5px] text-gray-400 mt-1">
+                Existing open positions remain actively monitored by the risk engine with trailing stops and take-profits.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Navigation Tabs */}
         <div className="flex items-center justify-between border-b border-[#30363D] pb-3">
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setActiveTab('bucket')}
+              onClick={() => setActiveTab('checklist')}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-                activeTab === 'bucket' 
-                  ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/30' 
+                activeTab === 'checklist' 
+                  ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/30' 
                   : 'bg-[#161B22] text-gray-400 hover:text-white border border-[#30363D]'
               }`}
             >
-              <Layers className="w-3.5 h-3.5" /> Strategy Bucket & Regimes
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> VCB Strategy Checklist
             </button>
             <button
               onClick={() => setActiveTab('parameters')}
@@ -169,7 +318,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({ settings, setSettings }) 
                   : 'bg-[#161B22] text-gray-400 hover:text-white border border-[#30363D]'
               }`}
             >
-              <Sparkles className="w-3.5 h-3.5" /> Indicator Parameters
+              <Sparkles className="w-3.5 h-3.5" /> Strategy Parameters
             </button>
             <button
               onClick={() => setActiveTab('gates')}
@@ -181,6 +330,16 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({ settings, setSettings }) 
             >
               <ShieldCheck className="w-3.5 h-3.5" /> Gate Management ({strategyGates.length})
             </button>
+            <button
+              onClick={() => setActiveTab('bucket')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                activeTab === 'bucket' 
+                  ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/30' 
+                  : 'bg-[#161B22] text-gray-400 hover:text-white border border-[#30363D]'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" /> Strategy Registry
+            </button>
           </div>
           {saveStatus && (
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#00e696]/20 border border-[#00e696]/40 text-[#00e696] text-xs font-semibold animate-pulse">
@@ -189,118 +348,180 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({ settings, setSettings }) 
           )}
         </div>
 
-        {/* TAB 1: STRATEGY BUCKET & REGIME FILTER */}
+        {/* TAB 0: VCB STRATEGY CHECKLIST (PRIMARY GATE) */}
+        {activeTab === 'checklist' && (
+          <VcbChecklistPanel settings={settings} onUpdateSetting={handleInputChange} />
+        )}
+
+        {/* TAB 1: STRATEGY REGISTRY & ACTIVATION */}
         {activeTab === 'bucket' && (
           <div className="space-y-6">
             
-            {/* Auto-Regime Banner / Selector */}
-            <div className={`rounded-xl p-5 border transition-all ${
-              settings.activeStrategy === 'AUTO_REGIME'
-                ? 'bg-purple-950/30 border-purple-500/60 shadow-xl shadow-purple-950/20'
-                : 'bg-[#161B22] border-[#30363D]'
-            }`}>
+            {/* Active Multi-Strategy Overview Banner */}
+            <div className="rounded-xl p-5 border bg-emerald-950/20 border-emerald-500/40 shadow-xl">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div className="flex items-start gap-3.5">
-                  <div className={`p-2.5 rounded-lg shrink-0 ${
-                    settings.activeStrategy === 'AUTO_REGIME' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-gray-800 text-gray-400'
-                  }`}>
-                    <Cpu className="w-6 h-6" />
+                  <div className="p-2.5 rounded-lg shrink-0 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                    <ShieldCheck className="w-6 h-6" />
                   </div>
                   <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-base font-bold text-white">Auto-Select by Market Regime</h3>
-                      <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[10px] font-bold tracking-wider">
-                        CURATED BUCKET ROUTER
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-base font-bold text-white">
+                        Active Strategies: {enabledStrategies.length} / {AVAILABLE_STRATEGIES.length} Selected
+                      </h3>
+                      <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold tracking-wider">
+                        MULTI-STRATEGY ENGINE
                       </span>
                     </div>
                     <p className="text-xs text-gray-300 mt-1 leading-relaxed max-w-2xl">
-                      The bot strictly restricts execution to the enabled strategies in your bucket below. When a market regime occurs (Trending, Ranging, Exhaustion, or Breakout), only strategies assigned to that regime are evaluated, prioritized by your rank.
+                      The bot scans pairs across all enabled strategies simultaneously. When multiple strategies generate a signal on the same candle, the engine executes the highest-confidence setup.
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2 self-end sm:self-center">
-                  {settings.activeStrategy === 'AUTO_REGIME' ? (
-                    <span className="px-3.5 py-1.5 rounded-lg bg-purple-600 text-white font-bold text-xs border border-purple-400 flex items-center gap-1.5 shadow-lg shadow-purple-600/30">
-                      <Check className="w-3.5 h-3.5" /> BUCKET ACTIVE
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => handleInputChange('activeStrategy', 'AUTO_REGIME')}
-                      className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs cursor-pointer transition-colors flex items-center gap-1.5 shadow-lg shadow-purple-900/40"
-                    >
-                      <Cpu className="w-3.5 h-3.5" /> ENABLE AUTO BUCKET
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {settings.activeStrategy !== 'AUTO_REGIME' && (
-                <div className="mt-4 pt-3 border-t border-gray-800 flex items-center justify-between text-xs text-amber-400">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>Bot currently locked to single manual strategy: <strong>{settings.activeStrategy}</strong></span>
-                  </div>
                   <button
-                    onClick={() => handleInputChange('activeStrategy', 'AUTO_REGIME')}
-                    className="text-purple-400 hover:text-purple-300 underline font-semibold text-xs ml-2 cursor-pointer"
+                    onClick={() => setActiveTab('checklist')}
+                    className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs cursor-pointer transition-colors flex items-center gap-1.5 shadow-lg shadow-emerald-900/40"
                   >
-                    Switch back to Curated Bucket Router
+                    <ShieldCheck className="w-3.5 h-3.5" /> OPEN VCB CHECKLIST
                   </button>
                 </div>
-              )}
+              </div>
             </div>
 
-            {/* Regime Mapping Overview Matrix */}
-            <div className="bg-[#161B22] rounded-xl p-5 border border-[#30363D] space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Filter className="w-4 h-4 text-purple-400" />
-                  <h4 className="text-sm font-bold text-white">Live Regime Routing Matrix</h4>
+            {/* Multi-Strategy Activation Grid */}
+            <div className="bg-[#161B22] rounded-xl p-5 border border-[#30363D] space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-[#00e696]" />
+                    <h4 className="text-sm font-bold text-white">Selective Strategy Selection</h4>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      enabledStrategies.length > 0
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                    }`}>
+                      {enabledStrategies.length} Active
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Toggle individual strategies on or off. Use presets below for rapid configuration.
+                  </p>
                 </div>
-                <span className="text-[11px] text-gray-400">Strategies permitted per regime</span>
+
+                {/* Preset Actions */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleSetPresets('ALL')}
+                    className="px-2.5 py-1 text-[11px] rounded bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 cursor-pointer font-semibold transition-colors"
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetPresets('VCB')}
+                    className="px-2.5 py-1 text-[11px] rounded bg-gray-800 hover:bg-gray-700 text-emerald-300 border border-gray-700 cursor-pointer font-semibold transition-colors"
+                  >
+                    VCB Only
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetPresets('TREND')}
+                    className="px-2.5 py-1 text-[11px] rounded bg-gray-800 hover:bg-gray-700 text-blue-300 border border-gray-700 cursor-pointer font-semibold transition-colors"
+                  >
+                    Trend Following
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetPresets('REVERSAL')}
+                    className="px-2.5 py-1 text-[11px] rounded bg-gray-800 hover:bg-gray-700 text-amber-300 border border-gray-700 cursor-pointer font-semibold transition-colors"
+                  >
+                    Mean Reversion
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetPresets('CLEAR')}
+                    className="px-2.5 py-1 text-[11px] rounded bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/40 cursor-pointer font-semibold transition-colors"
+                  >
+                    Clear All
+                  </button>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
-                {ALL_REGIMES.map(regime => {
-                  const eligible = bucket
-                    .filter(s => s.enabled && s.regimes.includes(regime.key))
-                    .sort((a, b) => a.priority - b.priority);
-
+              {/* Strategy Cards Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+                {AVAILABLE_STRATEGIES.map(strat => {
+                  const isActive = enabledStrategies.includes(strat.id);
+                  const Icon = strat.icon;
                   return (
-                    <div key={regime.key} className="bg-gray-900/80 rounded-lg p-3 border border-gray-800 flex flex-col justify-between">
+                    <div
+                      key={strat.id}
+                      onClick={() => handleToggleStrategy(strat.id)}
+                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between select-none ${
+                        isActive
+                          ? 'bg-gray-900/90 border-[#00e696] shadow-md shadow-emerald-950/20'
+                          : 'bg-gray-950/50 border-gray-800/80 hover:border-gray-700 opacity-60'
+                      }`}
+                    >
                       <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className={`font-bold text-xs ${regime.color}`}>{regime.label}</span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">
-                            {eligible.length} active
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <div className="flex items-center gap-2">
+                            <div className={`p-1.5 rounded-lg shrink-0 ${
+                              isActive ? 'bg-[#00e696]/20 text-[#00e696]' : 'bg-gray-800 text-gray-500'
+                            }`}>
+                              <Icon className="w-4 h-4" />
+                            </div>
+                            <span className="font-bold text-xs text-white leading-tight">
+                              {strat.shortName}
+                            </span>
+                          </div>
+                          <div className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
+                            isActive ? 'bg-[#00e696] border-[#00e696] text-black' : 'border-gray-600 bg-gray-800'
+                          }`}>
+                            {isActive && <Check className="w-3 h-3 stroke-[3]" />}
+                          </div>
+                        </div>
+
+                        <div className="mb-2">
+                          <span className={`inline-block px-1.5 py-0.5 rounded text-[9.5px] font-bold border ${strat.badgeBg}`}>
+                            {strat.type}
                           </span>
                         </div>
-                        <p className="text-[10px] text-gray-500 mb-2 leading-tight">{regime.desc}</p>
+
+                        <p className="text-[11px] text-gray-400 leading-snug line-clamp-2">
+                          {strat.description}
+                        </p>
                       </div>
 
-                      <div className="space-y-1 mt-2 pt-2 border-t border-gray-800/80">
-                        {eligible.length > 0 ? (
-                          eligible.map(s => (
-                            <div key={s.id} className="flex items-center justify-between text-[11px] text-gray-300">
-                              <span className="truncate pr-1">• {s.name}</span>
-                              <span className="text-[9px] px-1 rounded bg-gray-800 text-gray-400 shrink-0 font-mono">P{s.priority}</span>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="text-[10px] text-rose-400 italic">No strategies assigned (Sits in cash)</div>
+                      <div className="mt-3 pt-2 border-t border-gray-800/80 flex items-center justify-between text-[10px]">
+                        <span className={isActive ? 'text-[#00e696] font-semibold' : 'text-gray-500'}>
+                          {isActive ? '● Active in Engine' : '○ Disabled'}
+                        </span>
+                        {strat.id === 'VOLATILITY_COMPRESSION' && (
+                          <span className="text-gray-400 font-mono">7 Gates</span>
+                        )}
+                        {strat.id === 'TREND_PULLBACK' && (
+                          <span className="text-gray-400 font-mono">5 Pillars</span>
+                        )}
+                        {strat.id === 'DELTA_CLIMAX' && (
+                          <span className="text-gray-400 font-mono">3-Candle</span>
                         )}
                       </div>
                     </div>
                   );
                 })}
               </div>
+            </div>
 
-              <div className="mt-2 pt-2 border-t border-gray-800/60 flex items-center justify-between text-[11px] text-gray-400">
-                <span className="flex items-center gap-1.5 text-gray-400">
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                  <strong>Non-Tradable / Dead Volume:</strong> Stand Aside in Cash (0 trades executed)
-                </span>
+            {/* Strategy Priority & Execution Tuning */}
+            <div className="bg-[#161B22] rounded-xl p-5 border border-[#30363D] space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-sm font-bold text-white">Execution Priority Tuning</h4>
+                  <p className="text-xs text-gray-400">Configure tie-breaker execution priority (P1 highest, P4 lowest) when multiple strategies trigger simultaneously.</p>
+                </div>
                 <button
                   onClick={handleResetBucket}
                   className="text-xs text-gray-400 hover:text-white flex items-center gap-1 px-2.5 py-1 rounded bg-gray-800 border border-gray-700 cursor-pointer"
@@ -308,121 +529,85 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({ settings, setSettings }) 
                   <RotateCcw className="w-3 h-3" /> Reset Defaults
                 </button>
               </div>
-            </div>
-
-            {/* Strategy Bucket Items List */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-sm font-bold text-white">Your Strategy Bucket</h4>
-                  <p className="text-xs text-gray-400">Enable or disable strategies, assign valid regimes, and adjust execution priority.</p>
-                </div>
-              </div>
 
               <div className="space-y-3">
-                {bucket.map(strat => (
-                  <div
-                    key={strat.id}
-                    className={`rounded-xl p-4 border transition-all ${
-                      strat.enabled
-                        ? 'bg-[#161B22] border-[#30363D] hover:border-gray-600'
-                        : 'bg-gray-900/40 border-gray-800/60 opacity-60'
-                    }`}
-                  >
-                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                      
-                      {/* Left: Checkbox + Name + Description */}
-                      <div className="flex items-start gap-3">
-                        <input
-                          type="checkbox"
-                          checked={strat.enabled}
-                          onChange={() => handleToggleBucketStrategy(strat.id)}
-                          className="mt-1 w-4 h-4 rounded text-purple-600 bg-gray-900 border-gray-700 focus:ring-purple-500 cursor-pointer"
-                          id={`bucket-check-${strat.id}`}
-                        />
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <label
-                              htmlFor={`bucket-check-${strat.id}`}
-                              className={`text-sm font-bold cursor-pointer ${strat.enabled ? 'text-white' : 'text-gray-400 line-through'}`}
-                            >
-                              {strat.name}
-                            </label>
-                            {settings.activeStrategy === strat.id && (
-                              <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
-                                CURRENTLY FORCED ACTIVE
-                              </span>
-                            )}
-                            {!strat.enabled && (
-                              <span className="px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[10px]">
-                                EXCLUDED FROM BOT
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-gray-400 leading-relaxed max-w-xl">
-                            {strat.description}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Right: Regimes Selector + Priority + Force Button */}
-                      <div className="flex flex-wrap items-center gap-3 self-start lg:self-center pl-7 lg:pl-0">
-                        {/* Priority Selector */}
-                        <div className="flex items-center gap-1.5 bg-gray-900 border border-gray-800 rounded-lg px-2.5 py-1">
-                          <span className="text-[10px] text-gray-400 font-semibold uppercase">Priority:</span>
-                          <select
-                            value={strat.priority}
-                            onChange={e => handleChangePriority(strat.id, parseInt(e.target.value) || 1)}
-                            className="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer"
-                          >
-                            <option value={1} className="bg-gray-900 text-white">#1 (Highest)</option>
-                            <option value={2} className="bg-gray-900 text-white">#2 (High)</option>
-                            <option value={3} className="bg-gray-900 text-white">#3 (Medium)</option>
-                            <option value={4} className="bg-gray-900 text-white">#4 (Fallback)</option>
-                          </select>
-                        </div>
-
-                        {/* Allowed Regimes Checkboxes */}
-                        <div className="flex items-center gap-1">
-                          {ALL_REGIMES.map(reg => {
-                            const isSelected = strat.regimes.includes(reg.key);
-                            return (
-                              <button
-                                key={reg.key}
-                                type="button"
-                                onClick={() => handleToggleRegimeForStrategy(strat.id, reg.key)}
-                                className={`px-2 py-1 rounded text-[10px] font-bold border transition-all cursor-pointer ${
-                                  isSelected 
-                                    ? reg.badgeBg
-                                    : 'bg-gray-900/60 border-gray-800 text-gray-500 hover:text-gray-300'
-                                }`}
-                                title={`Toggle eligibility for ${reg.label} markets`}
+                {bucket.map(strat => {
+                  const isActive = enabledStrategies.includes(strat.id as any);
+                  return (
+                    <div
+                      key={strat.id}
+                      className={`rounded-xl p-4 border transition-all ${
+                        isActive
+                          ? 'bg-[#161B22] border-[#30363D] hover:border-gray-600'
+                          : 'bg-gray-900/40 border-gray-800/60 opacity-60'
+                      }`}
+                    >
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                        {/* Left: Checkbox + Name + Description */}
+                        <div className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={isActive}
+                            onChange={() => handleToggleStrategy(strat.id)}
+                            className="mt-1 w-4 h-4 rounded text-purple-600 bg-gray-900 border-gray-700 focus:ring-purple-500 cursor-pointer"
+                            id={`bucket-check-${strat.id}`}
+                          />
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <label
+                                htmlFor={`bucket-check-${strat.id}`}
+                                className={`text-sm font-bold cursor-pointer ${isActive ? 'text-white' : 'text-gray-400 line-through'}`}
                               >
-                                {reg.label}
-                              </button>
-                            );
-                          })}
+                                {strat.name}
+                              </label>
+                              {isActive ? (
+                                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
+                                  ACTIVE
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[10px]">
+                                  PAUSED
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-400 leading-relaxed max-w-xl">
+                              {strat.description}
+                            </p>
+                          </div>
                         </div>
 
-                        {/* Force Single Strategy Button */}
-                        <button
-                          type="button"
-                          onClick={() => handleInputChange('activeStrategy', strat.id)}
-                          className={`px-2.5 py-1 rounded text-[10px] font-semibold border transition-all cursor-pointer ${
-                            settings.activeStrategy === strat.id
-                              ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
-                              : 'bg-gray-800/80 hover:bg-gray-700 text-gray-300 border-gray-700'
-                          }`}
-                          title="Force the bot to trade ONLY this strategy (bypasses auto-regime)"
-                        >
-                          {settings.activeStrategy === strat.id ? 'Forced' : 'Force'}
-                        </button>
+                        {/* Right: Priority Selector + Quick Toggle */}
+                        <div className="flex flex-wrap items-center gap-3 self-start lg:self-center pl-7 lg:pl-0">
+                          <div className="flex items-center gap-1.5 bg-gray-900 border border-gray-800 rounded-lg px-2.5 py-1">
+                            <span className="text-[10px] text-gray-400 font-semibold uppercase">Tie-Breaker:</span>
+                            <select
+                              value={strat.priority}
+                              onChange={e => handleChangePriority(strat.id, parseInt(e.target.value) || 1)}
+                              className="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer"
+                            >
+                              <option value={1} className="bg-gray-900 text-white">#1 (Highest)</option>
+                              <option value={2} className="bg-gray-900 text-white">#2 (High)</option>
+                              <option value={3} className="bg-gray-900 text-white">#3 (Medium)</option>
+                              <option value={4} className="bg-gray-900 text-white">#4 (Fallback)</option>
+                            </select>
+                          </div>
 
+                          <button
+                            type="button"
+                            onClick={() => handleToggleStrategy(strat.id)}
+                            className={`px-2.5 py-1 rounded text-[10px] font-semibold border transition-all cursor-pointer ${
+                              isActive
+                                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                                : 'bg-gray-800/80 hover:bg-gray-700 text-gray-300 border-gray-700'
+                            }`}
+                          >
+                            {isActive ? 'Enabled' : 'Disabled'}
+                          </button>
+                        </div>
                       </div>
-
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -433,116 +618,128 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({ settings, setSettings }) 
         {activeTab === 'parameters' && (
           <div className="space-y-6">
             
-            {/* Quick Strategy Lock Buttons */}
-            <div className="bg-[#161B22] rounded-xl p-5 border border-[#30363D] space-y-3">
-              <div className="flex items-center justify-between">
+            {/* Multi-Strategy Activation Grid */}
+            <div className="bg-[#161B22] rounded-xl p-5 border border-[#30363D] space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <h4 className="text-sm font-bold text-white">Active Strategy Lock</h4>
-                  <p className="text-xs text-gray-400">Lock the bot to run a specific strategy across all symbols or use Auto-Regime.</p>
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-[#00e696]" />
+                    <h4 className="text-sm font-bold text-white">Active Selective Strategies</h4>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      enabledStrategies.length > 0
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                    }`}>
+                      {enabledStrategies.length} / {AVAILABLE_STRATEGIES.length} Active
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Activate any combination of strategies. The engine evaluates all active strategies per coin and executes the highest-confidence setup.
+                  </p>
                 </div>
-                <span className="text-xs px-2.5 py-1 rounded bg-gray-800 border border-gray-700 text-gray-300 font-mono">
-                  Active: <strong>{settings.activeStrategy}</strong>
-                </span>
+
+                {/* Preset Actions */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleSetPresets('ALL')}
+                    className="px-2.5 py-1 text-[11px] rounded bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 cursor-pointer font-semibold transition-colors"
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetPresets('VCB')}
+                    className="px-2.5 py-1 text-[11px] rounded bg-gray-800 hover:bg-gray-700 text-emerald-300 border border-gray-700 cursor-pointer font-semibold transition-colors"
+                  >
+                    VCB Only
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetPresets('TREND')}
+                    className="px-2.5 py-1 text-[11px] rounded bg-gray-800 hover:bg-gray-700 text-blue-300 border border-gray-700 cursor-pointer font-semibold transition-colors"
+                  >
+                    Trend Following
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetPresets('REVERSAL')}
+                    className="px-2.5 py-1 text-[11px] rounded bg-gray-800 hover:bg-gray-700 text-amber-300 border border-gray-700 cursor-pointer font-semibold transition-colors"
+                  >
+                    Mean Reversion
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetPresets('CLEAR')}
+                    className="px-2.5 py-1 text-[11px] rounded bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/40 cursor-pointer font-semibold transition-colors"
+                  >
+                    Clear All
+                  </button>
+                </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
-                <button
-                  onClick={() => handleInputChange('activeStrategy', 'AUTO_REGIME')}
-                  className={`p-3 rounded-lg border text-left cursor-pointer transition-all ${
-                    settings.activeStrategy === 'AUTO_REGIME'
-                      ? 'bg-purple-950/40 border-purple-500 text-purple-300'
-                      : 'bg-gray-900 border-gray-800 text-gray-400 hover:border-gray-700'
-                  }`}
-                >
-                  <div className="font-bold text-xs flex items-center gap-1.5">
-                    <Cpu className="w-3.5 h-3.5" /> Auto-Regime
-                  </div>
-                  <div className="text-[10px] text-gray-500 mt-0.5">Dynamic bucket selection</div>
-                </button>
+              {/* Strategy Cards Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+                {AVAILABLE_STRATEGIES.map(strat => {
+                  const isActive = enabledStrategies.includes(strat.id);
+                  const Icon = strat.icon;
+                  return (
+                    <div
+                      key={strat.id}
+                      onClick={() => handleToggleStrategy(strat.id)}
+                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between select-none ${
+                        isActive
+                          ? 'bg-gray-900/90 border-[#00e696] shadow-md shadow-emerald-950/20'
+                          : 'bg-gray-950/50 border-gray-800/80 hover:border-gray-700 opacity-60'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <div className="flex items-center gap-2">
+                            <div className={`p-1.5 rounded-lg shrink-0 ${
+                              isActive ? 'bg-[#00e696]/20 text-[#00e696]' : 'bg-gray-800 text-gray-500'
+                            }`}>
+                              <Icon className="w-4 h-4" />
+                            </div>
+                            <span className="font-bold text-xs text-white leading-tight">
+                              {strat.shortName}
+                            </span>
+                          </div>
+                          <div className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
+                            isActive ? 'bg-[#00e696] border-[#00e696] text-black' : 'border-gray-600 bg-gray-800'
+                          }`}>
+                            {isActive && <Check className="w-3 h-3 stroke-[3]" />}
+                          </div>
+                        </div>
 
-                <button
-                  onClick={() => handleInputChange('activeStrategy', 'BINANCE_COMPOSITE')}
-                  className={`p-3 rounded-lg border text-left cursor-pointer transition-all ${
-                    settings.activeStrategy === 'BINANCE_COMPOSITE'
-                      ? 'bg-emerald-950/40 border-[#00e696] text-[#00e696]'
-                      : 'bg-gray-900 border-gray-800 text-gray-400 hover:border-gray-700'
-                  }`}
-                >
-                  <div className="font-bold text-xs">Ranging 1:3 R:R</div>
-                  <div className="text-[10px] text-gray-500 mt-0.5">BB + RSI mean reversion</div>
-                </button>
+                        <div className="mb-2">
+                          <span className={`inline-block px-1.5 py-0.5 rounded text-[9.5px] font-bold border ${strat.badgeBg}`}>
+                            {strat.type}
+                          </span>
+                        </div>
 
-                <button
-                  onClick={() => handleInputChange('activeStrategy', 'DELTA_CLIMAX')}
-                  className={`p-3 rounded-lg border text-left cursor-pointer transition-all ${
-                    settings.activeStrategy === 'DELTA_CLIMAX'
-                      ? 'bg-emerald-950/40 border-[#00e696] text-[#00e696]'
-                      : 'bg-gray-900 border-gray-800 text-gray-400 hover:border-gray-700'
-                  }`}
-                >
-                  <div className="font-bold text-xs">Delta Climax</div>
-                  <div className="text-[10px] text-gray-500 mt-0.5">Capitulation reversal</div>
-                </button>
+                        <p className="text-[11px] text-gray-400 leading-snug line-clamp-2">
+                          {strat.description}
+                        </p>
+                      </div>
 
-                <button
-                  onClick={() => handleInputChange('activeStrategy', 'VOLATILITY_COMPRESSION')}
-                  className={`p-3 rounded-lg border text-left cursor-pointer transition-all ${
-                    settings.activeStrategy === 'VOLATILITY_COMPRESSION'
-                      ? 'bg-emerald-950/40 border-[#00e696] text-[#00e696]'
-                      : 'bg-gray-900 border-gray-800 text-gray-400 hover:border-gray-700'
-                  }`}
-                >
-                  <div className="font-bold text-xs">VCB Breakout</div>
-                  <div className="text-[10px] text-gray-500 mt-0.5">Squeeze expansion</div>
-                </button>
-
-                <button
-                  onClick={() => handleInputChange('activeStrategy', 'TREND_PULLBACK')}
-                  className={`p-3 rounded-lg border text-left cursor-pointer transition-all ${
-                    settings.activeStrategy === 'TREND_PULLBACK'
-                      ? 'bg-blue-950/40 border-blue-400 text-blue-300'
-                      : 'bg-gray-900 border-gray-800 text-gray-400 hover:border-gray-700'
-                  }`}
-                >
-                  <div className="font-bold text-xs">Trend Pullback</div>
-                  <div className="text-[10px] text-gray-500 mt-0.5">EMA trend bounce</div>
-                </button>
-
-                <button
-                  onClick={() => handleInputChange('activeStrategy', 'SMC_LIQUIDITY_SWEEP')}
-                  className={`p-3 rounded-lg border text-left cursor-pointer transition-all ${
-                    settings.activeStrategy === 'SMC_LIQUIDITY_SWEEP'
-                      ? 'bg-cyan-950/40 border-cyan-400 text-cyan-300'
-                      : 'bg-gray-900 border-gray-800 text-gray-400 hover:border-gray-700'
-                  }`}
-                >
-                  <div className="font-bold text-xs">SMC Liquidity</div>
-                  <div className="text-[10px] text-gray-500 mt-0.5">Sweep + FVG retest</div>
-                </button>
-
-                <button
-                  onClick={() => handleInputChange('activeStrategy', 'MACRO_RANGE_BREAKOUT')}
-                  className={`p-3 rounded-lg border text-left cursor-pointer transition-all ${
-                    settings.activeStrategy === 'MACRO_RANGE_BREAKOUT'
-                      ? 'bg-purple-950/40 border-purple-400 text-purple-300'
-                      : 'bg-gray-900 border-gray-800 text-gray-400 hover:border-gray-700'
-                  }`}
-                >
-                  <div className="font-bold text-xs">Macro Range Box</div>
-                  <div className="text-[10px] text-gray-500 mt-0.5">Darvas accumulation</div>
-                </button>
-
-                <button
-                  onClick={() => handleInputChange('activeStrategy', 'EARLY_COIL_BREAKOUT')}
-                  className={`p-3 rounded-lg border text-left cursor-pointer transition-all ${
-                    settings.activeStrategy === 'EARLY_COIL_BREAKOUT'
-                      ? 'bg-indigo-950/40 border-indigo-400 text-indigo-300'
-                      : 'bg-gray-900 border-gray-800 text-gray-400 hover:border-gray-700'
-                  }`}
-                >
-                  <div className="font-bold text-xs">Early Coil</div>
-                  <div className="text-[10px] text-gray-500 mt-0.5">Fractal breakout</div>
-                </button>
+                      <div className="mt-3 pt-2 border-t border-gray-800/80 flex items-center justify-between text-[10px]">
+                        <span className={isActive ? 'text-[#00e696] font-semibold' : 'text-gray-500'}>
+                          {isActive ? '● Active in Engine' : '○ Disabled'}
+                        </span>
+                        {strat.id === 'VOLATILITY_COMPRESSION' && (
+                          <span className="text-gray-400 font-mono">7 Gates</span>
+                        )}
+                        {strat.id === 'TREND_PULLBACK' && (
+                          <span className="text-gray-400 font-mono">5 Pillars</span>
+                        )}
+                        {strat.id === 'DELTA_CLIMAX' && (
+                          <span className="text-gray-400 font-mono">3-Candle</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -586,6 +783,37 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({ settings, setSettings }) 
                 <InputRow label="Squeeze Lookback Bars" desc="Number of candles evaluated for low volatility compression" value={settings.vcbSqueezeLookback ?? 20} onChange={(v: any) => handleInputChange('vcbSqueezeLookback', v)} min={10} max={50} />
                 <InputRow label="Minimum Squeeze Ratio" desc="Bollinger Band width percentile qualifying as a valid squeeze" value={settings.vcbMinSqueezeRatio ?? 0.15} onChange={(v: any) => handleInputChange('vcbMinSqueezeRatio', v)} step={0.01} min={0.05} max={0.3} />
                 <InputRow label="Volume Surge Trigger" desc="Expansion candle volume multiple over moving average" value={settings.vcbVolumeSurgeTrigger ?? 1.5} onChange={(v: any) => handleInputChange('vcbVolumeSurgeTrigger', v)} step={0.1} min={1.1} max={3.0} />
+              </div>
+            </div>
+
+            {/* Global Market & BTC Safety Filter */}
+            <div className="bg-[#161B22] rounded-xl p-6 border border-[#30363D] space-y-4">
+              <div>
+                <h3 className="text-base font-bold text-white">Global Market & BTC Safety Filter</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Macro risk management to pause trading during extreme market distress.</p>
+              </div>
+              <div className="space-y-3">
+                <label className="flex items-center gap-2.5 text-xs text-gray-200 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={settings.useGlobalBtcFilter !== false}
+                    onChange={(e) => handleInputChange('useGlobalBtcFilter', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-blue-500 focus:ring-0 cursor-pointer"
+                  />
+                  <span>Enforce BTC Global Safety Filter (pauses new entries during high-risk macro volatility)</span>
+                </label>
+                <div className="flex items-center gap-3 pt-1">
+                  <span className="text-xs text-gray-400">Reference Benchmark:</span>
+                  <select
+                    value={settings.globalFilterSymbol || 'BTCUSDT'}
+                    onChange={(e) => handleInputChange('globalFilterSymbol', e.target.value)}
+                    disabled={settings.useGlobalBtcFilter === false}
+                    className="bg-gray-800 border border-gray-700 text-white text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer disabled:opacity-50"
+                  >
+                    <option value="BTCUSDT">BTC Only (BTCUSDT)</option>
+                    <option value="BTC_ETH">BTC + ETH Consensus</option>
+                  </select>
+                </div>
               </div>
             </div>
 

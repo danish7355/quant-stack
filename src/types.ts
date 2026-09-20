@@ -106,10 +106,19 @@ export interface Position {
   id: string;
   symbol: string;
   direction: 'LONG' | 'SHORT';
-  strategy?: string; // e.g. 'BINANCE_COMPOSITE', 'DELTA_CLIMAX', 'VOLATILITY_COMPRESSION', 'TREND_PULLBACK'
-  marketRegime?: string; // e.g. 'Trending [EMA Pullback]', 'Exhaustion Climax', 'Consolidation Squeeze'
+  strategy?: string; 
+  marketRegime?: string; 
   isAutoRegime?: boolean;
   frequencyPreset?: 'LOW' | 'MEDIUM' | 'HIGH';
+  macroColor?: 'GREEN' | 'AMBER' | 'RED';
+  macroLabel?: string;
+  regimeConfidence?: number;
+  confidenceLevel?: 'High' | 'Medium' | 'Low';
+  tradeQuality?: 'High' | 'Medium' | 'Low';
+  strategyPriority?: 'P1' | 'P2' | 'P3';
+  rrStruct?: string;
+  structuralRR?: number;
+  pnlReached1_3?: boolean;
   entryPrice: number;
   currentPrice: number;
   quantity: number;
@@ -123,11 +132,21 @@ export interface Position {
   trailingStopActive: boolean;
   entryAtr: number;
   timeOpen: string;
+  timestampMs?: number;
   scoreAtEntry: number;
   unrealizedPnl: number;
   realizedPnl: number;
   sizeRemainingPct: number; // 100 on start, drops to 60 then 20 after TPs
   lastUpdated?: number;
+  stopStatus?: 'CONFIRMED' | 'PARTIAL' | 'MISSING' | 'UNKNOWN';
+  // MFE & MAE tracking for diagnostic post-trade analysis
+  mfe?: number;
+  mae?: number;
+  regimeAtEntry?: string;
+  regimeOneCandleLater?: string;
+  regimeThreeCandlesLater?: string;
+  signalCandleTime?: number;
+  entryTimestamp?: number;
   // VCB specific tracking
   initialTpHit?: boolean;
   extremeSinceEntry?: number;
@@ -143,182 +162,111 @@ export interface TradeLog {
   marketRegime?: string;
   isAutoRegime?: boolean;
   frequencyPreset?: 'LOW' | 'MEDIUM' | 'HIGH';
+  macroColor?: 'GREEN' | 'AMBER' | 'RED';
+  macroLabel?: string;
+  regimeConfidence?: number;
+  confidenceLevel?: 'High' | 'Medium' | 'Low';
+  tradeQuality?: 'High' | 'Medium' | 'Low';
+  strategyPriority?: 'P1' | 'P2' | 'P3';
+  rrStruct?: string;
+  structuralRR?: number;
+  outcome?: 'Full 1:3' | 'Partial' | 'Scratch' | 'Loss';
   entryPrice: number;
   closePrice: number;
   leverage: number;
   profit: number;
   pctReturn: number;
-  exitReason: 'TP1' | 'TP2' | 'TP3' | 'SL' | 'TS' | 'MANUAL' | 'TIME_EXIT' | 'DECAY';
+  exitReason: 'TP1' | 'TP2' | 'TP3' | 'SL' | 'TS' | 'MANUAL' | 'TIME_EXIT' | 'DECAY' | string;
   timeOpen: string;
   timeClose: string;
   scoreAtEntry: number;
   scoreAtClose?: number;
+  mfe?: number;
+  mae?: number;
+  regimeAtEntry?: string;
+  regimeOneCandleLater?: string;
+  regimeThreeCandlesLater?: string;
+  signalCandleTime?: number;
 }
 
-export type TradableRegimeType = 'trending' | 'ranging' | 'exhaustion' | 'breakout';
-export type MarketRegimeType = TradableRegimeType | 'not_tradable';
+export type MarketRegimeType = 
+  | 'TRENDING_UP'
+  | 'TRENDING_DOWN'
+  | 'RANGING'
+  | 'EXHAUSTION_UP'
+  | 'EXHAUSTION_DOWN'
+  | 'BREAKOUT_UP'
+  | 'BREAKOUT_DOWN'
+  | 'TRANSITION'
+  | 'UNCLEAR'
+  | 'DEAD_VOLUME'
+  | 'PANIC';
 
 export interface StrategyBucketItem {
   id: string;
   name: string;
   description: string;
-  regimes: TradableRegimeType[];
+  direction?: 'LONG' | 'SHORT';
   priority: number;
   enabled: boolean;
 }
 
-export interface AppSettings {
-  // Strategy Selection
-  activeStrategy: 'BINANCE_COMPOSITE' | 'DELTA_CLIMAX' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'AUTO_REGIME' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL';
-  // User's Curated Strategy Bucket for Auto-Regime Selection
-  strategyBucket?: StrategyBucketItem[];
-  // Trade Frequency Preset (LOW = Strict, MEDIUM = Balanced/Recommended, HIGH = Aggressive)
-  tradeFrequency: 'LOW' | 'MEDIUM' | 'HIGH';
+export interface GlobalMarketRegime {
+  regime: MarketRegimeType;
+  label: string;
+  details: string;
+  symbol: string;
+  timestamp: number;
+  isTradable: boolean;
+  macroColor: 'GREEN' | 'AMBER' | 'RED';
+  btcPrice?: number;
+  ethPrice?: number;
+}
 
-  // Climax Reversal Strategy settings
-  crEnabled: boolean;
-  crClimaxLookback: number;
-  crEmaFast: number;
-  crEmaContext: number;
-  crEmaBaseline: number;
-  crAtrPeriod: number;
-  crMinOverextensionAtr: number;
-  crMinAtrVsAverage: number;
-  crAtrAveragePeriod: number;
-  crMinRejectionWickRatio: number;
-  crMinClimaxRangeRatio: number;
-  crMinStopDistanceAtr: number;
-  crMinRewardRisk: number;
+import type { TradingSettings, TradingMode, SettingsLoadState, ValidationResult } from './shared/TradingSettings.js';
+import { NUMERIC_BOUNDS, validateTradingSettings, CANONICAL_DEFAULT_SETTINGS } from './shared/TradingSettings.js';
+export type { TradingSettings, TradingMode, SettingsLoadState, ValidationResult };
+export { NUMERIC_BOUNDS, validateTradingSettings, CANONICAL_DEFAULT_SETTINGS };
+export type AppSettings = TradingSettings;
 
-  // Volatility Compression Breakout parameters
-  vcbCompressionLookback: number;
-  vcbCompressionAtrRatioMax: number;
-  vcbWindowAtrMult: number;
-  vcbBoundaryBufferAtr: number;
-  vcbRangeExpansionMin: number;
-  vcbVolumeExpansionMin: number;
-  vcbCloseStrengthMin: number;
-  vcbHtfBonus: number;
-  vcbSlBufferAtrMult: number;
+export interface SystemHealth {
+  engine: 'RUNNING' | 'PAUSED' | 'ERROR';
+  marketData: 'CONNECTED' | 'STALE' | 'DISCONNECTED';
+  userStream: 'CONNECTED' | 'STALE' | 'DISCONNECTED';
+  lastReconciliationAt: string;
+  tradingBlocked: boolean;
+  blockReason?: string;
+}
 
-  // Dynamic Enhancements
-  useMtfAlignment: boolean;
-  useVpvrFilter: boolean;
-  useAtrTrailingStop: boolean;
-  trailingStopAtrMultiplier: number;
-  vcbInitialTpAtrMult: number;
-  vcbInitialTpClosePct: number;
-  vcbChandelierAtrMult: number;
-  vcbStallCheckBar: number;
-  vcbStallMinProgressAtr: number;
+export interface TargetView {
+  price: number;
+  label: string;
+  hit: boolean;
+}
 
-  // General System settings
-  timeframe: Timeframe;
-  autoTradeThreshold: number; // Minimum Score for Trade
-  coinCount: number;
-  autoTradeEnabled: boolean;
-  scanInterval: number; // inside UI representation (seconds)
-  theme: 'dark' | 'light';
+export interface PositionView {
+  id: string;
+  symbol: string;
+  side: 'LONG' | 'SHORT';
+  quantity: number;
+  entryPrice: number;
+  markPrice: number;
+  unrealizedPnl: number;
+  stopStatus: 'CONFIRMED' | 'PARTIAL' | 'MISSING' | 'UNKNOWN';
+  targets: TargetView[];
+  sourceStrategy: string;
+  updatedAt: string;
+}
 
-  // Filters
-  min24hVolume: number;
-  maxFundingRate: number;
-  maxSpread: number;
-
-  // Range Mean-Reversion 1:3 R:R Strategy parameters
-  bbPeriod?: number;
-  bbStdDev?: number;
-  rangeSmaPct?: number;
-  rangeMaxSmaSlope?: number;
-  rangeStopMult?: number;
-  rangeTargetRr?: number;
-  rmrBbPeriod?: number;
-  rmrBbStdDev?: number;
-  rmrRsiOversold?: number;
-  rmrRsiOverbought?: number;
-  rmrRiskRewardRatio?: number;
-  rmrStopBufferPct?: number;
-
-  // Climax Reversal fine tuners
-  crVolumeSpikeMultiplier?: number;
-  crMinWickRatio?: number;
-  crMinAtrDistance?: number;
-
-  // VCB fine tuners
-  vcbSqueezeLookback?: number;
-  vcbMinSqueezeRatio?: number;
-  vcbVolumeSurgeTrigger?: number;
-
-  // Indicators parameters
-  emaFastPeriod: number;
-  emaSlowPeriod: number;
-  emaTrendPeriod: number;
-  emaCrossLookback: number; // new
-  
-  rsiPeriod: number;
-  rsiLongMin: number;
-  rsiLongMax: number;
-  rsiShortMin: number;
-  rsiShortMax: number;
-  
-  macdFast: number;
-  macdSlow: number;
-  macdSignal: number;
-  adxPeriod: number;
-  adxTrendThreshold: number;
-  superTrendPeriod: number;
-  superTrendMultiplier: number;
-  volumeMultiplier: number;
-  fibLookback: number;
-  
-  // ATR
-  atrPeriod: number;
-
-  // Trading rules / risk
-  startingBalance: number;
-  demoBalance?: number;
-  equitySnapshots?: { time: string, balance: number }[];
-  positionSizePct: number; // % of total balance per trade
-  accountRiskPct: number; // % account risk per trade
-  leverage: number;
-  maxConcurrentTrades: number;
-  dailyLossLimitPct: number;
-  maxDrawdownPct: number;
-  
-  tp1AtrMultiple: number; // Take Profit Multiplier
-  tp2AtrMultiple: number; // Optional
-  tp3FibLevel: number; 
-  slAtrMultiple: number; // Stop Loss Multiplier
-  minRRRatio: number;
-  
-  trailingStopActivation: 'TP1' | 'TP2' | 'NEVER';
-  trailActivationR: number; // new
-  timeBasedExitEnabled: boolean;
-  timeBasedExitCandles: number;
-
-  // Telegram alert settings
-  telegramBotToken: string;
-  telegramChatId: string;
-
-  // Exchange Bot API Credentials
-  binanceApiKey?: string;
-  binanceApiSecret?: string;
-  binanceTestnet?: boolean;
-
-  alertOnNewSignal: boolean;
-  alertOnTradeExecuted: boolean;
-  alertOnTpHit: boolean;
-  alertOnSlHit: boolean;
-  alertOnTsMoved: boolean;
-  alertOnDailyLossLimit: boolean;
-  alertOnRangingDetected: boolean;
-
-  // Gate Management & Strategy-Wise Bypasses
-  disabledGates?: Record<string, boolean>;
-
-  // GitHub Integration
-  githubPat?: string;
-  githubRepoUrl?: string;
+export interface SignalView {
+  id: string;
+  symbol: string;
+  regime: string;
+  confidence: number;
+  strategy: string;
+  decision: 'ENTER' | 'WATCH' | 'REJECT';
+  rejectionReasons: string[];
+  createdAt: string;
 }
 
 export interface EquitySnapshot {

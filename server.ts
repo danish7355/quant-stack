@@ -7,7 +7,7 @@ import { exec } from "child_process";
 import { promisify } from "util";
 const execAsync = promisify(exec);
 import { db } from "./server/firebase.js";
-import { collection, query, where, getDocs, orderBy, writeBatch, deleteDoc, doc } from "firebase/firestore";
+import { collection, query, where, getDocs, orderBy, limit, writeBatch, deleteDoc, doc } from "firebase/firestore";
 import { oms } from "./server/services/OMS.js";
 import { executionAdapter } from "./server/services/ExecutionAdapter.js";
 import { riskManager } from "./server/services/RiskManager.js";
@@ -15,6 +15,10 @@ import { priceStream } from "./server/services/PriceStream.js";
 import { positionMonitor } from "./server/services/PositionMonitor.js";
 import { telegramService } from "./server/services/TelegramService.js";
 import { autoTrader } from "./server/services/AutoTrader.js";
+import { getSignalAudits } from "./server/services/SignalAuditService.js";
+import { getSettingsAudits } from "./server/services/SettingsAuditService.js";
+import { validateTradingSettings } from "./src/shared/TradingSettings.js";
+import { isQuotaExhausted, getRecentTradeLogsFromDisk, readLocalJson } from "./server/services/firestoreSafe.js";
 
 async function startServer() {
   const { app } = expressWs(express());
@@ -83,9 +87,16 @@ async function startServer() {
     pricesLength: priceStream.getAllPrices().length
   });
 });
-app.get("/api/health", (req, res) => {
+  app.get("/api/health", (req, res) => {
     res.json({ 
       status: "ok", 
+      engine: autoTrader.isEngineActive() ? 'RUNNING' : 'PAUSED',
+      marketData: priceStream.isStale ? 'STALE' : 'CONNECTED',
+      userStream: executionAdapter.getIsLive() ? 'CONNECTED' : 'DISCONNECTED',
+      lastReconciliationAt: 'N/A', // We can add real state tracking later
+      tradingBlocked: priceStream.isStale,
+      globalFilterActive: autoTrader.isGlobalFilterPausing(),
+      globalFilterReason: autoTrader.getGlobalFilterBlockReason(),
       timestamp: new Date().toISOString(),
       activePositions: positionMonitor.getActivePositions().length,
       telegramConfigured: telegramService.isConfigured()
@@ -145,7 +156,65 @@ app.get("/api/health", (req, res) => {
   app.get("/api/bot/settings", (req, res) => {
     try {
       const settings = autoTrader.getSettings();
-      res.json(settings);
+      // S3 fix: Never expose raw credentials to frontend
+      const safeSettings = { ...settings };
+      if (safeSettings.binanceApiKey) {
+        safeSettings.binanceApiKey = safeSettings.binanceApiKey.slice(0, 4) + '****' + safeSettings.binanceApiKey.slice(-4);
+      }
+      if (safeSettings.binanceApiSecret) {
+        safeSettings.binanceApiSecret = '••••••••';
+      }
+      if (safeSettings.telegramBotToken) {
+        safeSettings.telegramBotToken = safeSettings.telegramBotToken.slice(0, 6) + '****';
+      }
+      // Never expose GitHub PAT
+      if (safeSettings.githubPat) {
+        safeSettings.githubPat = safeSettings.githubPat.slice(0, 4) + '****';
+      }
+      res.json(safeSettings);
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.get("/api/bot/engine/status", (req, res) => {
+    try {
+      res.json({
+        engineRunning: autoTrader.isEngineActive(),
+        autoTradeEnabled: autoTrader.getSettings().autoTradeEnabled,
+        globalFilterActive: autoTrader.isGlobalFilterPausing(),
+        globalFilterReason: autoTrader.getGlobalFilterBlockReason()
+      });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.post("/api/bot/engine/start", async (req, res) => {
+    try {
+      autoTrader.startLoop();
+      await autoTrader.saveSettings({ autoTradeEnabled: true });
+      res.json({ success: true, engineRunning: true, message: "Engine started. Autonomous scanning & new trade execution active." });
+    } catch (e) {
+      res.status(500).json({ success: false, error: String(e) });
+    }
+  });
+
+  app.post("/api/bot/engine/stop", async (req, res) => {
+    try {
+      autoTrader.stopLoop();
+      await autoTrader.saveSettings({ autoTradeEnabled: false });
+      res.json({ success: true, engineRunning: false, message: "Engine stopped. All new trade execution halted." });
+    } catch (e) {
+      res.status(500).json({ success: false, error: String(e) });
+    }
+  });
+
+  app.get("/api/bot/regime", async (req, res) => {
+    try {
+      const force = req.query.refresh === 'true';
+      const regime = await autoTrader.getGlobalRegime(force);
+      res.json(regime);
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
@@ -169,10 +238,128 @@ app.get("/api/health", (req, res) => {
       const payload = { ...req.body };
       delete payload.demoBalance;
       delete payload.equitySnapshots;
+      // Strip masked credentials that came from the S3-masked GET response
+      const maskedPatterns = ['****', '••••'];
+      for (const credField of ['binanceApiKey', 'binanceApiSecret', 'telegramBotToken', 'githubPat']) {
+        const val = payload[credField];
+        if (typeof val === 'string' && maskedPatterns.some(p => val.includes(p))) {
+          delete payload[credField];
+        }
+      }
+      // Server-side validation: clamp numeric fields to safe ranges
+      const numericBounds: Record<string, [number, number]> = {
+        leverage: [1, 125],
+        positionSizePct: [0.1, 100],
+        accountRiskPct: [0.1, 10],
+        maxConcurrentTrades: [1, 50],
+        dailyLossLimitPct: [0.5, 25],
+        maxDrawdownPct: [1, 50],
+        autoTradeThreshold: [50, 100],
+        scanInterval: [5, 3600],
+        coinCount: [5, 100],
+        tp1AtrMultiple: [0.5, 10],
+        tp2AtrMultiple: [1, 10],
+        tp3FibLevel: [1, 5],
+        slAtrMultiple: [0.3, 5],
+        minRRRatio: [1, 10],
+        trailActivationR: [0.5, 5],
+      };
+      const validationErrors: string[] = [];
+      for (const [field, [min, max]] of Object.entries(numericBounds)) {
+        if (payload[field] !== undefined) {
+          const val = Number(payload[field]);
+          if (isNaN(val)) {
+            validationErrors.push(`${field} must be a number, got: ${payload[field]}`);
+            delete payload[field];
+          } else {
+            payload[field] = Math.max(min, Math.min(max, val));
+          }
+        }
+      }
+      if (validationErrors.length > 0) {
+        console.warn('[Settings Validation]', validationErrors);
+      }
+      // Add metadata
+      payload.updatedAt = new Date().toISOString();
+      payload.settingsVersion = (autoTrader.getSettings().settingsVersion || 0) + 1;
       const updated = await autoTrader.saveSettings(payload);
-      res.json({ success: true, settings: updated });
+      res.json({ 
+        success: true, 
+        settings: updated,
+        engineStatus: {
+          applied: true,
+          activeVersion: updated.settingsVersion || 1
+        },
+        ...(validationErrors.length > 0 && { validationWarnings: validationErrors })
+      });
+    } catch (e) {
+      res.status(500).json({ success: false, error: String(e) });
+    }
+  });
+
+  // Settings Audit Trail endpoint (Milestone 4 / Phase 13)
+  app.get("/api/settings/audit", (req, res) => {
+    try {
+      const audits = getSettingsAudits(100);
+      res.json(audits);
     } catch (e) {
       res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // Settings Health & Version Alignment endpoint (Milestone 5 / Phase 12)
+  app.get("/api/settings/health", (req, res) => {
+    try {
+      const current = autoTrader.getSettings();
+      const activeVersion = autoTrader.getActiveSettingsVersion();
+      res.json({
+        dbVersion: activeVersion,
+        engineVersion: activeVersion,
+        engineRunning: autoTrader.isEngineActive(),
+        lastSaved: current.updatedAt || new Date().toISOString(),
+        lastApplied: current.updatedAt || new Date().toISOString(),
+        status: "SYNCHRONIZED",
+        tradingMode: current.tradingMode || 'PAPER',
+        activeStrategy: current.activeStrategy,
+        accountRiskPct: current.accountRiskPct,
+        dailyLossLimitPct: current.dailyLossLimitPct,
+        maxConcurrentTrades: current.maxConcurrentTrades,
+        leverage: current.leverage
+      });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // Canonical Phase 6 endpoints
+  app.get("/api/settings/trading", (req, res) => {
+    try {
+      const settings = autoTrader.getSettings();
+      const safeSettings = { ...settings };
+      if (safeSettings.binanceApiKey) {
+        safeSettings.binanceApiKey = safeSettings.binanceApiKey.slice(0, 4) + '****' + safeSettings.binanceApiKey.slice(-4);
+      }
+      if (safeSettings.binanceApiSecret) {
+        safeSettings.binanceApiSecret = '••••••••';
+      }
+      if (safeSettings.telegramBotToken) {
+        safeSettings.telegramBotToken = safeSettings.telegramBotToken.slice(0, 6) + '****';
+      }
+      if (safeSettings.githubPat) {
+        safeSettings.githubPat = safeSettings.githubPat.slice(0, 4) + '****';
+      }
+      res.json(safeSettings);
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.post("/api/settings/trading/validate", (req, res) => {
+    try {
+      const result = validateTradingSettings(req.body);
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ valid: false, errors: [String(e)], warnings: [], sanitized: {} });
     }
   });
 
@@ -211,20 +398,38 @@ app.get("/api/health", (req, res) => {
 
   app.get("/api/positions", async (req, res) => {
     try {
+      if (isQuotaExhausted()) {
+        const local = positionMonitor.getActivePositions();
+        return res.json(local.length > 0 ? local : readLocalJson('positions.json', []));
+      }
       const q = query(collection(db, 'positions'), where('status', '==', 'OPEN'));
       const snapshot = await getDocs(q);
       const positions = snapshot.docs.map(doc => doc.data());
       res.json(positions);
     } catch(e) {
-      res.status(500).json({ error: String(e) });
+      const local = positionMonitor.getActivePositions();
+      res.json(local.length > 0 ? local : readLocalJson('positions.json', []));
     }
   });
 
   app.get("/api/trade_logs", async (req, res) => {
     try {
-      const q = query(collection(db, 'trade_logs'), orderBy('time_close', 'desc'));
+      if (isQuotaExhausted()) {
+        return res.json(getRecentTradeLogsFromDisk(100));
+      }
+      const q = query(collection(db, 'trade_logs'), orderBy('time_close', 'desc'), limit(100));
       const snapshot = await getDocs(q);
-      const logs = snapshot.docs.map(doc => doc.data());
+      const logs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json(logs);
+    } catch(e) {
+      res.json(getRecentTradeLogsFromDisk(100));
+    }
+  });
+
+  app.get("/api/signal_audit", async (req, res) => {
+    try {
+      const limitParam = parseInt(req.query.limit as string) || 100;
+      const logs = getSignalAudits(limitParam);
       res.json(logs);
     } catch(e) {
       res.status(500).json({ error: String(e) });
@@ -233,6 +438,12 @@ app.get("/api/health", (req, res) => {
 
   app.post("/api/bot/trade", async (req, res) => {
     try {
+      if (!autoTrader.isEngineActive()) {
+        return res.status(403).json({ 
+          success: false, 
+          error: "Trading engine is STOPPED. New trade execution is blocked." 
+        });
+      }
       const { symbol, direction, price, quantity, leverage, allocatedBalance, score, atr, sl, tp1, tp2, tp3, strategy, frequencyPreset, marketRegime, isAutoRegime } = req.body;
       if (!symbol || !direction || !price) {
         return res.status(400).json({ success: false, error: "Missing required trade fields (symbol, direction, price)" });
@@ -244,9 +455,9 @@ app.get("/api/health", (req, res) => {
       }
       await positionMonitor.refreshOpenPositions();
       res.json({ success: true, posId });
-    } catch(e) {
+    } catch(e: any) {
       console.error("Trade execution error:", e);
-      res.status(500).json({ success: false, error: String(e) });
+      res.status(500).json({ success: false, error: String(e?.message || e) });
     }
   });
 
@@ -305,12 +516,24 @@ app.get("/api/health", (req, res) => {
     }
   });
 
-  app.get("/api/status", (req, res) => {
-    res.json({ 
-      status: "24/7 Trading engine active.", 
-      stream: "Binance Futures Live WebSocket",
-      activePositions: positionMonitor.getActivePositions().length
-    });
+  app.get("/api/status", async (req, res) => {
+    try {
+      const globalRegime = await autoTrader.getGlobalRegime();
+      res.json({ 
+        status: autoTrader.isEngineActive() ? "24/7 Trading engine active." : "Trading engine STOPPED.", 
+        engineRunning: autoTrader.isEngineActive(),
+        stream: "Binance Futures Live WebSocket",
+        activePositions: positionMonitor.getActivePositions().length,
+        globalRegime
+      });
+    } catch (e) {
+      res.json({
+        status: autoTrader.isEngineActive() ? "24/7 Trading engine active." : "Trading engine STOPPED.",
+        engineRunning: autoTrader.isEngineActive(),
+        stream: "Binance Futures Live WebSocket",
+        activePositions: positionMonitor.getActivePositions().length
+      });
+    }
   });
 
   app.post("/api/git/push", async (req, res) => {
@@ -346,8 +569,9 @@ app.get("/api/health", (req, res) => {
       const hasChanges = statusRes.stdout && statusRes.stdout.trim().length > 0;
       
       if (hasChanges) {
-        const safeCommitMsg = commitMessage.replace(/"/g, '\\"');
-        await execAsync(`git commit -m "${safeCommitMsg}"`);
+        // S4 fix: Sanitize commit message to prevent command injection
+        const safeMessage = commitMessage.replace(/[`$(){}|;&<>\\"]/g, '');
+        await execAsync(`git commit -m "${safeMessage}"`);
       } else {
         const hasCommits = await execAsync('git rev-parse --verify HEAD').then(() => true).catch(() => false);
         if (!hasCommits) {

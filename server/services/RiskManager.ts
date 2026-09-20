@@ -1,6 +1,7 @@
 export class RiskManager {
   private maxLeverage = 20;
   private maxExposurePct = 1.0; // Allow up to 80% total exposure across concurrent positions
+  private maxSimultaneousTrades = 5;
   private currentExposure = 0;
   private consecutiveLosses = 0;
   private maxConsecutiveLosses = 4;
@@ -59,6 +60,14 @@ export class RiskManager {
       return { allowed: false, reason: `Daily loss limit reached (${this.currentDailyLossPct.toFixed(2)}%)` };
     }
 
+    if (this.consecutiveLosses >= this.maxConsecutiveLosses) {
+      return { allowed: false, reason: `Max consecutive losses (${this.maxConsecutiveLosses}) reached.` };
+    }
+    
+    if (currentPositionsCount >= this.maxSimultaneousTrades) {
+      return { allowed: false, reason: `Max simultaneous positions (${this.maxSimultaneousTrades}) reached.` };
+    }
+
     const proposedExposure = (this.currentExposure + requestedAllocation) / (balance || 10000);
     if (proposedExposure > this.maxExposurePct) {
       return { allowed: false, reason: `Exposure limit exceeded. Max: ${(this.maxExposurePct * 100).toFixed(0)}%, Proposed: ${(proposedExposure * 100).toFixed(1)}%` };
@@ -71,11 +80,34 @@ export class RiskManager {
     this.currentExposure = Math.max(0, totalAllocated);
   }
 
-  public calculatePositionSize(balance: number, riskPct: number, leverage: number, entryPrice: number): { allocatedBalance: number, quantity: number, actualLeverage: number } {
+  public calculatePositionSize(
+    balance: number, 
+    riskPct: number, 
+    leverage: number, 
+    entryPrice: number,
+    stopPrice?: number
+  ): { allocatedBalance: number, quantity: number, actualLeverage: number } {
     const actualLeverage = Math.min(leverage, this.maxLeverage);
-    const allocatedBalance = balance * (riskPct / 100);
-    const totalPositionSize = allocatedBalance * actualLeverage;
-    const quantity = totalPositionSize / entryPrice;
+    const dollarRisk = balance * (riskPct / 100);
+    const stopDistance = stopPrice ? Math.abs(entryPrice - stopPrice) : 0;
+    
+    let quantity: number;
+    let allocatedBalance: number;
+
+    if (stopDistance > 0) {
+      // True risk-based sizing: quantity = (balance * riskPct/100) / stopDistance
+      quantity = dollarRisk / stopDistance;
+      const notional = quantity * entryPrice;
+      const maxNotional = balance * actualLeverage;
+      if (notional > maxNotional) {
+        quantity = maxNotional / entryPrice;
+      }
+      allocatedBalance = (quantity * entryPrice) / actualLeverage;
+    } else {
+      allocatedBalance = balance * (riskPct / 100);
+      const totalPositionSize = allocatedBalance * actualLeverage;
+      quantity = totalPositionSize / entryPrice;
+    }
     
     return {
       allocatedBalance,

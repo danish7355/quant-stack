@@ -1,0 +1,77 @@
+--- server/services/OMS.ts
++++ server/services/OMS.ts
+@@ -83,12 +83,6 @@
+         throw new Error(`Risk manager check disallowed trade for ${symbol}: ${riskCheck.reason}`);
+       }
+ 
+-      // Execute on live exchange if live mode is enabled
+-      if (executionAdapter.getIsLive()) {
+-        const side = direction === 'LONG' ? 'buy' : 'sell';
+-        await executionAdapter.createMarketOrder(symbol, side, finalQuantityResolved, finalLeverageResolved);
+-      }
+-
+       const safeAtr = (atr && atr > 0) ? atr : (price * 0.015);
+       
+       // Tight Stop Loss (1.0x ATR or explicit structural level) & 1:3 Asymmetric Target
+@@ -118,6 +112,36 @@
+       const tp3 = (customOpts?.tp3 !== undefined && customOpts.tp3 > 0)
+         ? customOpts.tp3 
+         : (direction === 'LONG' ? price + computedRisk * 3.0 : Math.max(0.0001, price - computedRisk * 3.0));
+       
+-      const posId = Math.random().toString(36).substring(7);
++      const posId = `sig_${Date.now()}_${Math.random().toString(36).substring(4)}`;
++      const strategyPrefix = (customOpts?.strategy || 'GEN').substring(0, 8).replace(/[^a-zA-Z0-9]/g, '');
++      
++      // Generate 36-char max deterministic Client Order IDs
++      const baseId = `${strategyPrefix}-${symbol}-${posId}`;
++      const entryOrderId = `E-${baseId}`.substring(0, 36);
++      const stopOrderId = `S-${baseId}`.substring(0, 36);
++
++      let executionState = 'SIGNAL_CREATED';
++
++      // Execute on live exchange if live mode is enabled
++      if (executionAdapter.getIsLive()) {
++        const side = direction === 'LONG' ? 'buy' : 'sell';
++        const stopSide = direction === 'LONG' ? 'sell' : 'buy';
++
++        try {
++          executionState = 'ORDER_SUBMITTED';
++          await executionAdapter.createMarketOrder(symbol, side, finalQuantityResolved, finalLeverageResolved, entryOrderId);
++          
++          executionState = 'FILLED';
++          
++          // IMMEDIATELY Submit Protective Stop Loss
++          await executionAdapter.createStopMarketOrder(symbol, stopSide, finalQuantityResolved, sl, stopOrderId);
++          
++          executionState = 'PROTECTION_PLACED';
++        } catch (ex: any) {
++          console.error(`🚨 [CRITICAL OMS ERROR] Failed during execution state: ${executionState} for ${symbol}. Triggering emergency fallback.`, ex);
++          // If we filled the entry but failed to place the stop loss, we MUST close the position to prevent unprotected exposure.
++          if (executionState === 'FILLED' || executionState === 'ORDER_SUBMITTED') {
++            try {
++              const closeSide = direction === 'LONG' ? 'sell' : 'buy';
++              await executionAdapter.closeMarketPosition(symbol, closeSide, finalQuantityResolved, `EMG-${baseId}`.substring(0, 36));
++              console.warn(`🛡️ Emergency close succeeded for unprotected ${symbol} position.`);
++            } catch (closeErr) {
++              console.error(`🚨🚨 FATAL: Emergency close FAILED for ${symbol}. Manual intervention required!`, closeErr);
++            }
++          }
++          throw new Error(`Execution failed at state ${executionState}: ${ex.message}`);
++        }
++      }
++      
++      executionState = 'POSITION_ACTIVE';
+       
+       const positionData = {
+         id: posId,
+@@ -155,7 +179,9 @@
+         extremeSinceEntry: price,
+         score_at_entry: score || 80,
+         time_open: new Date().toISOString(),
+-        status: 'OPEN'
++        status: 'OPEN',
++        execution_state: executionState,
++        client_order_id_base: baseId
+       };
+ 
+       const docRef = doc(db, 'positions', posId);

@@ -403,9 +403,12 @@ export function evaluateDetailedCoinGates(
   evaluatedGates: EvaluatedGateResult[];
   primaryBlockReason: string;
 } {
-  const strategy = settings.activeStrategy || 'BINANCE_COMPOSITE';
+  const enabledStrats: string[] = (settings.enabledStrategies && settings.enabledStrategies.length > 0)
+    ? settings.enabledStrategies
+    : [settings.activeStrategy || 'VOLATILITY_COMPRESSION'];
+  const strategy = settings.activeStrategy || enabledStrats[0] || 'VOLATILITY_COMPRESSION';
   const relevantGates = GATES_REGISTRY.filter(
-    (g) => g.strategy === strategy || g.strategy === 'RISK_ENGINE'
+    (g) => enabledStrats.includes(g.strategy as any) || g.strategy === 'RISK_ENGINE'
   );
 
   const results: EvaluatedGateResult[] = [];

@@ -1,9 +1,21 @@
 import { db } from '../firebase.js';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc } from 'firebase/firestore';
+import { safeGetDoc, readLocalJson } from './firestoreSafe.js';
 
 export class TelegramService {
   private botToken: string = process.env.TELEGRAM_BOT_TOKEN || '';
   private chatId: string = process.env.TELEGRAM_CHAT_ID || '';
+
+  // Alert Settings
+  public alertOnNewSignal: boolean = true;
+  public alertOnTradeExecuted: boolean = true;
+  public alertOnTpHit: boolean = true;
+  public alertOnSlHit: boolean = true;
+  public alertOnTsMoved: boolean = true;
+  public alertOnDailyLossLimit: boolean = true;
+  public alertOnRangingDetected: boolean = true;
+  public alertSilentMode: boolean = false;
+  public alertFormat: 'Verbose' | 'Minimal' = 'Verbose';
 
   private messageQueue: { text: string; resolve: (val: boolean) => void }[] = [];
   private isProcessingQueue: boolean = false;
@@ -14,16 +26,37 @@ export class TelegramService {
   }
 
   public async loadConfigFromDb() {
+    // First try local settings backup
     try {
-      const docSnap = await getDoc(doc(db, 'settings', 'bot_config'));
-      if (docSnap.exists()) {
-        const data = docSnap.data();
+      const localSettings = readLocalJson<any>('settings.json', null);
+      if (localSettings) {
+        if (localSettings.telegramBotToken) this.botToken = localSettings.telegramBotToken;
+        if (localSettings.telegramChatId) this.chatId = localSettings.telegramChatId;
+        this.updateSettings(localSettings);
+      }
+    } catch (e) {}
+
+    try {
+      const snapRes = await safeGetDoc(doc(db, 'settings', 'bot_config'));
+      if (snapRes.exists && snapRes.data) {
+        const data = snapRes.data;
         if (data.telegramBotToken) this.botToken = data.telegramBotToken;
         if (data.telegramChatId) this.chatId = data.telegramChatId;
+        
+        this.alertOnNewSignal = data.alertOnNewSignal ?? true;
+        this.alertOnTradeExecuted = data.alertOnTradeExecuted ?? true;
+        this.alertOnTpHit = data.alertOnTpHit ?? true;
+        this.alertOnSlHit = data.alertOnSlHit ?? true;
+        this.alertOnTsMoved = data.alertOnTsMoved ?? true;
+        this.alertOnDailyLossLimit = data.alertOnDailyLossLimit ?? true;
+        this.alertOnRangingDetected = data.alertOnRangingDetected ?? true;
+        this.alertSilentMode = data.alertSilentMode ?? false;
+        this.alertFormat = data.alertFormat ?? 'Verbose';
+        
         console.log(`📱 [Telegram] Config loaded from DB. Chat: ${this.chatId ? 'Configured' : 'Missing'}, Token: ${this.botToken ? 'Configured' : 'Missing'}`);
       }
     } catch (e) {
-      console.warn('TelegramService: Could not load config from Firestore yet.');
+      console.warn('TelegramService: Could not load config from Firestore, using local fallback.');
     }
   }
 
@@ -31,6 +64,20 @@ export class TelegramService {
     if (token !== undefined) this.botToken = token;
     if (chatId !== undefined) this.chatId = chatId;
     console.log(`📱 [Telegram] Config updated. Chat: ${this.chatId ? 'Configured' : 'Missing'}, Token: ${this.botToken ? 'Configured' : 'Missing'}`);
+  }
+
+  public updateSettings(settings: any) {
+    if (settings.telegramBotToken !== undefined) this.botToken = settings.telegramBotToken;
+    if (settings.telegramChatId !== undefined) this.chatId = settings.telegramChatId;
+    if (settings.alertOnNewSignal !== undefined) this.alertOnNewSignal = settings.alertOnNewSignal;
+    if (settings.alertOnTradeExecuted !== undefined) this.alertOnTradeExecuted = settings.alertOnTradeExecuted;
+    if (settings.alertOnTpHit !== undefined) this.alertOnTpHit = settings.alertOnTpHit;
+    if (settings.alertOnSlHit !== undefined) this.alertOnSlHit = settings.alertOnSlHit;
+    if (settings.alertOnTsMoved !== undefined) this.alertOnTsMoved = settings.alertOnTsMoved;
+    if (settings.alertOnDailyLossLimit !== undefined) this.alertOnDailyLossLimit = settings.alertOnDailyLossLimit;
+    if (settings.alertOnRangingDetected !== undefined) this.alertOnRangingDetected = settings.alertOnRangingDetected;
+    if (settings.alertSilentMode !== undefined) this.alertSilentMode = settings.alertSilentMode;
+    if (settings.alertFormat !== undefined) this.alertFormat = settings.alertFormat;
   }
 
   public isConfigured(): boolean {
@@ -95,7 +142,8 @@ export class TelegramService {
           chat_id: this.chatId,
           text,
           parse_mode: 'Markdown',
-          disable_web_page_preview: true
+          disable_web_page_preview: true,
+          disable_notification: this.alertSilentMode === true
         })
       });
       const resData: any = await response.json();
@@ -124,7 +172,8 @@ export class TelegramService {
           body: JSON.stringify({
             chat_id: this.chatId,
             text: plainText,
-            disable_web_page_preview: true
+            disable_web_page_preview: true,
+            disable_notification: this.alertSilentMode === true
           })
         });
         const retryData: any = await retryRes.json();
@@ -139,6 +188,15 @@ export class TelegramService {
     } catch (e) {
       console.error('❌ [Telegram] Network dispatch exception:', e);
       return false;
+    }
+  }
+
+  public async sendUrgentAlert(text: string) {
+    if (!this.botToken || !this.chatId) return;
+    try {
+      await this.sendSingleMessage(`🚨 <b>URGENT ALERT</b> 🚨\n\n${text}`);
+    } catch (e) {
+      console.error('Failed to send urgent alert:', e);
     }
   }
 
@@ -159,6 +217,8 @@ export class TelegramService {
     tp2: number;
     tp3: number;
   }, score?: number) {
+    if (!this.alertOnTradeExecuted) return false;
+
     const isLong = pos.direction === 'LONG';
     const icon = isLong ? '🟢' : '🔴';
     const arrow = isLong ? '📈 LONG' : '📉 SHORT';
@@ -191,24 +251,26 @@ export class TelegramService {
       ? `*Selection Mode:* \`🤖 Auto Regime-Adaptive (Best EV)\`\n` 
       : `*Selection Mode:* \`Manual / Default\`\n`;
 
-    const message = `${icon} *24/7 BOT: TRADE OPENED*\n\n` +
-      `*Pair:* \`${pos.symbol}\`\n` +
-      `*Action:* ${arrow}\n` +
-      `*Strategy:* \`${stratName}\`\n` +
-      regimeLine +
-      modeBadge +
-      `*Frequency Mode:* \`${freqBadge}\`\n` +
-      `*Entry Price:* \`$${pos.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
-      `*Leverage:* \`${pos.leverage}x\`\n` +
-      `*Allocated Margin:* \`$${pos.allocated_balance.toFixed(2)}\`\n` +
-      `*Position Size:* \`$${(pos.allocated_balance * pos.leverage).toFixed(2)}\` (\`${pos.quantity.toFixed(4)}\`)\n` +
-      (score ? `*Strategy Score:* \`${score}/100\`\n` : '') +
-      `----------------------------\n` +
-      `🎯 *TP1:* \`$${pos.tp1.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
-      `🎯 *TP2:* \`$${pos.tp2.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
-      `🎯 *TP3:* \`$${pos.tp3.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
-      `🛑 *Stop Loss:* \`$${pos.sl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n\n` +
-      `⏰ _Time: ${new Date().toUTCString()}_`;
+    const message = this.alertFormat === 'Minimal' 
+      ? `${icon} *TRADE OPENED: ${pos.symbol}*\n*Action:* ${arrow}\n*Price:* \`$${pos.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n*Leverage:* \`${pos.leverage}x\`\n*Strategy:* \`${stratName}\``
+      : `${icon} *24/7 BOT: TRADE OPENED*\n\n` +
+        `*Pair:* \`${pos.symbol}\`\n` +
+        `*Action:* ${arrow}\n` +
+        `*Strategy:* \`${stratName}\`\n` +
+        regimeLine +
+        modeBadge +
+        `*Frequency Mode:* \`${freqBadge}\`\n` +
+        `*Entry Price:* \`$${pos.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
+        `*Leverage:* \`${pos.leverage}x\`\n` +
+        `*Allocated Margin:* \`$${pos.allocated_balance.toFixed(2)}\`\n` +
+        `*Position Size:* \`$${(pos.allocated_balance * pos.leverage).toFixed(2)}\` (\`${pos.quantity.toFixed(4)}\`)\n` +
+        (score ? `*Strategy Score:* \`${score}/100\`\n` : '') +
+        `----------------------------\n` +
+        `🎯 *TP1:* \`$${pos.tp1.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
+        `🎯 *TP2:* \`$${pos.tp2.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
+        `🎯 *TP3:* \`$${pos.tp3.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
+        `🛑 *Stop Loss:* \`$${pos.sl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n\n` +
+        `⏰ _Time: ${new Date().toUTCString()}_`;
 
     return this.sendMessage(message);
   }
@@ -222,6 +284,11 @@ export class TelegramService {
     allocated_balance: number;
   }, closePrice: number, pnl: number, pctReturn: number, reason: string) {
     const isWin = pnl >= 0;
+    
+    // Check specific exit alert settings
+    if (isWin && !this.alertOnTpHit) return false;
+    if (!isWin && !this.alertOnSlHit) return false;
+
     const icon = isWin ? '🎯' : '🛑';
     const status = isWin ? 'PROFIT' : 'STOPPED';
 
@@ -243,15 +310,17 @@ export class TelegramService {
     }
 
     const cleanReason = (reason || 'Closed').replace(/[[\]]/g, '');
-    const message = `${icon} *24/7 BOT: TRADE CLOSED (${cleanReason})*\n\n` +
-      `*Pair:* \`${pos.symbol}\` (${pos.direction})\n` +
-      `*Strategy:* \`${stratName}\`\n` +
-      `*Status:* *${status}*\n` +
-      `*Entry Price:* \`$${pos.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
-      `*Exit Price:* \`$${closePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
-      `*Net PnL:* \`${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}\` (\`${pctReturn >= 0 ? '+' : ''}${pctReturn.toFixed(2)}%\`)\n` +
-      `*Exit Reason:* \`${reason}\`\n\n` +
-      `⏰ _Time: ${new Date().toUTCString()}_`;
+    const message = this.alertFormat === 'Minimal'
+      ? `${icon} *TRADE CLOSED: ${pos.symbol}*\n*Status:* ${status} (${cleanReason})\n*Net PnL:* \`${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}\` (\`${pctReturn >= 0 ? '+' : ''}${pctReturn.toFixed(2)}%\`)`
+      : `${icon} *24/7 BOT: TRADE CLOSED (${cleanReason})*\n\n` +
+        `*Pair:* \`${pos.symbol}\` (${pos.direction})\n` +
+        `*Strategy:* \`${stratName}\`\n` +
+        `*Status:* *${status}*\n` +
+        `*Entry Price:* \`$${pos.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
+        `*Exit Price:* \`$${closePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
+        `*Net PnL:* \`${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}\` (\`${pctReturn >= 0 ? '+' : ''}${pctReturn.toFixed(2)}%\`)\n` +
+        `*Exit Reason:* \`${reason}\`\n\n` +
+        `⏰ _Time: ${new Date().toUTCString()}_`;
 
     return this.sendMessage(message);
   }
@@ -264,15 +333,19 @@ export class TelegramService {
     allocated_balance: number;
     sl: number;
   }, closePrice: number, pnl: number, pctReturn: number, closedQty: number, remainingQty: number) {
-    const message = `🎯 *24/7 BOT: VCB INITIAL TP HIT (25% SECURED)*\n\n` +
-      `*Pair:* \`${pos.symbol}\` (${pos.direction})\n` +
-      `*Action:* Banked 25% partial profit, Stop moved to Breakeven + Fee buffer\n` +
-      `*Entry Price:* \`$${pos.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
-      `*Exit Price:* \`$${closePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
-      `*Secured PnL:* \`+$${pnl.toFixed(2)}\` (\`+${pctReturn.toFixed(2)}%\`)\n` +
-      `*Closed Contracts:* \`${closedQty.toFixed(4)}\` | *Remaining:* \`${remainingQty.toFixed(4)}\` (75%)\n` +
-      `*New Trailing Stop (Chandelier):* \`$${pos.sl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n\n` +
-      `⏰ _Time: ${new Date().toUTCString()}_`;
+    if (!this.alertOnTpHit) return false;
+
+    const message = this.alertFormat === 'Minimal'
+      ? `🎯 *PARTIAL TP: ${pos.symbol}*\n*Secured:* \`+$${pnl.toFixed(2)}\` (\`+${pctReturn.toFixed(2)}%\`)\n*New SL:* \`$${pos.sl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\``
+      : `🎯 *24/7 BOT: VCB INITIAL TP HIT (25% SECURED)*\n\n` +
+        `*Pair:* \`${pos.symbol}\` (${pos.direction})\n` +
+        `*Action:* Banked 25% partial profit, Stop moved to Breakeven + Fee buffer\n` +
+        `*Entry Price:* \`$${pos.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
+        `*Exit Price:* \`$${closePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
+        `*Secured PnL:* \`+$${pnl.toFixed(2)}\` (\`+${pctReturn.toFixed(2)}%\`)\n` +
+        `*Closed Contracts:* \`${closedQty.toFixed(4)}\` | *Remaining:* \`${remainingQty.toFixed(4)}\` (75%)\n` +
+        `*New Trailing Stop (Chandelier):* \`$${pos.sl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n\n` +
+        `⏰ _Time: ${new Date().toUTCString()}_`;
 
     return this.sendMessage(message);
   }

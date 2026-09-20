@@ -1,0 +1,6 @@
+--- src/components/ToastContext.tsx
++++ src/components/ToastContext.tsx
+@@ -107,3 +107,22 @@
+     </ToastContext.Provider>
+   );
+ }

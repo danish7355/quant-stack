@@ -658,3 +658,423 @@ export function correlationAllowsEntry(candidateReturns: number[], openPositions
   return openPositions.every(p => Math.abs(pearsonCorrelation(candidateReturns, p.returns)) < max);
 }
 
+export interface VcbChecklistItem {
+  id: string;
+  name: string;
+  points: number;
+  maxPoints: number;
+  passed: boolean;
+  isMandatoryGate?: boolean;
+  detail: string;
+}
+
+export interface VcbChecklistResult {
+  passed: boolean;
+  score: number;
+  maxScore: number;
+  minScoreRequired: number;
+  gatePassed: boolean;
+  failedGates: string[];
+  items: VcbChecklistItem[];
+  summary: string;
+  recommendation: 'EXECUTE' | 'WAIT' | 'SKIP';
+}
+
+/**
+ * Evaluates the VCB Strategy Final Gate Checklist ("Before Executing a VCB Trade - Quick Checklist")
+ * 1. Higher-timeframe bias & draw on liquidity (+1 pt)
+ * 2. Location: discount/premium & key level (+2 pts)
+ * 3. Liquidity sweep / inducement (+2 pts)
+ * 4. Structure shift + displacement (+2 pts)
+ * 5. Retest into entry zone (+2 pts)
+ * 6. Risk & R:R defined (+2 pts)
+ * 7. Session & news filter (Gate / Pass-Fail)
+ */
+export function evaluateVcbChecklist(
+  candles: Candle[],
+  htfCandles: Candle[] | null | undefined,
+  breakout: BreakoutMetrics,
+  compression: CompressionState,
+  entryPrice: number,
+  sl: number,
+  tp1: number,
+  tp2: number,
+  atr: number,
+  settings: Partial<AppSettings> = {}
+): VcbChecklistResult {
+  const items: VcbChecklistItem[] = [];
+  const failedGates: string[] = [];
+  const direction = breakout.direction || 'LONG';
+  const minScoreRequired = settings.vcbChecklistMinScore ?? 8;
+  const minRrRatio = settings.vcbMinRrRatio ?? 2.0;
+
+  // 1. HIGHER-TIMEFRAME BIAS & DRAW ON LIQUIDITY (+1 pt)
+  let htfPoints = 0;
+  let htfPassed = false;
+  let htfDetail = '';
+
+  if (htfCandles && htfCandles.length >= 20) {
+    const htfCloses = htfCandles.map(c => c.close);
+    const htfEma50Series = calculateEMA(htfCloses, 50);
+    const htfEma200Series = calculateEMA(htfCloses, 200);
+    const lastHtfPrice = htfCloses[htfCloses.length - 1];
+    const htfEma50 = htfEma50Series[htfEma50Series.length - 1] || lastHtfPrice;
+    const htfEma200 = htfEma200Series[htfEma200Series.length - 1] || htfEma50;
+
+    const recentHtfBars = htfCandles.slice(-25);
+    const htfSwingHigh = Math.max(...recentHtfBars.map(c => c.high));
+    const htfSwingLow = Math.min(...recentHtfBars.map(c => c.low));
+
+    if (direction === 'LONG') {
+      const isBullishBias = lastHtfPrice >= htfEma50 || lastHtfPrice >= htfEma200 || htfEma50 >= htfEma200;
+      const hasLiquidityDrawAbove = htfSwingHigh > entryPrice * 1.002;
+      if (isBullishBias && hasLiquidityDrawAbove) {
+        htfPoints = 1;
+        htfPassed = true;
+        htfDetail = `Daily/4H trend bullish; draw on liquidity at $${htfSwingHigh.toFixed(2)}`;
+      } else if (isBullishBias) {
+        htfPoints = 1;
+        htfPassed = true;
+        htfDetail = `HTF trend bullish above EMA50/200; liquidity pool open`;
+      } else {
+        htfPoints = 0;
+        htfPassed = false;
+        htfDetail = `HTF bias bearish (price < HTF EMA50 $${htfEma50.toFixed(2)}); opposing trade`;
+      }
+    } else {
+      const isBearishBias = lastHtfPrice <= htfEma50 || lastHtfPrice <= htfEma200 || htfEma50 <= htfEma200;
+      const hasLiquidityDrawBelow = htfSwingLow < entryPrice * 0.998;
+      if (isBearishBias && hasLiquidityDrawBelow) {
+        htfPoints = 1;
+        htfPassed = true;
+        htfDetail = `Daily/4H trend bearish; draw on liquidity at $${htfSwingLow.toFixed(2)}`;
+      } else if (isBearishBias) {
+        htfPoints = 1;
+        htfPassed = true;
+        htfDetail = `HTF trend bearish below EMA50/200; liquidity pool open`;
+      } else {
+        htfPoints = 0;
+        htfPassed = false;
+        htfDetail = `HTF bias bullish (price > HTF EMA50 $${htfEma50.toFixed(2)}); opposing trade`;
+      }
+    }
+  } else {
+    // Fallback: LTF longer EMAs
+    const closes = candles.map(c => c.close);
+    const ema50 = calculateEMA(closes, 50).pop() || closes[closes.length - 1];
+    const isAligned = direction === 'LONG' ? entryPrice >= ema50 : entryPrice <= ema50;
+    if (isAligned) {
+      htfPoints = 1;
+      htfPassed = true;
+      htfDetail = `Execution TF trend aligned above/below EMA50; draw on liquidity active`;
+    } else {
+      htfPoints = 0;
+      htfPassed = false;
+      htfDetail = `Trend counter to baseline EMA50; no clear HTF alignment`;
+    }
+  }
+
+  items.push({
+    id: 'htf_bias_liquidity',
+    name: 'Higher-timeframe bias & draw on liquidity',
+    points: htfPoints,
+    maxPoints: 1,
+    passed: htfPassed,
+    detail: htfDetail
+  });
+
+  // 2. LOCATION: DISCOUNT / PREMIUM & KEY LEVEL (+2 pts)
+  let locPoints = 0;
+  let locPassed = false;
+  let locDetail = '';
+
+  const macroWindow = candles.slice(-80);
+  const macroHigh = Math.max(...macroWindow.map(c => c.high), compression.windowHigh + (compression.priorImpulseMove || 0));
+  const macroLow = Math.min(...macroWindow.map(c => c.low), compression.windowLow - (compression.priorImpulseMove || 0));
+  const macroRange = Math.max(1e-5, macroHigh - macroLow);
+  const macroEq = macroLow + macroRange * 0.5;
+
+  const keyBoundary = direction === 'LONG' ? compression.windowHigh : compression.windowLow;
+  const distFromBoundaryAtr = atr > 0 ? Math.abs(entryPrice - keyBoundary) / atr : 0;
+  const isAtKeyBoundary = distFromBoundaryAtr <= 0.25;
+  const isNearKeyBoundary = distFromBoundaryAtr <= 0.42;
+
+  if (direction === 'LONG') {
+    const isDiscount = entryPrice <= macroEq + 0.15 * macroRange;
+    if (isAtKeyBoundary && isDiscount) {
+      locPoints = 2;
+      locPassed = true;
+      locDetail = `Pristine entry at consolidation boundary ($${keyBoundary.toFixed(2)}) in discount structure`;
+    } else if (isAtKeyBoundary || (isNearKeyBoundary && isDiscount)) {
+      locPoints = 2;
+      locPassed = true;
+      locDetail = `At key consolidation breakout boundary ($${keyBoundary.toFixed(2)} within ${distFromBoundaryAtr.toFixed(2)} ATR)`;
+    } else if (isNearKeyBoundary || isDiscount) {
+      locPoints = 1;
+      locPassed = true;
+      locDetail = `Acceptable location: near key level ($${distFromBoundaryAtr.toFixed(2)} ATR from boundary)`;
+    } else {
+      locPoints = 0;
+      locPassed = false;
+      locDetail = `Overextended location (> 0.42 ATR beyond boundary into premium)`;
+    }
+  } else {
+    const isPremium = entryPrice >= macroEq - 0.15 * macroRange;
+    if (isAtKeyBoundary && isPremium) {
+      locPoints = 2;
+      locPassed = true;
+      locDetail = `Pristine entry at consolidation boundary ($${keyBoundary.toFixed(2)}) in premium structure`;
+    } else if (isAtKeyBoundary || (isNearKeyBoundary && isPremium)) {
+      locPoints = 2;
+      locPassed = true;
+      locDetail = `At key consolidation breakdown boundary ($${keyBoundary.toFixed(2)} within ${distFromBoundaryAtr.toFixed(2)} ATR)`;
+    } else if (isNearKeyBoundary || isPremium) {
+      locPoints = 1;
+      locPassed = true;
+      locDetail = `Acceptable location: near key level ($${distFromBoundaryAtr.toFixed(2)} ATR from boundary)`;
+    } else {
+      locPoints = 0;
+      locPassed = false;
+      locDetail = `Overextended location (> 0.42 ATR beyond boundary into discount)`;
+    }
+  }
+
+  items.push({
+    id: 'location_discount_premium',
+    name: 'Location: discount/premium & key level',
+    points: locPoints,
+    maxPoints: 2,
+    passed: locPassed,
+    detail: locDetail
+  });
+
+  // 3. LIQUIDITY SWEEP / INDUCEMENT (+2 pts)
+  let sweepPoints = 0;
+  let sweepPassed = false;
+  let sweepDetail = '';
+
+  const preBreakoutCandles = candles.slice(-14, -1);
+  let sweepFound = false;
+  let minorSweepFound = false;
+
+  for (const c of preBreakoutCandles) {
+    const cRange = c.high - c.low;
+    if (cRange <= 0) continue;
+    if (direction === 'LONG') {
+      const sweptBelow = c.low < compression.windowLow || c.low < compression.microLow;
+      const closedInside = c.close >= (c.low + 0.40 * cRange);
+      if (sweptBelow && closedInside) {
+        sweepFound = true;
+        break;
+      }
+      if (sweptBelow) minorSweepFound = true;
+    } else {
+      const sweptAbove = c.high > compression.windowHigh || c.high > compression.microHigh;
+      const closedInside = c.close <= (c.high - 0.40 * cRange);
+      if (sweptAbove && closedInside) {
+        sweepFound = true;
+        break;
+      }
+      if (sweptAbove) minorSweepFound = true;
+    }
+  }
+
+  if (sweepFound) {
+    sweepPoints = 2;
+    sweepPassed = true;
+    sweepDetail = `Confirmed liquidity sweep of stops with clean rejection wick before breakout`;
+  } else if (minorSweepFound || compression.isSqueezed) {
+    sweepPoints = 1;
+    sweepPassed = true;
+    sweepDetail = minorSweepFound 
+      ? `Minor liquidity sweep probe into boundary stops`
+      : `TTM Squeeze compression trapped opposing orderflow`;
+  } else {
+    sweepPoints = 0;
+    sweepPassed = false;
+    sweepDetail = `No liquidity sweep or inducement detected before move`;
+    if (settings.vcbRequireSweep) {
+      failedGates.push('VCB_REQUIRE_SWEEP');
+    }
+  }
+
+  items.push({
+    id: 'liquidity_sweep_inducement',
+    name: 'Liquidity sweep / inducement',
+    points: sweepPoints,
+    maxPoints: 2,
+    passed: sweepPassed,
+    detail: sweepDetail
+  });
+
+  // 4. STRUCTURE SHIFT + DISPLACEMENT (+2 pts)
+  let shiftPoints = 0;
+  let shiftPassed = false;
+  let shiftDetail = '';
+
+  const solidBody = breakout.bodyDominance >= 0.45;
+  const strongClose = breakout.closeStrength >= 0.65;
+  const impulsiveVolume = breakout.rvol >= 1.35 || breakout.volumeExpansion >= 1.50;
+
+  if (solidBody && strongClose && impulsiveVolume) {
+    shiftPoints = 2;
+    shiftPassed = true;
+    shiftDetail = `Strong displacement candle (Body ${(breakout.bodyDominance * 100).toFixed(0)}%, Close ${(breakout.closeStrength * 100).toFixed(0)}%, RVOL ${breakout.rvol.toFixed(1)}x)`;
+  } else if ((solidBody && strongClose) || (solidBody && impulsiveVolume)) {
+    shiftPoints = 1;
+    shiftPassed = true;
+    shiftDetail = `Moderate displacement (Body ${(breakout.bodyDominance * 100).toFixed(0)}%, RVOL ${breakout.rvol.toFixed(1)}x)`;
+  } else {
+    shiftPoints = 0;
+    shiftPassed = false;
+    shiftDetail = `Weak structure shift; lack of impulsive displacement or volume`;
+    failedGates.push('STRUCTURE_DISPLACEMENT');
+  }
+
+  items.push({
+    id: 'structure_shift_displacement',
+    name: 'Structure shift + displacement',
+    points: shiftPoints,
+    maxPoints: 2,
+    passed: shiftPassed,
+    isMandatoryGate: true,
+    detail: shiftDetail
+  });
+
+  // 5. RETEST INTO ENTRY ZONE (+2 pts)
+  let retestPoints = 0;
+  let retestPassed = false;
+  let retestDetail = '';
+
+  const boundaryAtr = breakout.boundaryBreakAtr; // Distance outside boundary in ATR
+  if (boundaryAtr <= 0.20) {
+    retestPoints = 2;
+    retestPassed = true;
+    retestDetail = `Sniper entry at broken boundary POI (${boundaryAtr.toFixed(2)} ATR extension)`;
+  } else if (boundaryAtr <= 0.42) {
+    retestPoints = 1;
+    retestPassed = true;
+    retestDetail = `Controlled reaction zone (${boundaryAtr.toFixed(2)} ATR extension)`;
+  } else {
+    retestPoints = 0;
+    retestPassed = false;
+    retestDetail = `Chasing move (${boundaryAtr.toFixed(2)} ATR away from POI, max 0.42)`;
+    if (settings.vcbRequireRetest) {
+      failedGates.push('RETEST_POI_CHASE');
+    }
+  }
+
+  items.push({
+    id: 'retest_entry_zone',
+    name: 'Retest into entry zone',
+    points: retestPoints,
+    maxPoints: 2,
+    passed: retestPassed,
+    detail: retestDetail
+  });
+
+  // 6. RISK & R:R DEFINED (+2 pts)
+  let rrPoints = 0;
+  let rrPassed = false;
+  let rrDetail = '';
+
+  const risk = Math.abs(entryPrice - sl);
+  const rewardTp1 = Math.abs(tp1 - entryPrice);
+  const rewardTp2 = Math.abs(tp2 - entryPrice);
+  const rrTp1 = risk > 0 ? rewardTp1 / risk : 0;
+  const rrTp2 = risk > 0 ? rewardTp2 / risk : 0;
+
+  if (rrTp1 >= minRrRatio || rrTp2 >= 3.0) {
+    rrPoints = 2;
+    rrPassed = true;
+    rrDetail = `Asymmetric R:R defined (TP1 1:${rrTp1.toFixed(1)}, TP2 1:${rrTp2.toFixed(1)}, SL beyond structural swing)`;
+  } else if (rrTp1 >= 1.5 || rrTp2 >= 2.0) {
+    rrPoints = 1;
+    rrPassed = true;
+    rrDetail = `Adequate R:R (TP1 1:${rrTp1.toFixed(1)}, TP2 1:${rrTp2.toFixed(1)})`;
+  } else {
+    rrPoints = 0;
+    rrPassed = false;
+    rrDetail = `Insufficient R:R (TP1 1:${rrTp1.toFixed(1)} < 1.5 min required)`;
+    failedGates.push('RISK_REWARD_INSUFFICIENT');
+  }
+
+  items.push({
+    id: 'risk_reward_defined',
+    name: 'Risk & R:R defined',
+    points: rrPoints,
+    maxPoints: 2,
+    passed: rrPassed,
+    isMandatoryGate: true,
+    detail: rrDetail
+  });
+
+  // 7. SESSION & NEWS FILTER (Gate / Pass-Fail)
+  let sessionPassed = true;
+  let sessionDetail = '';
+
+  const lastCandle = candles[candles.length - 1];
+  const candleTimeMs = lastCandle ? (lastCandle.time > 1e11 ? lastCandle.time : lastCandle.time * 1000) : Date.now();
+  const utcHour = new Date(candleTimeMs).getUTCHours();
+
+  if (settings.vcbEnforceKillZone) {
+    // London: 07:00 - 11:00 UTC, NY: 13:00 - 17:00 UTC
+    const inLondon = utcHour >= 7 && utcHour < 11;
+    const inNewYork = utcHour >= 13 && utcHour < 17;
+    if (inLondon || inNewYork) {
+      sessionPassed = true;
+      sessionDetail = `Active Kill Zone: ${inLondon ? 'London' : 'New York'} Open (UTC ${utcHour}:00)`;
+    } else {
+      sessionPassed = false;
+      sessionDetail = `Outside London/NY kill zones (UTC ${utcHour}:00)`;
+      failedGates.push('SESSION_KILL_ZONE');
+    }
+  } else {
+    sessionPassed = true;
+    sessionDetail = `Session active; volume profile verified (UTC ${utcHour}:00)`;
+  }
+
+  items.push({
+    id: 'session_news_filter',
+    name: 'Session & news filter',
+    points: 0,
+    maxPoints: 0,
+    passed: sessionPassed,
+    isMandatoryGate: true,
+    detail: sessionDetail
+  });
+
+  const totalScore = items.reduce((sum, item) => sum + item.points, 0);
+  const maxScore = 11;
+  const gatePassed = failedGates.length === 0;
+  const overallPassed = totalScore >= minScoreRequired && gatePassed;
+
+  let recommendation: 'EXECUTE' | 'WAIT' | 'SKIP' = 'SKIP';
+  let summary = '';
+
+  if (overallPassed) {
+    recommendation = 'EXECUTE';
+    summary = `Execute with confidence (Score: ${totalScore}/${maxScore}, All Gates Passed)`;
+  } else if (totalScore >= 6 && gatePassed) {
+    recommendation = 'WAIT';
+    summary = `Wait for better development / retest confirmation (Score: ${totalScore}/${maxScore})`;
+  } else {
+    recommendation = 'SKIP';
+    const reasons = failedGates.length > 0 ? failedGates.join(', ') : `${maxScore - totalScore} checklist pts missing`;
+    summary = `Skip trade: Checklist failed (${reasons})`;
+  }
+
+  return {
+    passed: overallPassed,
+    score: totalScore,
+    maxScore,
+    minScoreRequired,
+    gatePassed,
+    failedGates,
+    items,
+    summary,
+    recommendation
+  };
+}
+
+

@@ -15,13 +15,13 @@ describe('RiskManager', () => {
     expect(quantity).toBe((200 * 10) / 50000); // 0.04
   });
 
-  it('allows entry after consecutive losses since cooldown risk management is removed', () => {
+  it('blocks entry after max consecutive losses', () => {
     riskManager.recordTradeResult(-100, 10000);
     riskManager.recordTradeResult(-100, 10000);
     riskManager.recordTradeResult(-100, 10000);
     riskManager.recordTradeResult(-100, 10000);
     
-    expect(riskManager.checkEntryAllowed(10000, 200, 0).allowed).toBe(true);
+    expect(riskManager.checkEntryAllowed(10000, 200, 0).allowed).toBe(false);
   });
 
   it('blocks entry when kill switch active', () => {

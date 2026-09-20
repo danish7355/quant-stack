@@ -2,8 +2,8 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { initializeFirestore, setLogLevel } from 'firebase/firestore';
 import fs from 'fs';
 
-// Suppress internal Firestore gRPC disconnect warnings
-setLogLevel('error');
+// Suppress internal Firestore SDK console warnings/errors when quota limits are reached
+setLogLevel('silent');
 
 // Read config from file or environment variables
 const configPath = './firebase-applet-config.json';

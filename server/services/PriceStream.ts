@@ -12,6 +12,8 @@ export class PriceStream {
   private fallbackInterval: NodeJS.Timeout | null = null;
   private lastWsMessageTime = 0;
   private lastRestMessageTime = 0;
+  
+  public isStale = true;
 
   constructor() {
     this.start();
@@ -49,6 +51,7 @@ export class PriceStream {
       this.ws.on('message', (data: WebSocket.Data) => {
         try {
           this.lastWsMessageTime = Date.now();
+          this.isStale = false;
           const parsed = JSON.parse(data.toString());
           if (Array.isArray(parsed)) {
             const batch: Array<{ s: string; p: number }> = [];
@@ -102,6 +105,12 @@ export class PriceStream {
       const timeSinceWsMessage = now - this.lastWsMessageTime;
       const timeSinceRestMessage = now - this.lastRestMessageTime;
 
+      // Stale data circuit breaker
+      if (timeSinceWsMessage > 10000 && timeSinceRestMessage > 10000) {
+        if (!this.isStale) console.warn("🚨 [PriceStream] Market data is STALE (> 10s). Trading should be blocked.");
+        this.isStale = true;
+      }
+
       if (timeSinceWsMessage > 6000 && timeSinceRestMessage > 3000) {
         try {
           const res = await fetch('https://fapi.binance.com/fapi/v1/ticker/price');
@@ -118,6 +127,7 @@ export class PriceStream {
             if (batch.length > 0) {
               this.priceArray = batch;
               this.lastRestMessageTime = Date.now();
+              this.isStale = false;
               this.notifyListeners(batch);
             }
           } else {

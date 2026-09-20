@@ -1,12 +1,16 @@
-import React, { useState } from 'react';
-import { AppSettings, Timeframe } from '../types';
-import { RefreshCw, Eye, EyeOff, Github, UploadCloud } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { AppSettings, Timeframe, NUMERIC_BOUNDS } from '../types';
+import { RefreshCw, Eye, EyeOff, Github, UploadCloud, AlertTriangle, CheckCircle2, ArrowRight, ShieldAlert, Activity, History } from 'lucide-react';
+import { SettingsHealthPanel } from './SettingsHealthPanel';
+import { SettingsAuditLog } from './SettingsAuditLog';
 
 interface SettingsPanelProps {
   settings: AppSettings;
   onUpdateSettings: (newSettings: AppSettings) => void;
   onResetBalance: (amount: number) => void;
   onResetSettings: () => void;
+  hasLoadedServerSettings?: boolean;
+  settingsLoadError?: string | null;
 }
 
 const LocalNumberInput = ({ value, onChange, className }: any) => {
@@ -42,7 +46,7 @@ const LocalNumberInput = ({ value, onChange, className }: any) => {
   );
 };
 
-const InputRow = ({ label, desc, value, onChange, type = "number", className="" }: any) => {
+const InputRow = ({ label, desc, value, onChange, type = "number", className="", min, max }: any) => {
   const [localValue, setLocalValue] = React.useState(value?.toString() ?? "");
 
   React.useEffect(() => {
@@ -60,8 +64,9 @@ const InputRow = ({ label, desc, value, onChange, type = "number", className="" 
     if (type === 'number') {
       let finalValue = parseFloat(localValue);
       if (isNaN(finalValue)) finalValue = 0;
-      setLocalValue(finalValue.toString());
-      onChange(finalValue);
+      const clamped = Math.max(min ?? -Infinity, Math.min(max ?? Infinity, finalValue));
+      setLocalValue(clamped.toString());
+      onChange(clamped);
     }
   };
 
@@ -95,13 +100,70 @@ const InputRow = ({ label, desc, value, onChange, type = "number", className="" 
   );
 };
 
-export default function SettingsPanel({ settings, onUpdateSettings, onResetBalance, onResetSettings }: SettingsPanelProps) {
-  const [activeTab, setActiveTab] = useState<'general' | 'filters' | 'risk' | 'autotrade' | 'alerts' | 'credentials' | 'github'>('general');
+export default function SettingsPanel({
+  settings,
+  onUpdateSettings,
+  onResetBalance,
+  onResetSettings,
+  hasLoadedServerSettings = true,
+  settingsLoadError = null
+}: SettingsPanelProps) {
+  const [activeTab, setActiveTab] = useState<'general' | 'filters' | 'risk' | 'autotrade' | 'alerts' | 'credentials' | 'github' | 'health' | 'audit'>('general');
   const [showBotToken, setShowBotToken] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [showApiSecret, setShowApiSecret] = useState(false);
   const [telegramStatus, setTelegramStatus] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+
+  // Snapshot of last-saved configuration to detect exact diffs
+  const [savedSnapshot, setSavedSnapshot] = useState<AppSettings>(settings);
+
+  // Sync snapshot when remote settings load or when settings version changes from remote
+  useEffect(() => {
+    if (settings.settingsVersion && settings.settingsVersion !== savedSnapshot.settingsVersion) {
+      setSavedSnapshot(settings);
+    }
+  }, [settings.settingsVersion]);
+
+  // Compute exact diffs between current form state and last-saved snapshot
+  const diffs = useMemo(() => {
+    const list: Array<{ key: string; label: string; oldVal: string; newVal: string; highRisk?: boolean }> = [];
+    const allKeys = new Set([...Object.keys(savedSnapshot), ...Object.keys(settings)]) as Set<keyof AppSettings>;
+    for (const k of allKeys) {
+      if (k === 'updatedAt' || k === 'settingsVersion') continue;
+      const oldV = (savedSnapshot as any)[k];
+      const newV = (settings as any)[k];
+      if (JSON.stringify(oldV) !== JSON.stringify(newV)) {
+        const bound = NUMERIC_BOUNDS[k as string];
+        const isHighRisk = bound?.highRisk || k === 'leverage' || k === 'accountRiskPct' || k === 'dailyLossLimitPct' || k === 'autoTradeEnabled';
+        list.push({
+          key: k as string,
+          label: bound?.label || String(k),
+          oldVal: oldV !== undefined ? String(oldV) : '—',
+          newVal: newV !== undefined ? String(newV) : '—',
+          highRisk: Boolean(isHighRisk)
+        });
+      }
+    }
+    return list;
+  }, [savedSnapshot, settings]);
+
+  const isDirty = diffs.length > 0;
+  const hasHighRiskChanges = diffs.some(d => d.highRisk);
+
+  // Warn on navigation/close with unsaved changes
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [isDirty]);
 
   const [isPushing, setIsPushing] = useState(false);
   const [gitStatus, setGitStatus] = useState<string | null>(null);
@@ -141,24 +203,48 @@ export default function SettingsPanel({ settings, onUpdateSettings, onResetBalan
     }
   };
 
-  const handleSaveSettings = async () => {
-    // Force blur on the active element to trigger any pending local updates
+  const handleSaveSettings = () => {
+    // Force blur on active element to flush pending input
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
 
+    if (diffs.length === 0) {
+      setSaveStatus('✓ No changes to save');
+      setTimeout(() => setSaveStatus(null), 2500);
+      return;
+    }
+
+    // Open confirmation diff modal
+    setShowConfirmModal(true);
+  };
+
+  const executeActualSave = async () => {
+    setIsSaving(true);
     try {
-      // Direct explicit sync to server Firestore endpoint
-      await fetch('/api/bot/settings', {
+      const res = await fetch('/api/bot/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings)
       });
-      setSaveStatus('✓ Saved to Cloud Database & Synced!');
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        setSaveStatus(`✗ Save failed: ${errData.error || res.statusText}`);
+        return;
+      }
+      const data = await res.json();
+      if (data.settings) {
+        onUpdateSettings(data.settings);
+        setSavedSnapshot(data.settings);
+      }
+      setShowConfirmModal(false);
+      setSaveStatus(`✓ Saved (v${data.engineStatus?.activeVersion || data.settings?.settingsVersion || '?'})`);
     } catch (e) {
-      setSaveStatus('✓ Saved locally & Queueing sync');
+      setSaveStatus('✗ Network error — settings NOT saved');
+    } finally {
+      setIsSaving(false);
+      setTimeout(() => setSaveStatus(null), 3500);
     }
-    setTimeout(() => setSaveStatus(null), 3000);
   };
 
   const handleInputChange = (category: keyof AppSettings | string, value: string | number | boolean) => {
@@ -173,39 +259,74 @@ export default function SettingsPanel({ settings, onUpdateSettings, onResetBalan
     }
     setTelegramStatus('Sending test alert...');
 
-    // First ensure server has latest token & chat ID
     try {
+      // First ensure server has latest token & chat ID
       await fetch('/api/bot/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings)
       });
-    } catch (e) {}
 
-    try {
-      const text = encodeURIComponent(`🤖 *CryptoBot Pro*\n\n📡 Connection Verified & Credentials Saved Successfully!\n\n⏰ _${new Date().toUTCString()}_`);
-      const response = await fetch(`https://api.telegram.org/bot${settings.telegramBotToken}/sendMessage?chat_id=${settings.telegramChatId}&text=${text}&parse_mode=Markdown`);
-      if (response.ok) {
-        setTelegramStatus('✓ Test alert delivered! Telegram credentials are confirmed and active.');
+      const res = await fetch('/api/bot/telegram/test', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          botToken: settings.telegramBotToken,
+          chatId: settings.telegramChatId
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTelegramStatus('✓ Test alert delivered via server bot engine!');
       } else {
-        const errJson = await response.json().catch(() => ({}));
-        setTelegramStatus(`Failed: ${errJson.description || 'Check token/permissions'}`);
+        setTelegramStatus(`Error: ${data.error || 'Check token/permissions'}`);
       }
     } catch (e: any) {
-      // Fallback to server-side test alert endpoint
-      try {
-        const res = await fetch('/api/bot/telegram/test', { method: 'POST' });
-        const data = await res.json();
-        if (data.success) {
-          setTelegramStatus('✓ Test alert delivered via server bot engine!');
-        } else {
-          setTelegramStatus(`Error: ${data.error || e.message}`);
-        }
-      } catch (err: any) {
-        setTelegramStatus(`Network error: ${e.message}`);
-      }
+      setTelegramStatus(`Network error: ${e.message}`);
     }
   };
+
+  if (!hasLoadedServerSettings && !settingsLoadError) {
+    return (
+      <div className="bg-[#161B22] border border-[#30363D] rounded-xl p-8 space-y-6">
+        <div className="flex items-center gap-3">
+          <RefreshCw className="w-6 h-6 animate-spin text-indigo-400" />
+          <div>
+            <h3 className="text-base font-bold text-white">Loading Configuration from Cloud Database...</h3>
+            <p className="text-xs text-gray-400">Fetching persisted parameters from Firestore settings/bot_config</p>
+          </div>
+        </div>
+        <div className="space-y-3 animate-pulse pt-4">
+          <div className="h-12 bg-[#0E1117] rounded-lg border border-[#30363D]" />
+          <div className="h-12 bg-[#0E1117] rounded-lg border border-[#30363D]" />
+          <div className="h-12 bg-[#0E1117] rounded-lg border border-[#30363D]" />
+        </div>
+      </div>
+    );
+  }
+
+  if (settingsLoadError) {
+    return (
+      <div className="bg-[#161B22] border border-rose-800/60 rounded-xl p-8 space-y-4">
+        <div className="flex items-center gap-3 text-rose-400">
+          <AlertTriangle className="w-6 h-6" />
+          <div>
+            <h3 className="text-base font-bold text-white">Configuration Load Error</h3>
+            <p className="text-xs text-rose-300/80">{settingsLoadError}</p>
+          </div>
+        </div>
+        <p className="text-xs text-gray-400">
+          Automated trading is paused. Settings cannot be edited or saved until the database connection is restored.
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 bg-rose-600/30 hover:bg-rose-600/40 text-rose-200 text-xs font-bold rounded border border-rose-500/50"
+        >
+          Retry Connection
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-[#161B22] border border-[#30363D] rounded-xl overflow-hidden shadow-lg h-full flex flex-col">
@@ -215,6 +336,11 @@ export default function SettingsPanel({ settings, onUpdateSettings, onResetBalan
           <span className="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
             ● Cloud Firestore Sync Active
           </span>
+          {isDirty && (
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse">
+              ● {diffs.length} Unsaved Changes
+            </span>
+          )}
         </div>
         <div className="flex space-x-3">
           <button 
@@ -226,9 +352,13 @@ export default function SettingsPanel({ settings, onUpdateSettings, onResetBalan
           </button>
           <button 
             onClick={handleSaveSettings}
-            className="flex items-center space-x-2 px-4 py-1.5 rounded-lg bg-gray-200 text-[#0E1117] hover:bg-white text-sm font-bold transition-all shadow-md shadow-sm"
+            className={`flex items-center space-x-2 px-4 py-1.5 rounded-lg text-sm font-bold transition-all shadow-md ${
+              isDirty
+                ? 'bg-indigo-500 hover:bg-indigo-400 text-white ring-2 ring-indigo-400/50'
+                : 'bg-gray-200 text-[#0E1117] hover:bg-white'
+            }`}
           >
-            <span>{saveStatus || 'Save Settings'}</span>
+            <span>{saveStatus || (isDirty ? `Review & Save (${diffs.length})` : 'Save Settings')}</span>
           </button>
         </div>
       </div>
@@ -238,10 +368,12 @@ export default function SettingsPanel({ settings, onUpdateSettings, onResetBalan
           { id: 'general', label: 'General System' },
           { id: 'credentials', label: '🔑 Bot Credentials' },
           { id: 'github', label: '🐙 GitHub Integration' },
-                              { id: 'filters', label: 'Filters' },
+          { id: 'filters', label: 'Filters' },
           { id: 'risk', label: 'Risk Management' },
           { id: 'autotrade', label: 'Auto-Trade' },
-          { id: 'alerts', label: 'Alerts' }
+          { id: 'alerts', label: 'Alerts' },
+          { id: 'health', label: '⚡ Sync & Health' },
+          { id: 'audit', label: '📜 Audit Trail' }
         ].map((tab) => (
           <button
             key={tab.id}
@@ -504,7 +636,7 @@ export default function SettingsPanel({ settings, onUpdateSettings, onResetBalan
         )}
         {activeTab === 'general' && (
           <div className="space-y-2">
-            <InputRow label="Scan Interval (Secs)" desc="How often the scanner runs" value={settings.scanInterval} onChange={(v: any) => handleInputChange('scanInterval', v)} />
+            <InputRow label="Scan Interval (Secs)" desc="How often the scanner runs" value={settings.scanInterval} onChange={(v: any) => handleInputChange('scanInterval', v)} min={5} max={3600} />
             
             <div className="flex justify-between items-center py-4 border-b border-[#30363D]/50">
               <div className="flex flex-col">
@@ -599,11 +731,11 @@ export default function SettingsPanel({ settings, onUpdateSettings, onResetBalan
 
         {activeTab === 'risk' && (
           <div className="space-y-2">
-            <InputRow label="Position Margin per Trade %" desc="% of total balance per trade (old setting)" value={settings.positionSizePct} onChange={(v: any) => handleInputChange('positionSizePct', v)} />
-            <InputRow label="Account Risk Per Trade %" desc="% of account to risk per trade (new setting)" value={settings.accountRiskPct} onChange={(v: any) => handleInputChange('accountRiskPct', v)} />
-            <InputRow label="Max Open Trades" desc="Maximum simultaneous positions" value={settings.maxConcurrentTrades} onChange={(v: any) => handleInputChange('maxConcurrentTrades', v)} />
-            <InputRow label="Leverage" desc="Default leverage for new positions" value={settings.leverage} onChange={(v: any) => handleInputChange('leverage', v)} />
-            <InputRow label="Max Daily Loss %" desc="Stop trading for the day above this loss" value={settings.dailyLossLimitPct} onChange={(v: any) => handleInputChange('dailyLossLimitPct', v)} />
+            <InputRow label="Position Margin per Trade %" desc="% of total balance per trade (old setting)" value={settings.positionSizePct} onChange={(v: any) => handleInputChange('positionSizePct', v)} min={0.1} max={100} />
+            <InputRow label="Account Risk Per Trade %" desc="% of account to risk per trade (new setting)" value={settings.accountRiskPct} onChange={(v: any) => handleInputChange('accountRiskPct', v)} min={0.1} max={10} />
+            <InputRow label="Max Open Trades" desc="Maximum simultaneous positions" value={settings.maxConcurrentTrades} onChange={(v: any) => handleInputChange('maxConcurrentTrades', v)} min={1} max={50} />
+            <InputRow label="Leverage" desc="Default leverage for new positions" value={settings.leverage} onChange={(v: any) => handleInputChange('leverage', v)} min={1} max={125} />
+            <InputRow label="Max Daily Loss %" desc="Stop trading for the day above this loss" value={settings.dailyLossLimitPct} onChange={(v: any) => handleInputChange('dailyLossLimitPct', v)} min={0.5} max={25} />
           </div>
         )}
 
@@ -665,12 +797,12 @@ export default function SettingsPanel({ settings, onUpdateSettings, onResetBalan
               </div>
             </div>
 
-            <InputRow label="Min Trade Score Threshold" desc="Minimum composite score to execute automated order" value={settings.autoTradeThreshold} onChange={(v: any) => handleInputChange('autoTradeThreshold', v)} />
-            <InputRow label="Max Drawdown %" desc="Pause trading above this total drawdown" value={settings.maxDrawdownPct} onChange={(v: any) => handleInputChange('maxDrawdownPct', v)} />
+            <InputRow label="Min Trade Score Threshold" desc="Minimum composite score to execute automated order" value={settings.autoTradeThreshold} onChange={(v: any) => handleInputChange('autoTradeThreshold', v)} min={50} max={100} />
+            <InputRow label="Max Drawdown %" desc="Pause trading above this total drawdown" value={settings.maxDrawdownPct} onChange={(v: any) => handleInputChange('maxDrawdownPct', v)} min={1} max={50} />
             
             <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mt-6 mb-2">ADDITIONAL TARGETS</h3>
-            <InputRow label="Take Profit 2 ATR Multiple" desc="Take Profit 2 (optional)" value={settings.tp2AtrMultiple} onChange={(v: any) => handleInputChange('tp2AtrMultiple', v)} />
-            <InputRow label="Take Profit 3 Fib Level" desc="Take Profit 3 (optional)" value={settings.tp3FibLevel} onChange={(v: any) => handleInputChange('tp3FibLevel', v)} />
+            <InputRow label="Take Profit 2 ATR Multiple" desc="Take Profit 2 (optional)" value={settings.tp2AtrMultiple} onChange={(v: any) => handleInputChange('tp2AtrMultiple', v)} min={1} max={10} />
+            <InputRow label="Take Profit 3 Fib Level" desc="Take Profit 3 (optional)" value={settings.tp3FibLevel} onChange={(v: any) => handleInputChange('tp3FibLevel', v)} min={1} max={5} />
             
             <div className="flex justify-between items-center py-4 border-b border-[#30363D]/50">
               <div className="flex flex-col">
@@ -703,7 +835,7 @@ export default function SettingsPanel({ settings, onUpdateSettings, onResetBalan
             <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mt-6 mb-2">SUPERTREND TRAILING STOP</h3>
             <InputRow label="SuperTrend ATR Period" desc="ATR window used for SuperTrend bands (default: 12)" value={settings.superTrendPeriod} onChange={(v: any) => handleInputChange('superTrendPeriod', v)} />
             <InputRow label="SuperTrend Multiplier" desc="Band width = ATR × multiplier (default: 3.0)" value={settings.superTrendMultiplier} onChange={(v: any) => handleInputChange('superTrendMultiplier', v)} />
-            <InputRow label="Trail Activation R" desc="Activate trailing exit after this many R earned (default: 1.0)" value={settings.trailActivationR} onChange={(v: any) => handleInputChange('trailActivationR', v)} />
+            <InputRow label="Trail Activation R" desc="Activate trailing exit after this many R earned (default: 1.0)" value={settings.trailActivationR} onChange={(v: any) => handleInputChange('trailActivationR', v)} min={0.5} max={5} />
           </div>
         )}
 
@@ -733,6 +865,34 @@ export default function SettingsPanel({ settings, onUpdateSettings, onResetBalan
              </div>
              
              <div className="space-y-2 mt-4">
+               <h3 className="text-sm font-bold text-gray-200 mb-2">Message Preferences</h3>
+               <div className="flex justify-between items-center py-2 px-3 bg-gray-800/20 rounded border border-[#30363D]">
+                 <span className="text-sm text-gray-400">Silent Notifications (No sound on phone)</span>
+                 <button
+                   onClick={() => handleInputChange('alertSilentMode', !settings.alertSilentMode)}
+                   className={`w-10 h-5 rounded-full transition-colors flex items-center px-1 ${
+                     settings.alertSilentMode ? 'bg-[#00e696]' : 'bg-gray-700'
+                   }`}
+                 >
+                   <div className={`w-3 h-3 rounded-full bg-white transition-transform ${
+                     settings.alertSilentMode ? 'transform translate-x-5' : ''
+                   }`} />
+                 </button>
+               </div>
+               <div className="flex flex-col py-2 px-3 bg-gray-800/20 rounded border border-[#30363D] gap-2">
+                 <span className="text-sm text-gray-400">Alert Formatting Style</span>
+                 <select
+                   value={settings.alertFormat || 'Verbose'}
+                   onChange={(e) => handleInputChange('alertFormat', e.target.value)}
+                   className="w-full bg-gray-900 border border-[#30363D] rounded px-2 py-1.5 text-xs text-gray-300 focus:outline-none"
+                 >
+                   <option value="Verbose">Verbose (Include all trade details & metadata)</option>
+                   <option value="Minimal">Minimal (Action & Price only)</option>
+                 </select>
+               </div>
+             </div>
+
+             <div className="space-y-2 mt-4">
                <h3 className="text-sm font-bold text-gray-200 mb-2">Event Triggers</h3>
                {[
                  { id: 'alertOnNewSignal', label: 'New High-Score Signal Detected' },
@@ -757,11 +917,98 @@ export default function SettingsPanel({ settings, onUpdateSettings, onResetBalan
                    </button>
                  </div>
                ))}
-             </div>
-           </div>
+              </div>
+            </div>
+         )}
+
+        {activeTab === 'health' && (
+          <SettingsHealthPanel
+            currentSettings={settings}
+            isDirty={isDirty}
+            hasLoadedServerSettings={Boolean(hasLoadedServerSettings)}
+            settingsLoadError={settingsLoadError || null}
+          />
+        )}
+
+        {activeTab === 'audit' && (
+          <SettingsAuditLog />
         )}
 
       </div>
+
+      {/* Settings Change Review & Confirmation Modal */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#161B22] border border-[#30363D] rounded-xl max-w-lg w-full p-6 space-y-4 shadow-2xl animate-in fade-in zoom-in duration-150">
+            <div className="flex items-center justify-between border-b border-[#30363D] pb-3">
+              <div className="flex items-center gap-2 text-indigo-400">
+                <CheckCircle2 className="w-5 h-5" />
+                <h3 className="text-base font-bold text-white">Review & Confirm Settings</h3>
+              </div>
+              <span className="text-xs font-mono px-2 py-0.5 rounded bg-gray-800 text-gray-300 border border-[#30363D]">
+                v{settings.settingsVersion || 1} → v{(settings.settingsVersion || 1) + 1}
+              </span>
+            </div>
+
+            {hasHighRiskChanges && (
+              <div className="p-3 bg-amber-950/40 border border-amber-800/50 rounded-lg flex items-start gap-2.5 text-amber-300 text-xs">
+                <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <p className="font-bold">High-Risk Parameters Modified</p>
+                  <p className="text-amber-400/90 text-[11px]">
+                    You have adjusted critical risk limits (leverage, risk %, or daily loss limit). These parameters immediately impact live trade execution sizing.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-gray-300">
+                Pending changes to apply ({diffs.length}):
+              </p>
+              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                {diffs.map((d) => (
+                  <div
+                    key={d.key}
+                    className="bg-[#0E1117] p-2.5 rounded border border-[#30363D] flex items-center justify-between gap-2 text-xs font-mono"
+                  >
+                    <span className="text-gray-300 font-semibold truncate" title={d.key}>
+                      {d.label}
+                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-rose-400 line-through opacity-80 max-w-[90px] truncate" title={d.oldVal}>
+                        {d.oldVal}
+                      </span>
+                      <ArrowRight className="w-3 h-3 text-gray-500 shrink-0" />
+                      <span className="text-emerald-400 font-bold max-w-[90px] truncate" title={d.newVal}>
+                        {d.newVal}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#30363D]">
+              <button
+                onClick={() => setShowConfirmModal(false)}
+                disabled={isSaving}
+                className="px-4 py-2 rounded-lg border border-[#30363D] text-gray-400 hover:text-white text-xs font-semibold transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={executeActualSave}
+                disabled={isSaving}
+                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition flex items-center gap-1.5 shadow"
+              >
+                {isSaving && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                <span>{isSaving ? 'Saving & Syncing...' : 'Confirm & Apply'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

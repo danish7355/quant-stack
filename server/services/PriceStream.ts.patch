@@ -1,0 +1,47 @@
+--- server/services/PriceStream.ts
++++ server/services/PriceStream.ts
+@@ -10,6 +10,8 @@
+   private fallbackInterval: NodeJS.Timeout | null = null;
+   private lastWsMessageTime = 0;
+   private lastRestMessageTime = 0;
++  
++  public isStale = true;
+ 
+   constructor() {
+     this.start();
+@@ -40,6 +42,7 @@
+       this.ws.on('message', (data: WebSocket.Data) => {
+         try {
+           this.lastWsMessageTime = Date.now();
++          this.isStale = false;
+           const parsed = JSON.parse(data.toString());
+           if (Array.isArray(parsed)) {
+             const batch: Array<{ s: string; p: number }> = [];
+@@ -62,6 +65,7 @@
+       this.ws.on('error', (err) => {
+         console.warn('Binance WS error:', err.message);
+       });
+       this.ws.on('close', (code, reason) => {
+         console.log(`Binance WS disconnected. Code: ${code}, Reason: ${reason}`);
+         this.ws = null;
+@@ -87,6 +91,12 @@
+       const timeSinceWsMessage = now - this.lastWsMessageTime;
+       const timeSinceRestMessage = now - this.lastRestMessageTime;
+ 
++      // Stale data circuit breaker
++      if (timeSinceWsMessage > 10000 && timeSinceRestMessage > 10000) {
++        if (!this.isStale) console.warn("🚨 [PriceStream] Market data is STALE (> 10s). Trading should be blocked.");
++        this.isStale = true;
++      }
++
+       if (timeSinceWsMessage > 6000 && timeSinceRestMessage > 3000) {
+         try {
+           const res = await fetch('https://fapi.binance.com/fapi/v1/ticker/price');
+@@ -104,6 +114,7 @@
+             if (batch.length > 0) {
+               this.priceArray = batch;
+               this.lastRestMessageTime = Date.now();
++              this.isStale = false; // Restored via REST
+               this.notifyListeners(batch);
+             }
+           } else {

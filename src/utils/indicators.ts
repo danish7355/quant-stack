@@ -120,7 +120,7 @@ export function calculateRSI(prices: number[], period: number = 14): number[] {
   let avgGain = gains / period;
   let avgLoss = losses / period;
   
-  rsi.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss));
+  rsi.push((avgGain === 0 && avgLoss === 0) ? 50 : (avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss)));
 
   // Initialize padding for indices below period
   const finalRsi = new Array(period).fill(50);
@@ -135,7 +135,7 @@ export function calculateRSI(prices: number[], period: number = 14): number[] {
     avgLoss = (avgLoss * (period - 1) + loss) / period;
 
     const rs = avgLoss === 0 ? 1000 : avgGain / avgLoss;
-    finalRsi.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + rs));
+    finalRsi.push((avgGain === 0 && avgLoss === 0) ? 50 : (avgLoss === 0 ? 100 : 100 - 100 / (1 + rs)));
   }
 
   return finalRsi;
@@ -257,11 +257,15 @@ export function calculateADX(
     adx[i] = currentAdx;
   }
 
-  // Fill initial indicators with simple values
-  for (let i = 0; i < period * 2 - 1; i++) {
+  // Fill initial warmup indicators with placeholder values (only pre-valid-data range)
+  for (let i = 0; i < period; i++) {
     adx[i] = 15; // default low
     plusDI[i] = 20;
     minusDI[i] = 20;
+  }
+  // Fill ADX warmup zone (period to 2*period-2) — DI values are valid here, only ADX needs padding
+  for (let i = period; i < period * 2 - 1; i++) {
+    adx[i] = 15;
   }
 
   return { adx, plusDI, minusDI };

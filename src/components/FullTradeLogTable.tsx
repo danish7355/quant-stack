@@ -114,6 +114,36 @@ export default function FullTradeLogTable({ logs }: FullTradeLogTableProps) {
     );
   };
 
+  const getTradeOutcomeBadge = (outcome?: string) => {
+    if (!outcome) return null;
+    if (outcome === 'Full 1:3') {
+      return (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-500/50 text-[9px] font-bold">
+          🎯 Full 1:3
+        </span>
+      );
+    }
+    if (outcome === 'Partial') {
+      return (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-teal-950/80 text-teal-300 border border-teal-500/50 text-[9px] font-bold">
+          ⚡ Partial
+        </span>
+      );
+    }
+    if (outcome === 'Scratch') {
+      return (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-gray-800 text-gray-300 border border-gray-600 text-[9px] font-bold">
+          ⚖️ Scratch
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-rose-950/80 text-rose-300 border border-rose-500/50 text-[9px] font-bold">
+        🛑 Loss
+      </span>
+    );
+  };
+
   // Filter and sort logs
   const filteredAndSortedLogs = useMemo(() => {
     return logs
@@ -426,15 +456,16 @@ export default function FullTradeLogTable({ logs }: FullTradeLogTableProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800/60">
-                {paginatedLogs.map((trade) => {
+                {paginatedLogs.map((trade, index) => {
                   const isLong = trade.direction === 'LONG';
                   const isProfit = trade.profit >= 0;
                   const strat = trade.strategy || 'BINANCE_COMPOSITE';
                   const freq = trade.frequencyPreset || 'LOW';
                   const duration = getDurationInfo(trade.timeOpen, trade.timeClose);
+                  const rowKey = trade.id || `trade-${trade.symbol}-${trade.timeClose || trade.timeOpen || index}-${index}`;
 
                   return (
-                    <tr key={trade.id} className="hover:bg-gray-800/30 transition-colors">
+                    <tr key={rowKey} className="hover:bg-gray-800/30 transition-colors">
                       {/* Pair and Direction */}
                       <td className="py-3 pr-4">
                         <div className="flex items-center gap-1.5">
@@ -490,6 +521,29 @@ export default function FullTradeLogTable({ logs }: FullTradeLogTableProps) {
                               <Target className="w-2.5 h-2.5 text-teal-400" /> Medium Freq
                             </span>
                           )}
+
+                          {trade.marketRegime && (
+                            <div className="flex items-center gap-1 flex-wrap mt-0.5">
+                              {trade.macroColor && (
+                                <span className={`text-[8px] font-bold px-1 py-0.2 rounded ${trade.macroColor === 'GREEN' ? 'bg-emerald-500/20 text-emerald-300' : trade.macroColor === 'RED' ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300'}`}>
+                                  {trade.macroColor}
+                                </span>
+                              )}
+                              <span className="text-[8.5px] font-mono text-cyan-300 bg-cyan-950/40 px-1 py-0.2 rounded border border-cyan-800/40">
+                                {trade.marketRegime} {trade.regimeConfidence ? `(${trade.regimeConfidence}%)` : ''}
+                              </span>
+                              {trade.strategyPriority && (
+                                <span className="text-[8.5px] font-mono font-bold text-indigo-300 bg-indigo-950/40 px-1 py-0.2 rounded border border-indigo-800/40">
+                                  {trade.strategyPriority}
+                                </span>
+                              )}
+                              {(trade.rrStruct || trade.structuralRR) && (
+                                <span className="text-[8.5px] font-mono font-bold text-purple-300 bg-purple-950/40 px-1 py-0.2 rounded border border-purple-800/40">
+                                  {trade.rrStruct ? `R:R ${trade.rrStruct}` : `R:R 1:${trade.structuralRR}`}
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </td>
 
@@ -529,9 +583,12 @@ export default function FullTradeLogTable({ logs }: FullTradeLogTableProps) {
                         </div>
                       </td>
 
-                      {/* Exit Reason with full badge */}
+                      {/* Exit Reason with full badge & outcome */}
                       <td className="py-3 pr-4 text-center">
-                        {getExitReasonBadge(trade.exitReason, isProfit)}
+                        <div className="flex flex-col items-center gap-1">
+                          {getTradeOutcomeBadge(trade.tradeOutcome)}
+                          {getExitReasonBadge(trade.exitReason, isProfit)}
+                        </div>
                       </td>
 
                       {/* Score at Entry */}

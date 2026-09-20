@@ -25,111 +25,14 @@ import {
 import { evaluateSmc } from './utils/strategies/smcLiquidity';
 import { formatPrice } from './utils/format';
 import { useToast } from './components/ToastContext';
+import { SystemHealthPage } from './components/SystemHealth';
+import { TopNavigationBar } from './components/TopNavigationBar';
+import { SignalsPage } from './components/SignalsPage';
+import { RiskCenter } from './components/RiskCenter';
+import { SystemHealth, SignalView, TradingMode, CANONICAL_DEFAULT_SETTINGS } from './types';
 
-
-// Default initial settings - High Confidence 1:3 Sniper Mode
-const INITIAL_SETTINGS: AppSettings = {
-  activeStrategy: 'BINANCE_COMPOSITE',
-  tradeFrequency: 'LOW',
-  timeframe: '4H',
-  autoTradeThreshold: 75, // Fully confirmed confident setup threshold
-  coinCount: 25,
-  autoTradeEnabled: true,
-  scanInterval: 300, // 5 minutes default
-  theme: 'dark',
-
-  min24hVolume: 10000000,
-  maxFundingRate: 0.15,
-  maxSpread: 0.3,
-
-  emaFastPeriod: 9,
-  emaSlowPeriod: 55,
-  emaTrendPeriod: 200,
-  emaCrossLookback: 3,
-
-  rsiPeriod: 14,
-  rsiLongMin: 30,
-  rsiLongMax: 65,
-  rsiShortMin: 30,
-  rsiShortMax: 55,
-
-  macdFast: 12,
-  macdSlow: 26,
-  macdSignal: 9,
-  adxPeriod: 14,
-  adxTrendThreshold: 20,
-  superTrendPeriod: 10,
-  superTrendMultiplier: 3.0,
-  volumeMultiplier: 1.5,
-  fibLookback: 100,
-
-  atrPeriod: 14,
-
-  startingBalance: 10000,
-  positionSizePct: 10, // user wants to use only 10%
-  accountRiskPct: 1,
-  leverage: 1, // user said: "i don't want to use leverage" -> means 1x leverage
-  maxConcurrentTrades: 10,
-  dailyLossLimitPct: 3,
-  maxDrawdownPct: 10,
-
-  tp1AtrMultiple: 2.0, // ATR Take Profit
-  tp2AtrMultiple: 3.5,
-  tp3FibLevel: 1.618,
-  slAtrMultiple: 1.5, // ATR Stop Loss
-  minRRRatio: 1.5,
-
-  trailingStopActivation: 'TP1',
-  trailActivationR: 1,
-  timeBasedExitEnabled: true,
-  timeBasedExitCandles: 3,
-
-  telegramBotToken: '',
-  telegramChatId: '',
-  binanceApiKey: '',
-  binanceApiSecret: '',
-  binanceTestnet: true,
-  alertOnNewSignal: true,
-  alertOnTradeExecuted: true,
-  alertOnTpHit: true,
-  alertOnSlHit: true,
-  alertOnTsMoved: true,
-  alertOnDailyLossLimit: true,
-  alertOnRangingDetected: false,
-  // Climax Reversal Strategy settings
-  crEnabled: false,
-  crClimaxLookback: 20,
-  crEmaFast: 5,
-  crEmaContext: 55,
-  crEmaBaseline: 200,
-  crAtrPeriod: 14,
-  crMinOverextensionAtr: 2.0,
-  crMinAtrVsAverage: 1.0,
-  crAtrAveragePeriod: 50,
-  crMinRejectionWickRatio: 0.45,
-  crMinClimaxRangeRatio: 1.3,
-  crMinStopDistanceAtr: 0.5,
-  crMinRewardRisk: 1.5,
-  // Volatility Compression Breakout settings
-  vcbCompressionLookback: 10,
-  vcbCompressionAtrRatioMax: 0.70,
-  vcbWindowAtrMult: 3.0,
-  vcbBoundaryBufferAtr: 0.25,
-  vcbRangeExpansionMin: 1.5,
-  vcbVolumeExpansionMin: 1.5,
-  vcbCloseStrengthMin: 0.60,
-  vcbHtfBonus: 10,
-  vcbSlBufferAtrMult: 0.15,
-  vcbInitialTpAtrMult: 1.5,
-  vcbInitialTpClosePct: 0.25,
-  vcbChandelierAtrMult: 3.0,
-  vcbStallCheckBar: 8,
-  vcbStallMinProgressAtr: 1.0,
-  useMtfAlignment: true,
-  useVpvrFilter: false,
-  useAtrTrailingStop: true,
-  trailingStopAtrMultiplier: 3.0,
-};
+// Default initial settings derived from the canonical shared settings model
+const INITIAL_SETTINGS: AppSettings = { ...CANONICAL_DEFAULT_SETTINGS };
 
 
 // Check local storage for initial values
@@ -200,6 +103,8 @@ export default function App() {
   const [connectionStatus, setConnectionStatus] = useState<'CONNECTED' | 'DISCONNECTED' | 'CONNECTING'>('CONNECTING');
   const [terminalLogs, setTerminalLogs] = useState<string[]>([]);
   const [hasLoadedServerSettings, setHasLoadedServerSettings] = useState(false);
+  const [settingsLoadError, setSettingsLoadError] = useState<string | null>(null);
+  const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
 
   // Refs for WebSockets/Loops
   const wsRef = useRef<WebSocket | null>(null);
@@ -220,7 +125,7 @@ export default function App() {
     addTerminalLog('📡 Algorithmic Crypto Terminal boot cycle finished. Standby ready.');
   }, []);
 
-  // Sync state modifications to storage and server 24/7 bot engine
+  // Sync settingsRef to latest state (used by async callbacks to avoid stale closures)
   useEffect(() => {
     if (settingsRef.current.timeframe !== settings.timeframe) {
       loggedArmedStatesRef.current.clear();
@@ -228,23 +133,11 @@ export default function App() {
       addTerminalLog(`⏱️ Timeframe changed to ${settings.timeframe} - Resetting VCB tracking states`);
     }
     settingsRef.current = settings;
-    
-    // Do not overwrite server settings until we have loaded initial settings
-    if (!hasLoadedServerSettings) return;
-
-    // Sync full settings & credentials to server 24/7 background bot & Firestore document
-    const timer = setTimeout(() => {
-      fetch('/api/bot/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings)
-      }).catch((err) => {
-        console.warn('AutoTrader: Settings sync error', err);
-      });
-    }, 250);
-
-    return () => clearTimeout(timer);
-  }, [settings, hasLoadedServerSettings]);
+    // D3 fix: Auto-sync POST removed. Settings are saved only via explicit Save button.
+    // The old auto-sync caused: (1) settings wipe on GET failure, (2) double-POST races,
+    // (3) stale data overwriting newer saves. All settings persistence now goes through
+    // SettingsPanel.handleSaveSettings() → POST /api/bot/settings.
+  }, [settings]);
 
   useEffect(() => {
     safeSetLocal('bt_sidebar_collapsed', JSON.stringify(sidebarCollapsed));
@@ -259,10 +152,17 @@ export default function App() {
 
   useEffect(() => {
     // Initial fetch of server settings from Firestore
-    fetch('/api/bot/settings')
-      .then(res => res.json())
-      .then(serverSettings => {
+    const loadSettings = async (retryCount = 0) => {
+      try {
+        const res = await fetch('/api/bot/settings');
+        if (!res.ok) {
+          throw new Error(`Server returned ${res.status}: ${res.statusText}`);
+        }
+        const serverSettings = await res.json();
         if (serverSettings && typeof serverSettings === 'object' && Object.keys(serverSettings).length > 0) {
+          if (serverSettings.autoTradeEnabled !== undefined) {
+            setEngineRunning(serverSettings.autoTradeEnabled !== false);
+          }
           setSettings(prev => {
             const merged = { ...prev };
             // Merge server settings, but never wipe existing non-empty credentials with empty strings
@@ -282,12 +182,24 @@ export default function App() {
             return merged;
           });
         }
+        setSettingsLoadError(null);
         setHasLoadedServerSettings(true);
-      })
-      .catch((err) => {
+      } catch (err) {
         console.warn('AutoTrader: Could not load initial server settings', err);
-        setHasLoadedServerSettings(true); // Allow syncing even if failed
-      });
+        if (retryCount < 3) {
+          // Retry with exponential backoff
+          const delay = Math.pow(2, retryCount) * 1000;
+          addTerminalLog(`⚠️ Settings load failed (attempt ${retryCount + 1}/3). Retrying in ${delay / 1000}s...`);
+          setTimeout(() => loadSettings(retryCount + 1), delay);
+        } else {
+          // D1 fix: Do NOT set hasLoadedServerSettings = true on failure.
+          // This prevents the auto-sync from firing and wiping server settings with defaults.
+          setSettingsLoadError(String(err));
+          addTerminalLog(`🚨 CRITICAL: Failed to load settings after 3 attempts. Trading engine paused. Using display-only defaults.`);
+        }
+      }
+    };
+    loadSettings();
   }, []);
 
   useEffect(() => {
@@ -567,9 +479,9 @@ TP1: ${finalTp1.toFixed(5)} (${tp1R}R, 40%)
 TP2: ${finalTp2.toFixed(5)} (3.0R, 40%)
 TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)
 
-Exposure Status: APPROVED
-Reason Passed: ${finalReason}`;
+Exposure Status: APPROVED\nReason Passed: ${finalReason}`;
                     addTerminalLog(msg);
+                    addToast('info', 'New Signal Triggered', `VCB ${breakout.direction} on ${pair.symbol}`, { label: 'View Chart', onClick: () => { setSelectedSymbol(pair.symbol); setActiveTab('chart'); } });
                   }
                 } else if (compression.isCompressed) {
                   let coilingScore = 48;
@@ -605,6 +517,7 @@ Potential Long Trigger: ${compression.windowHigh + atr * 0.15}
 Potential Short Trigger: ${compression.windowLow - atr * 0.15}
 Status: ARMED — WAIT FOR USER-CONFIGURED ENTRY RULE`;
                     addTerminalLog(msg);
+                    addToast('info', 'Signal Armed', `VCB Armed on ${pair.symbol}`, { label: 'View Chart', onClick: () => { setSelectedSymbol(pair.symbol); setActiveTab('chart'); } });
                   }
                 } else {
                   const compRatio = compression.compressionRatio || 1.0;
@@ -668,9 +581,9 @@ TP1: ${finalTp1.toFixed(5)} (${tp1R}R, 40%)
 TP2: ${finalTp2.toFixed(5)} (3.0R, 40%)
 TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)
 
-Exposure Status: APPROVED
-Reason Passed: ${finalReason}`;
+Exposure Status: APPROVED\nReason Passed: ${finalReason}`;
                     addTerminalLog(msg);
+                    addToast('info', 'New Signal Triggered', `LSR ${finalDirection} on ${pair.symbol}`, { label: 'View Chart', onClick: () => { setSelectedSymbol(pair.symbol); setActiveTab('chart'); } });
                   }
                 } else {
                   finalScore = 65;
@@ -688,6 +601,7 @@ FVG Entry Zone: ${smcSig.entryZoneMin.toFixed(5)} to ${smcSig.entryZoneMax.toFix
 Current Price: ${pair.price}
 Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
                     addTerminalLog(msg);
+                    addToast('info', 'Signal Armed', `LSR Armed on ${pair.symbol}`, { label: 'View Chart', onClick: () => { setSelectedSymbol(pair.symbol); setActiveTab('chart'); } });
                   }
                 }
               } else {
@@ -758,6 +672,7 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
   const pendingOrdersRef = useRef<Set<string>>(new Set());
 
   const processAutoTradingRules = (scannedList: CoinDetail[]) => {
+    if (!engineRunning || !settingsRef.current.autoTradeEnabled) return;
     const triggers = scannedList.filter((c) => {
       const hasActive = positionsRef.current.some((p) => p.symbol === c.symbol);
       if (hasActive || pendingOrdersRef.current.has(c.symbol)) return false;
@@ -782,6 +697,10 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
   };
 
   const openPosition = async (coin: CoinDetail) => {
+    if (!engineRunning || !settingsRef.current.autoTradeEnabled) {
+      addTerminalLog(`🛑 Execution blocked: Trading engine is STOPPED. Cannot execute trade for ${coin.symbol}.`);
+      return;
+    }
     if (pendingOrdersRef.current.has(coin.symbol)) return;
     pendingOrdersRef.current.add(coin.symbol);
 
@@ -870,7 +789,7 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
       const data = await res.json();
       if (data.success) {
         addTerminalLog(`🟢 OPEN ${finalDirection} on ${coin.symbol} @ ${formatPrice(coin.price)} [ID: ${data.posId}]`);
-        addToast('trade', 'Trade Executed', `Opened ${finalDirection} on ${coin.symbol} at ${formatPrice(coin.price)}`);
+        addToast('trade', 'Trade Executed', `Opened ${finalDirection} on ${coin.symbol} at ${formatPrice(coin.price)}`, { label: 'View Position', onClick: () => setActiveTab('positions') });
         fetchPositions();
       } else {
         addTerminalLog(`🔴 FAILED TO OPEN ${coin.symbol}: ${data.error || 'Unknown error'}`);
@@ -898,10 +817,15 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
         })
       });
       if (res.ok) {
+         addToast('success', 'Manual Exit', `Successfully submitted market close order for ${pos.symbol}`);
          fetchPositions();
+      } else {
+         const data = await res.json();
+         addToast('error', 'Exit Failed', `Failed to close ${pos.symbol}: ${data.error || 'Unknown error'}`);
       }
     } catch(e) {
       console.error(e);
+      addToast('error', 'Exit Failed', 'Network or API error occurred while closing position.');
     }
   };
 
@@ -919,8 +843,8 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
       const res = await fetch('/api/trade_logs');
       if (res.ok) {
         const data = await res.json();
-        const mapped = data.map((p: any) => ({
-          id: p.id,
+        const mapped = data.map((p: any, idx: number) => ({
+          id: p.id || `log-${p.symbol || 'SYM'}-${p.time_close || p.timestamp || Date.now()}-${idx}`,
           symbol: p.symbol,
           direction: p.direction,
           strategy: p.strategy || 'BINANCE_COMPOSITE',
@@ -933,8 +857,8 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
           profit: p.profit,
           pctReturn: p.pct_return || 0,
           exitReason: p.exit_reason,
-          timeOpen: p.time_open,
-          timeClose: p.time_close,
+          timeOpen: p.time_open || p.timestamp,
+          timeClose: p.time_close || p.timestamp,
           scoreAtEntry: p.score_at_entry || 0,
           scoreAtClose: 0
         }));
@@ -983,7 +907,8 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
             unrealizedPnl: pnl,
             realizedPnl: 0,
             sizeRemainingPct: 100,
-            lastUpdated: Date.now()
+            lastUpdated: Date.now(),
+            stopStatus: p.stopStatus || 'UNKNOWN'
           };
         });
         setPositions(mapped);
@@ -1002,6 +927,16 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
     } catch (e) {}
   };
 
+  const fetchHealth = async () => {
+    try {
+      const res = await fetch('/api/health');
+      if (res.ok) {
+        const data = await res.json();
+        setSystemHealth(data);
+      }
+    } catch (e) {}
+  };
+
   const handleResetBalance = async () => {
     try {
       await fetch('/api/bot/reset', { method: 'POST' });
@@ -1013,14 +948,37 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
   };
 
   const handleResetSettings = () => {
-    // Reset general and strategy settings to defaults, but keep user's configured credentials
-    setSettings(prev => ({
+    // D2 fix: Require confirmation before wiping all settings to defaults
+    const confirmed = window.confirm(
+      '⚠️ RESET ALL SETTINGS TO DEFAULTS?\n\n' +
+      'This will reset ALL trading parameters (risk, strategy, indicators, gates) to factory defaults.\n' +
+      'Your API credentials will be preserved.\n\n' +
+      'This action is immediate and will be saved to the server.'
+    );
+    if (!confirmed) return;
+
+    const resetSettings: AppSettings = {
       ...INITIAL_SETTINGS,
-      telegramBotToken: prev.telegramBotToken || '',
-      telegramChatId: prev.telegramChatId || '',
-      binanceApiKey: prev.binanceApiKey || '',
-      binanceApiSecret: prev.binanceApiSecret || '',
-    }));
+      telegramBotToken: settings.telegramBotToken || '',
+      telegramChatId: settings.telegramChatId || '',
+      binanceApiKey: settings.binanceApiKey || '',
+      binanceApiSecret: settings.binanceApiSecret || '',
+    };
+    setSettings(resetSettings);
+    // Since auto-sync was removed (D3), explicitly save the reset to server
+    fetch('/api/bot/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(resetSettings)
+    }).then(res => {
+      if (res.ok) {
+        addToast('info', 'Settings Reset', 'All settings restored to defaults and saved.');
+      } else {
+        addToast('error', 'Reset Error', 'Settings reset locally but failed to save to server.');
+      }
+    }).catch(() => {
+      addToast('error', 'Reset Error', 'Settings reset locally but failed to save to server.');
+    });
   };
 
   // Load initial backend state & Poll positions/balance
@@ -1028,11 +986,13 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
     fetchPositions();
     fetchTradeLogs();
     fetchBalance();
+    fetchHealth();
     
     // Poll backend every 4 seconds to sync positions closed/opened by 24/7 background engine
     const syncInterval = setInterval(() => {
       fetchPositions();
       fetchBalance();
+      fetchHealth();
     }, 4000);
 
     // Poll trade history every 10 seconds
@@ -1306,32 +1266,91 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
 
   const [engineRunning, setEngineRunning] = useState(true);
   const [isStale, setIsStale] = useState(false);
+  const [globalFilterState, setGlobalFilterState] = useState<{
+    isPausing: boolean;
+    reason: string | null;
+  }>({ isPausing: false, reason: null });
 
-  // Main scanner loop
+  // Periodically check engine status and Global Market Safety Filter state
   useEffect(() => {
-    let interval;
-    if (engineRunning) {
+    let isMounted = true;
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch('/api/bot/engine/status');
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.globalFilterActive !== undefined) {
+            setGlobalFilterState({
+              isPausing: !!data.globalFilterActive,
+              reason: data.globalFilterReason || null
+            });
+          }
+        }
+      } catch (e) {
+        // silent
+      }
+    };
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 8000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  // Synchronize engine state with settings.autoTradeEnabled
+  useEffect(() => {
+    if (settings.autoTradeEnabled !== undefined && settings.autoTradeEnabled !== engineRunning) {
+      setEngineRunning(settings.autoTradeEnabled);
+    }
+  }, [settings.autoTradeEnabled]);
+
+  // Master engine control: toggles backend and frontend scanning & execution
+  const toggleEngine = async () => {
+    const nextState = !engineRunning;
+    setEngineRunning(nextState);
+    setSettings((prev) => ({ ...prev, autoTradeEnabled: nextState }));
+
+    addTerminalLog(
+      nextState
+        ? '▶️ Trading Engine STARTED. Autonomous scanning & new trade execution active.'
+        : '🛑 Trading Engine STOPPED. All new trade executions immediately halted. Existing positions remain actively monitored.'
+    );
+
+    try {
+      const endpoint = nextState ? '/api/bot/engine/start' : '/api/bot/engine/stop';
+      await fetch(endpoint, { method: 'POST' });
+    } catch (e) {
+      console.warn('Failed to toggle engine on backend:', e);
+    }
+  };
+
+  // Main scanner loop — waits for server settings to load before first scan
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval> | undefined;
+    if (engineRunning && hasLoadedServerSettings) {
       triggerUnifiedScan();
       interval = setInterval(() => {
         triggerUnifiedScan();
       }, settings.scanInterval * 1000);
     }
     return () => clearInterval(interval);
-  }, [engineRunning, settings.scanInterval]);
+  }, [engineRunning, settings.scanInterval, hasLoadedServerSettings]);
 
   const currentCoinDetail = coins.find(c => c.symbol === selectedSymbol) || coins[0];
   const totalAccountValue = balance + positions.reduce((acc, p) => acc + p.allocatedBalance + p.unrealizedPnl, 0);
 
   const TABS = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'chart', label: 'Chart View', icon: BarChart2 },
+    { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
     { id: 'scanner', label: 'Scanner', icon: List },
-    { id: 'gates', label: 'Gate Matrix', icon: ShieldAlert },
-    { id: 'strategy', label: 'Strategy', icon: GitBranch },
-    { id: 'positions', label: 'Active Positions', icon: Activity },
-    { id: 'history', label: 'Trade History', icon: History },
-    { id: 'logs', label: 'Log Viewer', icon: Terminal },
+    { id: 'positions', label: 'Positions & Orders', icon: Activity },
+    { id: 'signals', label: 'Signals & Rejects', icon: Activity },
+    { id: 'history', label: 'Analytics & Journal', icon: History },
+    { id: 'strategy', label: 'Strategies & Gates', icon: GitBranch },
+    { id: 'risk', label: 'Risk Center', icon: ShieldAlert },
     { id: 'settings', label: 'Settings', icon: SettingsIcon },
+    { id: 'health', label: 'System Health', icon: Terminal },
+    { id: 'chart', label: 'Chart Explorer', icon: BarChart2 },
   ];
 
   return (
@@ -1380,8 +1399,9 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
 
         <div className="p-4 border-t border-[#30363D]">
           <button
-            onClick={() => setEngineRunning(!engineRunning)}
-            className={`w-full flex items-center justify-center gap-2 px-4 py-2 rounded text-xs font-bold transition-colors ${
+            id="engine-sidebar-toggle-btn"
+            onClick={toggleEngine}
+            className={`w-full flex items-center justify-center gap-2 px-4 py-2 rounded text-xs font-bold transition-colors cursor-pointer ${
               engineRunning ? 'bg-rose-500/20 text-rose-400 hover:bg-rose-500/30' : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
             }`}
           >
@@ -1392,9 +1412,25 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        {/* Header */}
-        <header className="h-14 border-b border-[#30363D] bg-[#0E1117] flex items-center px-6 justify-between shrink-0">
+      <div className="flex-1 flex flex-col h-screen overflow-hidden relative">
+        <TopNavigationBar 
+          mode={settings.binanceTestnet ? 'TESTNET' : 'PAPER'} 
+          health={systemHealth || {
+            engine: engineRunning ? 'RUNNING' : 'PAUSED',
+            marketData: isStale ? 'STALE' : 'CONNECTED',
+            userStream: 'CONNECTED',
+            lastReconciliationAt: 'N/A',
+            tradingBlocked: isStale
+          }}
+          dailyLossPct={0}
+          openRiskPct={0}
+          engineRunning={engineRunning}
+          onToggleEngine={toggleEngine}
+        />
+
+        {/* Deprecated header logic starts here - we can replace this completely or just hide it */}
+        {/* We keep the old header strictly for balance displays if needed, but TopNav takes precedence */}
+        <header className="h-14 border-b border-[#30363D] bg-[#0E1117] flex items-center px-6 justify-between shrink-0 hidden">
           <div className="flex items-center gap-3">
             <button 
               className="md:hidden text-gray-400 hover:text-gray-200"
@@ -1407,16 +1443,64 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
             </h2>
           </div>
           <div className="flex items-center gap-4 text-xs">
-             <span className="flex items-center gap-2">
+             <button
+               id="engine-header-status-btn"
+               onClick={toggleEngine}
+               className={`flex items-center gap-2 px-2.5 py-1 rounded border transition-colors cursor-pointer ${
+                 engineRunning
+                   ? 'bg-emerald-950/30 border-emerald-800/50 hover:bg-emerald-900/40 text-emerald-300'
+                   : 'bg-rose-950/30 border-rose-800/50 hover:bg-rose-900/40 text-rose-300'
+               }`}
+               title="Click to toggle trading engine"
+             >
                 <span className={`w-2 h-2 rounded-full ${engineRunning ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></span>
-                {engineRunning ? 'ENGINE ACTIVE' : 'ENGINE OFFLINE'}
-             </span>
+                <span className="font-bold tracking-wider text-[11px]">{engineRunning ? 'ENGINE ACTIVE' : 'ENGINE STOPPED'}</span>
+             </button>
              <span className="flex items-center gap-1.5 text-gray-400">
                <span className={`w-1.5 h-1.5 rounded-full ${connectionStatus === 'CONNECTED' ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'}`}></span>
                <span>{connectionStatus === 'CONNECTED' ? 'FEED: LIVE' : 'FEED: CONNECTING'}</span>
              </span>
           </div>
         </header>
+
+        {!engineRunning && (
+          <div id="engine-stopped-banner" className="bg-rose-950/40 border-b border-rose-800/50 px-6 py-2 flex items-center justify-between gap-3 text-rose-300 text-xs shadow-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+              <span><strong>Trading Engine Stopped:</strong> All autonomous and manual new trade executions are blocked. Existing open positions remain actively monitored.</span>
+            </div>
+            <button
+              id="engine-banner-start-btn"
+              onClick={toggleEngine}
+              className="px-3 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 font-bold rounded border border-emerald-500/40 transition-colors cursor-pointer"
+            >
+              START ENGINE
+            </button>
+          </div>
+        )}
+
+        {settingsLoadError && (
+          <div className="bg-red-950/60 border-b-2 border-red-600/80 px-6 py-3 flex items-center justify-between gap-3 text-red-200 text-xs shadow-lg">
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse"></span>
+              <span>
+                <strong>⚠️ CONFIGURATION ERROR:</strong> Failed to load settings from server. 
+                The values shown are <strong>display-only defaults</strong> — NOT your saved configuration. 
+                Trading engine is paused. Changes will NOT be saved until connection is restored.
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                setSettingsLoadError(null);
+                // Re-trigger the mount effect by reloading the page
+                window.location.reload();
+              }}
+              className="px-3 py-1 bg-red-500/30 hover:bg-red-500/40 text-red-300 font-bold rounded border border-red-500/50 transition-colors cursor-pointer whitespace-nowrap"
+            >
+              RETRY
+            </button>
+          </div>
+        )}
         
         {isStale && (
           <div className="bg-amber-500/20 border-b border-amber-500/30 px-6 py-2 flex items-center justify-between gap-3 text-amber-400 text-xs shadow-sm">
@@ -1467,10 +1551,12 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
                 onUpdateSettings={setSettings} 
                 onResetBalance={handleResetBalance}
                 onResetSettings={handleResetSettings}
+                hasLoadedServerSettings={hasLoadedServerSettings}
+                settingsLoadError={settingsLoadError}
             />
           )}
           {activeTab === 'strategy' && (
-            <StrategyPanel settings={settings} setSettings={setSettings} />
+            <StrategyPanel settings={settings} setSettings={setSettings} globalFilterState={globalFilterState} />
           )}
           {activeTab === 'gates' && (
             <GateManager
@@ -1488,24 +1574,24 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
           {activeTab === 'dashboard' && (
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
               <div className="xl:col-span-2 space-y-6">
-                <ActiveTrades positions={positions} onManualClose={handleManualClose} settings={settings} />
+                <ActiveTrades positions={positions} onManualClose={handleManualClose} settings={settings} globalFilterState={globalFilterState} />
                 {currentCoinDetail ? (
                   <TradingChart coin={currentCoinDetail} activePosition={positions.find((p) => p.symbol === currentCoinDetail.symbol)} />
                 ) : (
-                  <div className="h-96 flex flex-col items-center justify-center bg-gray-900 border border-gray-800 rounded-xl relative p-6">
-                    <RefreshCw className="w-10 h-10 stroke-indigo-400 mb-2 animate-spin" />
-                    <span className="text-gray-400 text-sm font-semibold uppercase tracking-wider">Synchronizing market candles loop...</span>
+                  <div className="h-96 flex flex-col items-center justify-center bg-[#161B22] border border-[#30363D] rounded-xl relative p-6">
+                    <RefreshCw className="w-10 h-10 stroke-blue-400 mb-2 animate-spin" />
+                    <span className="text-gray-400 text-sm font-semibold uppercase tracking-wider">Synchronizing market data...</span>
                   </div>
                 )}
               </div>
               <div className="space-y-6">
-                 <div className="bg-[#05080f] border border-gray-800 rounded-xl p-4 shadow-inner">
+                 <div className="bg-[#161B22] border border-[#30363D] rounded-xl p-4 shadow-inner">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest flex items-center">
-                      <Terminal className="w-3.5 h-3.5 mr-1.5" /> Quant Event Log Output Console
+                    <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest flex items-center">
+                      <Terminal className="w-3.5 h-3.5 mr-1.5" /> Recent Event Log
                     </span>
                   </div>
-                  <div className="h-96 overflow-y-auto font-mono text-[10px] text-gray-400 space-y-1.5 divide-y divide-gray-900/40 pr-2">
+                  <div className="h-96 overflow-y-auto font-mono text-[10px] text-gray-400 space-y-1.5 divide-y divide-[#30363D] pr-2">
                     {terminalLogs.length === 0 ? (
                       <span className="text-gray-600">Console empty. Boot stream ready.</span>
                     ) : (
@@ -1533,9 +1619,9 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
               {currentCoinDetail ? (
                 <TradingChart coin={currentCoinDetail} activePosition={positions.find((p) => p.symbol === currentCoinDetail.symbol)} />
               ) : (
-                <div className="h-full flex flex-col items-center justify-center bg-[#05080f] border border-[#30363D] rounded-xl relative p-6">
-                  <RefreshCw className="w-10 h-10 stroke-indigo-400 mb-2 animate-spin" />
-                  <span className="text-gray-400 text-sm font-semibold uppercase tracking-wider">Synchronizing market candles loop...</span>
+                <div className="h-full flex flex-col items-center justify-center bg-[#161B22] border border-[#30363D] rounded-xl relative p-6">
+                  <RefreshCw className="w-10 h-10 stroke-blue-400 mb-2 animate-spin" />
+                  <span className="text-gray-400 text-sm font-semibold uppercase tracking-wider">Synchronizing market data...</span>
                 </div>
               )}
             </div>
@@ -1543,27 +1629,20 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
 
           {activeTab === 'positions' && (
             <div className="h-full">
-               <ActiveTrades positions={positions} onManualClose={handleManualClose} settings={settings} />
+               <ActiveTrades positions={positions} onManualClose={handleManualClose} settings={settings} globalFilterState={globalFilterState} />
             </div>
           )}
 
-          {activeTab === 'logs' && (
-             <div className="h-full bg-[#05080f] border border-gray-800 rounded-xl p-4 shadow-inner flex flex-col">
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-[12px] font-bold text-indigo-400 uppercase tracking-widest flex items-center">
-                  <Terminal className="w-4 h-4 mr-2" /> Quant Event Log Output Console
-                </span>
-              </div>
-              <div className="flex-1 overflow-y-auto font-mono text-[11px] text-gray-400 space-y-2 divide-y divide-gray-900/40 pr-2">
-                {terminalLogs.length === 0 ? (
-                  <span className="text-gray-600">Console empty. Boot stream ready.</span>
-                ) : (
-                  terminalLogs.map((logStr, index) => (
-                    <div key={index} className="pt-2">{logStr}</div>
-                  ))
-                )}
-              </div>
-            </div>
+          {activeTab === 'signals' && (
+             <SignalsPage signals={[]} />
+          )}
+
+          {activeTab === 'health' && (
+             <SystemHealthPage initialHealth={systemHealth || undefined} />
+          )}
+
+          {activeTab === 'risk' && (
+             <RiskCenter />
           )}
         </main>
       </div>

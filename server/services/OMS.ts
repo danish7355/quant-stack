@@ -1,14 +1,18 @@
 import fs from 'fs';
 import path from 'path';
 import { db } from '../firebase.js';
-import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, writeBatch, collection } from 'firebase/firestore';
 import { riskManager } from './RiskManager.js';
 import { telegramService } from './TelegramService.js';
 import { executionAdapter } from './ExecutionAdapter.js';
+import { positionMonitor } from './PositionMonitor.js';
+import { safeSetDoc, safeUpdateDoc, safeGetDoc, isQuotaExhausted, appendLocalJsonl } from './firestoreSafe.js';
 
 export class OMS {
   private processingOrder = new Set<string>();
+  private closingPositions = new Set<string>();
   public onTradeClosed?: (pnl: number) => void;
+  public isEngineActive?: () => boolean;
 
   public async placeOrder(
     symbol: string,
@@ -30,8 +34,20 @@ export class OMS {
       frequencyPreset?: string;
       compressionHigh?: number;
       compressionLow?: number;
+      macroColor?: string;
+      macroLabel?: string;
+      regimeConfidence?: number;
+      confidenceLevel?: 'High' | 'Medium' | 'Low';
+      tradeQuality?: string;
+      strategyPriority?: string;
+      rrStruct?: string;
+      structuralRR?: number;
     }
   ) {
+    if (this.isEngineActive && !this.isEngineActive()) {
+      throw new Error(`Engine is stopped. New trade execution is blocked.`);
+    }
+
     if (!symbol || !direction || !price || isNaN(price) || price <= 0) {
       throw new Error(`Invalid order params for ${symbol}`);
     }
@@ -65,15 +81,10 @@ export class OMS {
         ? customOpts.leverage 
         : actualLeverage;
 
-      const riskCheck = riskManager.checkEntryAllowed(balance, finalAllocated, 0);
+      const currentPositionCount = positionMonitor.getActivePositions().length;
+      const riskCheck = riskManager.checkEntryAllowed(balance, finalAllocated, currentPositionCount);
       if (!riskCheck.allowed) {
         throw new Error(`Risk manager check disallowed trade for ${symbol}: ${riskCheck.reason}`);
-      }
-
-      // Execute on live exchange if live mode is enabled
-      if (executionAdapter.getIsLive()) {
-        const side = direction === 'LONG' ? 'buy' : 'sell';
-        await executionAdapter.createMarketOrder(symbol, side, finalQuantityResolved, finalLeverageResolved);
       }
 
       const safeAtr = (atr && atr > 0) ? atr : (price * 0.015);
@@ -104,7 +115,75 @@ export class OMS {
         ? customOpts.tp3 
         : (direction === 'LONG' ? price + computedRisk * 3.0 : Math.max(0.0001, price - computedRisk * 3.0));
       
-      const posId = Math.random().toString(36).substring(7);
+      const posId = `sig_${Date.now()}_${Math.random().toString(36).substring(4)}`;
+      const strategyPrefix = (customOpts?.strategy || 'GEN').substring(0, 8).replace(/[^a-zA-Z0-9]/g, '');
+      
+      // Trade Admission Record (Audit Trail)
+      if (!isQuotaExhausted()) {
+        try {
+          await writeBatch(db).set(doc(collection(db, 'trade_admissions')), {
+             posId,
+             symbol,
+             direction,
+             requestedPrice: price,
+             computedSl: sl,
+             computedTp1: tp1,
+             confidenceScore: score,
+             strategy: customOpts?.strategy || 'UNKNOWN',
+             marketRegime: customOpts?.marketRegime || 'UNKNOWN',
+             allocatedBalance: finalAllocated,
+             leverage: finalLeverageResolved,
+             quantity: finalQuantityResolved,
+             timestamp: Date.now(),
+             status: 'APPROVED'
+          }).commit();
+        } catch (admissionErr: any) {
+          if (admissionErr && (admissionErr.code === 'resource-exhausted' || String(admissionErr).includes('resource-exhausted'))) {
+            const { markQuotaExhausted } = await import('./firestoreSafe.js');
+            markQuotaExhausted();
+          }
+        }
+      }
+
+      // Generate 36-char max deterministic Client Order IDs
+      const baseId = `${strategyPrefix}-${symbol}-${posId}`;
+      const entryOrderId = `E-${baseId}`.substring(0, 36);
+      const stopOrderId = `S-${baseId}`.substring(0, 36);
+
+      let executionState = 'SIGNAL_CREATED';
+
+      // Execute on live exchange if live mode is enabled
+      if (executionAdapter.getIsLive()) {
+        const side = direction === 'LONG' ? 'buy' : 'sell';
+        const stopSide = direction === 'LONG' ? 'sell' : 'buy';
+
+        try {
+          executionState = 'ORDER_SUBMITTED';
+          await executionAdapter.createMarketOrder(symbol, side, finalQuantityResolved, finalLeverageResolved, entryOrderId);
+          
+          executionState = 'FILLED';
+          
+          // IMMEDIATELY Submit Protective Stop Loss
+          await executionAdapter.createStopMarketOrder(symbol, stopSide, finalQuantityResolved, sl, stopOrderId);
+          
+          executionState = 'PROTECTION_PLACED';
+        } catch (ex: any) {
+          console.error(`🚨 [CRITICAL OMS ERROR] Failed during execution state: ${executionState} for ${symbol}. Triggering emergency fallback.`, ex);
+          // If we filled the entry but failed to place the stop loss, we MUST close the position to prevent unprotected exposure.
+          if (executionState === 'FILLED' || executionState === 'ORDER_SUBMITTED') {
+            try {
+              const closeSide = direction === 'LONG' ? 'sell' : 'buy';
+              await executionAdapter.closeMarketPosition(symbol, closeSide, finalQuantityResolved, `EMG-${baseId}`.substring(0, 36));
+              console.warn(`🛡️ Emergency close succeeded for unprotected ${symbol} position.`);
+            } catch (closeErr) {
+              console.error(`🚨🚨 FATAL: Emergency close FAILED for ${symbol}. Manual intervention required!`, closeErr);
+            }
+          }
+          throw new Error(`Execution failed at state ${executionState}: ${ex.message}`);
+        }
+      }
+      
+      executionState = 'POSITION_ACTIVE';
       
       const positionData = {
         id: posId,
@@ -128,16 +207,29 @@ export class OMS {
         entryAtr: safeAtr,
         compression_high: customOpts?.compressionHigh ?? null,
         compression_low: customOpts?.compressionLow ?? null,
+        macroColor: customOpts?.macroColor ?? 'AMBER',
+        macroLabel: (customOpts as any)?.macroLabel ?? null,
+        regimeConfidence: customOpts?.regimeConfidence ?? 0,
+        confidenceLevel: (customOpts as any)?.confidenceLevel ?? 'Medium',
+        tradeQuality: customOpts?.tradeQuality ?? 'Medium',
+        strategyPriority: (customOpts as any)?.strategyPriority ?? 'P1',
+        rrStruct: (customOpts as any)?.rrStruct ?? '≥3.5',
+        structuralRR: (customOpts as any)?.structuralRR ?? 3.5,
         trailing_stop_active: 0,
         initialTpHit: false,
         extremeSinceEntry: price,
         score_at_entry: score || 80,
         time_open: new Date().toISOString(),
-        status: 'OPEN'
+        status: 'OPEN',
+        execution_state: executionState,
+        client_order_id_base: baseId
       };
 
+      // Keep position instantly active in memory/local store
+      positionMonitor.addPosition(positionData as any);
+
       const docRef = doc(db, 'positions', posId);
-      await setDoc(docRef, positionData);
+      await safeSetDoc(docRef, positionData);
 
       // Trigger 24/7 background Telegram notification asynchronously
       telegramService.notifyTradeOpen({
@@ -160,10 +252,23 @@ export class OMS {
   }
 
   public async partialClosePosition(posId: string, currentPrice: number, partialRatio: number = 0.25, exitReason: string = 'INITIAL_TP_PARTIAL') {
+    // C6 fix: Prevent concurrent partial closes racing on same position
+    if (this.closingPositions.has(posId)) {
+      console.warn(`OMS: Partial close already in progress for ${posId}, skipping`);
+      return null;
+    }
+    this.closingPositions.add(posId);
+    try {
     const posRef = doc(db, 'positions', posId);
-    const docSnap = await getDoc(posRef);
-    if (!docSnap.exists()) return null;
-    const pos = docSnap.data() as any;
+    // I5 fix: Use quota-safe Firestore read with in-memory fallback
+    const snapRes = await safeGetDoc(posRef);
+    if (!snapRes.exists) {
+      const fallback = positionMonitor.getActivePositions().find(p => p.id === posId);
+      if (!fallback) return null;
+      var pos = fallback as any;
+    } else {
+      var pos = snapRes.data as any;
+    }
 
     if (pos.status !== 'OPEN' || !pos.quantity || pos.quantity <= 0) return null;
 
@@ -193,7 +298,7 @@ export class OMS {
     const buffer = pos.entry_price * 0.0015;
     const newSl = isLong ? pos.entry_price + buffer : pos.entry_price - buffer;
 
-    await updateDoc(posRef, {
+    await safeUpdateDoc(posRef, {
       quantity: remainingQty,
       allocated_balance: remainingAllocated,
       sl: newSl,
@@ -202,13 +307,24 @@ export class OMS {
     });
 
     const logId = `${posId}_tp1_${Date.now()}`;
-    await setDoc(doc(db, 'trade_logs', logId), {
+    await safeSetDoc(doc(db, 'trade_logs', logId), {
       id: logId,
       parent_position_id: posId,
       symbol: pos.symbol,
       direction: pos.direction,
       strategy: pos.strategy || 'BINANCE_COMPOSITE',
+      market_regime: pos.market_regime || null,
+      is_auto_regime: !!pos.is_auto_regime,
       frequency_preset: pos.frequency_preset || 'MEDIUM',
+      macroColor: pos.macroColor || 'AMBER',
+      macroLabel: pos.macroLabel || null,
+      regimeConfidence: pos.regimeConfidence ?? 0,
+      confidenceLevel: pos.confidenceLevel || 'Medium',
+      tradeQuality: pos.tradeQuality || 'Medium',
+      strategyPriority: pos.strategyPriority || 'P1',
+      rrStruct: pos.rrStruct || '≥3.5',
+      structuralRR: pos.structuralRR || 3.5,
+      outcome: 'Partial',
       leverage: pos.leverage || 1,
       score_at_entry: pos.score_at_entry || 80,
       entry_price: pos.entry_price,
@@ -236,15 +352,26 @@ export class OMS {
     }, currentPrice, pnl, pctReturn, closeQty, remainingQty).catch(() => {});
 
     return { pnl, newSl, remainingQty };
+    } finally {
+      this.closingPositions.delete(posId);
+    }
   }
 
-  public async closePosition(posId: string, currentPrice: number, exitReason: string) {
+  public async closePosition(posId: string, currentPrice: number, exitReason: string, extraDiagnostic?: { mfe?: number; mae?: number }) {
     const posRef = doc(db, 'positions', posId);
-    const docSnap = await getDoc(posRef);
-    if (!docSnap.exists()) return null;
-    const pos = docSnap.data() as any;
+    let pos: any = null;
+    const snapRes = await safeGetDoc(posRef);
+    if (snapRes.exists && snapRes.data) {
+      pos = snapRes.data;
+    } else {
+      pos = positionMonitor.getActivePositions().find(p => p.id === posId);
+    }
+    if (!pos) return null;
     
     if (pos.status !== 'OPEN') return null;
+
+    // Immediately remove from active monitoring
+    positionMonitor.removePosition(posId);
 
     // If live exchange mode is active, close live order
     if (executionAdapter.getIsLive()) {
@@ -254,6 +381,12 @@ export class OMS {
       } catch (err) {
         console.warn(`OMS: Live close position warning on ${pos.symbol}:`, err);
       }
+      // C5 fix: Cancel orphaned protective stop-loss order on exchange
+      try {
+        await executionAdapter.cancelAllOpenOrders(pos.symbol);
+      } catch (err) {
+        console.warn(`OMS: Failed to cancel orphaned orders on ${pos.symbol}:`, err);
+      }
     }
 
     const isLong = pos.direction === 'LONG';
@@ -261,25 +394,59 @@ export class OMS {
     const pnl = priceDeltaPct * pos.allocated_balance * (pos.leverage || 1);
     const pctReturn = pos.allocated_balance > 0 ? (pnl / pos.allocated_balance) * 100 : 0;
       
-    await updateDoc(posRef, {
+    await safeUpdateDoc(posRef, {
       status: 'CLOSED',
       current_price: currentPrice,
       time_close: new Date().toISOString()
     });
     
-    
-    await setDoc(doc(db, 'trade_logs', posId), {
+    const riskAmount = Math.abs(pos.entry_price - (pos.sl || 0));
+    const realized_r = riskAmount > 0 ? ((isLong ? (currentPrice - pos.entry_price) : (pos.entry_price - currentPrice)) / riskAmount) : 0;
+
+    let outcome: 'Full 1:3' | 'Partial' | 'Scratch' | 'Loss' = 'Loss';
+    const upperReason = (exitReason || '').toUpperCase();
+    if (upperReason.includes('TP3') || realized_r >= 2.8) {
+      outcome = 'Full 1:3';
+    } else if (upperReason.includes('PARTIAL') || upperReason.includes('TP2') || upperReason.includes('TP1') || (pnl > 0 && realized_r >= 0.8)) {
+      outcome = 'Partial';
+    } else if (Math.abs(pnl) <= (pos.allocated_balance || 100) * 0.005 || upperReason.includes('BE') || upperReason.includes('TRAIL_BE')) {
+      outcome = 'Scratch';
+    } else {
+      outcome = 'Loss';
+    }
+
+    const mfeVal = extraDiagnostic?.mfe ?? (pos as any).mfe ?? null;
+    const maeVal = extraDiagnostic?.mae ?? (pos as any).mae ?? null;
+
+    await safeSetDoc(doc(db, 'trade_logs', posId), {
       id: posId,
       symbol: pos.symbol,
       direction: pos.direction,
       strategy: pos.strategy || 'BINANCE_COMPOSITE',
       market_regime: pos.market_regime || null,
+      regimeAtEntry: pos.market_regime || null,
       is_auto_regime: !!pos.is_auto_regime,
       frequency_preset: pos.frequency_preset || 'MEDIUM',
+      macroColor: pos.macroColor || 'AMBER',
+      macroLabel: pos.macroLabel || null,
+      regimeConfidence: pos.regimeConfidence ?? 0,
+      confidenceLevel: pos.confidenceLevel || 'Medium',
+      tradeQuality: pos.tradeQuality || 'Medium',
+      strategyPriority: pos.strategyPriority || 'P1',
+      rrStruct: pos.rrStruct || '≥3.5',
+      structuralRR: pos.structuralRR || 3.5,
+      outcome,
       leverage: pos.leverage || 1,
       score_at_entry: pos.score_at_entry || 80,
       entry_price: pos.entry_price,
       close_price: currentPrice,
+      sl: pos.sl,
+      tp1: pos.tp1,
+      tp2: pos.tp2,
+      tp3: pos.tp3,
+      mfe: mfeVal,
+      mae: maeVal,
+      signalCandleTime: pos.signalCandleTime || null,
       profit: pnl,
       pct_return: pctReturn,
       exit_reason: exitReason,
@@ -291,26 +458,31 @@ export class OMS {
       const riskAmount = Math.abs(pos.entry_price - (pos.sl || 0));
       const realized_r = riskAmount > 0 ? ((isLong ? (currentPrice - pos.entry_price) : (pos.entry_price - currentPrice)) / riskAmount) : 0;
       const logLine = JSON.stringify({
+        id: posId,
         timestamp: new Date().toISOString(),
+        time_open: pos.time_open || pos.timestamp,
+        time_close: new Date().toISOString(),
         symbol: pos.symbol,
         direction: pos.direction,
+        leverage: pos.leverage || 1,
         passed_gates: true,
         reject_reason: null,
         entry_price: pos.entry_price,
         sl: pos.sl,
-        tp1: pos.tp1,
-        tp2: pos.tp2,
-        tp3: pos.tp3,
-        score: pos.score_at_entry,
-        exit_price: currentPrice,
+        close_price: currentPrice,
+        profit: pnl,
+        pct_return: pctReturn,
+        realized_r,
+        mfe: mfeVal,
+        mae: maeVal,
         exit_reason: exitReason,
-        realized_r: parseFloat(realized_r.toFixed(2)),
-        strategy_version: 'v2.1_closed_candles'
+        strategy: pos.strategy,
+        market_regime: pos.market_regime,
+        strategy_version: 'v2.2_regime_gated'
       }) + '\n';
-      fs.appendFileSync(path.join(process.cwd(), 'data', 'scan_logs.jsonl'), logLine);
+      fs.appendFileSync(path.join(process.cwd(), 'data', 'trade_logs.jsonl'), logLine);
     } catch(e) {}
 
-    
     riskManager.recordTradeResult(pnl, 10000);
     this.onTradeClosed?.(pnl);
 

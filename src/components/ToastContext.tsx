@@ -3,16 +3,21 @@ import { motion, AnimatePresence } from 'motion/react';
 import { CheckCircle, AlertTriangle, Info, X, Target, Bell } from 'lucide-react';
 
 export type ToastType = 'info' | 'success' | 'warning' | 'error' | 'trade';
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
 
 interface Toast {
   id: string;
   type: ToastType;
   title: string;
   message?: string;
+  action?: ToastAction;
 }
 
 interface ToastContextValue {
-  addToast: (type: ToastType, title: string, message?: string) => void;
+  addToast: (type: ToastType, title: string, message?: string, action?: ToastAction) => void;
 }
 
 const ToastContext = createContext<ToastContextValue | undefined>(undefined);
@@ -28,9 +33,9 @@ export function useToast() {
 export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const addToast = useCallback((type: ToastType, title: string, message?: string) => {
+  const addToast = useCallback((type: ToastType, title: string, message?: string, action?: ToastAction) => {
     const id = Math.random().toString(36).substring(7);
-    setToasts((prev) => [...prev, { id, type, title, message }]);
+    setToasts((prev) => [...prev, { id, type, title, message, action }]);
     
     // Auto remove after 5 seconds
     setTimeout(() => {
@@ -79,7 +84,19 @@ export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 <div className="mt-0.5 shrink-0">{getIcon(toast.type)}</div>
                 <div className="flex-1 pr-6">
                   <h4 className="text-sm font-semibold text-gray-100">{toast.title}</h4>
+                  
                   {toast.message && <p className="text-xs text-gray-400 mt-1">{toast.message}</p>}
+                  {toast.action && (
+                    <button
+                      onClick={() => {
+                        toast.action?.onClick();
+                        removeToast(toast.id);
+                      }}
+                      className="mt-2 text-xs font-semibold px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded border border-gray-700 transition-colors"
+                    >
+                      {toast.action.label}
+                    </button>
+                  )}
                 </div>
                 <button 
                   onClick={() => removeToast(toast.id)}

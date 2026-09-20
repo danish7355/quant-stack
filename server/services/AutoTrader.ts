@@ -4,15 +4,22 @@ import { db } from '../firebase.js';
 import { doc, getDoc, setDoc, collection, query, where, getDocs, deleteDoc } from 'firebase/firestore';
 import { oms } from './OMS.js';
 import { positionMonitor } from './PositionMonitor.js';
-import { priceStream } from './PriceStream.js';
+import { isQuotaExhausted, safeSetDoc, safeDeleteDoc, safeGetDoc, readLocalJson, writeLocalJson } from './firestoreSafe.js';
+
 import { telegramService } from './TelegramService.js';
 import { riskManager } from './RiskManager.js';
+import { writeSignalAudit } from './SignalAuditService.js';
+import { recordSettingsAudit } from './SettingsAuditService.js';
+import { heatmapService } from './HeatmapService.js';
+import { reconciliationWorker } from './PositionReconciliationWorker.js';
+import { priceStream } from './PriceStream.js';
 import { 
   calculateEMA, calculateATR, detectCompression, detectBreakout, 
   isFakeBreakout, scoreBreakout, applyTrendAndMomentumBonus, determineStopLoss, 
-  calculateInitialTp, calculateVcbTargets, validateHigherTimeframeTrend
+  calculateInitialTp, calculateVcbTargets, validateHigherTimeframeTrend,
+  evaluateVcbChecklist, VcbChecklistResult
 } from '../../src/utils/strategies/volatilityCompression.js';
-import { evaluateTrendPullback } from '../../src/utils/strategies/trendPullback.js';
+import { evaluateTrendPullback, getHigherTimeframe } from '../../src/utils/strategies/trendPullback.js';
 import { evaluateSmc } from '../../src/utils/strategies/smcLiquidity.js';
 import { detectMacroRangeBreakout } from '../../src/utils/strategies/macroRange.js';
 import { evaluateEarlyCoilBreakout } from '../../src/utils/strategies/earlyCoilBreakout.js';
@@ -20,103 +27,23 @@ import { evaluateRangeMeanReversion } from '../../src/utils/strategies/rangeMean
 import { calculateRSI } from '../../src/utils/indicators.js';
 import { 
   DEFAULT_STRATEGY_BUCKET, 
+  classifyBtcMacroRegime,
   classifyMarketRegime, 
   getEligibleBucketStrategies, 
-  StrategyBucketItem 
+  StrategyBucketItem,
+  GlobalMarketRegime,
+  RegimeClassificationResult,
+  MarketRegimeType
 } from '../../src/utils/strategyBucket.js';
+import { TradingSettings, CANONICAL_DEFAULT_SETTINGS } from '../../src/shared/TradingSettings.js';
 
-export interface ServerBotSettings {
-  autoTradeEnabled: boolean;
-  autoTradeThreshold: number;
-  tradeFrequency?: 'LOW' | 'MEDIUM' | 'HIGH';
-  activeStrategy: 'BINANCE_COMPOSITE' | 'DELTA_CLIMAX' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'EARLY_COIL_BREAKOUT' | 'AUTO_REGIME' | string;
-  strategyBucket?: StrategyBucketItem[];
-  telegramBotToken: string;
-  telegramChatId: string;
-  binanceApiKey?: string;
-  binanceApiSecret?: string;
-  binanceTestnet?: boolean;
-  leverage: number;
-  positionSizePct: number;
-  accountRiskPct?: number;
-  maxConcurrentTrades: number;
-  timeframe: string;
-  coinCount?: number;
-  scanInterval?: number;
-  startingBalance?: number;
-  demoBalance?: number;
-  equitySnapshots?: any[];
-  theme?: string;
-  min24hVolume?: number;
-  maxFundingRate?: number;
-  maxSpread?: number;
-  emaFastPeriod?: number;
-  emaSlowPeriod?: number;
-  emaTrendPeriod?: number;
-  emaCrossLookback?: number;
-  rsiPeriod?: number;
-  rsiLongMin?: number;
-  rsiLongMax?: number;
-  rsiShortMin?: number;
-  rsiShortMax?: number;
-  macdFast?: number;
-  macdSlow?: number;
-  macdSignal?: number;
-  adxPeriod?: number;
-  adxTrendThreshold?: number;
-  superTrendPeriod?: number;
-  superTrendMultiplier?: number;
-  volumeMultiplier?: number;
-  fibLookback?: number;
-  atrPeriod?: number;
-  dailyLossLimitPct?: number;
-  maxDrawdownPct?: number;
-  tp1AtrMultiple?: number;
-  tp2AtrMultiple?: number;
-  tp3FibLevel?: number;
-  slAtrMultiple?: number;
-  minRRRatio?: number;
-  trailingStopActivation?: string;
-  trailActivationR?: number;
-  timeBasedExitEnabled?: boolean;
-  timeBasedExitCandles?: number;
-  alertOnNewSignal?: boolean;
-  alertOnTradeExecuted?: boolean;
-  alertOnTpHit?: boolean;
-  alertOnSlHit?: boolean;
-  alertOnTsMoved?: boolean;
-  alertOnDailyLossLimit?: boolean;
-  alertOnRangingDetected?: boolean;
-  // Climax Reversal Parameters
-  crEnabled?: boolean;
-  crClimaxLookback?: number;
-  crEmaFast?: number;
-  crEmaContext?: number;
-  crEmaBaseline?: number;
-  crAtrPeriod?: number;
-  crMinOverextensionAtr?: number;
-  crMinAtrVsAverage?: number;
-  crAtrAveragePeriod?: number;
-  crMinRejectionWickRatio?: number;
-  crMinClimaxRangeRatio?: number;
-  crMinStopDistanceAtr?: number;
-  crMinRewardRisk?: number;
-  [key: string]: any;
-}
+export type ServerBotSettings = TradingSettings;
 
 export class AutoTrader {
   private settings: ServerBotSettings = {
-    autoTradeEnabled: true,
-    autoTradeThreshold: 75,
-    tradeFrequency: 'LOW',
-    activeStrategy: 'BINANCE_COMPOSITE',
-    strategyBucket: DEFAULT_STRATEGY_BUCKET,
+    ...CANONICAL_DEFAULT_SETTINGS,
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
     telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
-    leverage: 5,
-    positionSizePct: 3,
-    maxConcurrentTrades: 5,
-    timeframe: '15m'
   };
 
   private isRunning = false;
@@ -126,16 +53,310 @@ export class AutoTrader {
   private pendingSmcSetups = new Map<string, any>();
   private tradeCooldowns = new Map<string, number>();
   private lastTradedSignal = new Map<string, number>();
+  private regimeHistory = new Map<string, string[]>();
+  private symbolRegimeStates = new Map<string, {
+    candidateRegime: MarketRegimeType;
+    confirmedRegime: MarketRegimeType | null;
+    consecutiveBars: number;
+    latchedBarsRemaining: number;
+    lastCandleTime: number;
+  }>();
+  private cachedGlobalRegime: GlobalMarketRegime | null = null;
+  private lastGlobalRegimeTime = 0;
+  private globalFilterBlockActive = false;
+  private globalFilterBlockReason = '';
+
+  public isGlobalFilterPausing(): boolean {
+    return this.globalFilterBlockActive;
+  }
+
+  public getGlobalFilterBlockReason(): string {
+    return this.globalFilterBlockReason;
+  }
+
+  /**
+   * 2-Candle Regime Hysteresis (Persistent) & Event Regime Latching (Breakout/Exhaustion)
+   * with Hard No-Trade Zone Gate (TRANSITION/PANIC/DEAD_VOLUME/UNCLEAR)
+   */
+  private updateAndCheckRegimeConfirmation(
+    symbol: string,
+    detectedRegime: MarketRegimeType,
+    closedCandleTime: number
+  ): { confirmed: boolean; regime: MarketRegimeType | null; reason?: string } {
+    let state = this.symbolRegimeStates.get(symbol);
+    if (!state) {
+      state = {
+        candidateRegime: detectedRegime,
+        confirmedRegime: null,
+        consecutiveBars: 1,
+        latchedBarsRemaining: 0,
+        lastCandleTime: closedCandleTime
+      };
+      this.symbolRegimeStates.set(symbol, state);
+    }
+
+    // Hard No-Trade Zone (Immediate Veto)
+    if (detectedRegime === 'TRANSITION' || detectedRegime === 'PANIC' || detectedRegime === 'DEAD_VOLUME' || detectedRegime === 'UNCLEAR') {
+      state.confirmedRegime = null;
+      state.latchedBarsRemaining = 0;
+      state.consecutiveBars = 0;
+      state.candidateRegime = detectedRegime;
+      state.lastCandleTime = closedCandleTime;
+      return { 
+        confirmed: false, 
+        regime: detectedRegime, 
+        reason: `Hard Veto: Current regime is in un-tradable state '${detectedRegime}'` 
+      };
+    }
+
+    const isEventRegime = detectedRegime === 'BREAKOUT_UP' || 
+                          detectedRegime === 'BREAKOUT_DOWN' || 
+                          detectedRegime === 'EXHAUSTION_UP' || 
+                          detectedRegime === 'EXHAUSTION_DOWN';
+
+    if (state.lastCandleTime !== closedCandleTime) {
+      // Candle closed: advance bar counter
+      state.lastCandleTime = closedCandleTime;
+
+      if (isEventRegime) {
+        // Event regimes are 1-bar trigger events: latch for 3 bars to allow strategy execution window
+        state.candidateRegime = detectedRegime;
+        state.confirmedRegime = detectedRegime;
+        state.latchedBarsRemaining = 3;
+        state.consecutiveBars = 1;
+        return { confirmed: true, regime: detectedRegime };
+      }
+
+      // Check if existing event regime is still latched
+      if (state.latchedBarsRemaining > 0) {
+        state.latchedBarsRemaining -= 1;
+        if (state.latchedBarsRemaining > 0 && state.confirmedRegime) {
+          return { confirmed: true, regime: state.confirmedRegime };
+        }
+      }
+
+      // Persistent regimes (TRENDING_UP, TRENDING_DOWN, RANGING) require 2 closed bars hysteresis
+      if (state.candidateRegime === detectedRegime) {
+        state.consecutiveBars += 1;
+        if (state.consecutiveBars >= 2) {
+          state.confirmedRegime = detectedRegime;
+        }
+      } else {
+        state.candidateRegime = detectedRegime;
+        state.consecutiveBars = 1;
+        state.confirmedRegime = null;
+      }
+    } else {
+      // Same candle tick
+      if (isEventRegime && (!state.confirmedRegime || state.confirmedRegime !== detectedRegime)) {
+        state.candidateRegime = detectedRegime;
+        state.confirmedRegime = detectedRegime;
+        state.latchedBarsRemaining = 3;
+        state.consecutiveBars = 1;
+        return { confirmed: true, regime: detectedRegime };
+      }
+    }
+
+    if (!state.confirmedRegime) {
+      return { 
+        confirmed: false, 
+        regime: null, 
+        reason: `Regime Hysteresis Pending: '${state.candidateRegime}' has ${state.consecutiveBars}/2 closed bars` 
+      };
+    }
+
+    return { confirmed: true, regime: state.confirmedRegime };
+  }
+
+  /**
+   * Higher-Timeframe (1H) Directional Agreement Filter
+   */
+  private async checkHtfAgreement(
+    symbol: string, 
+    direction: 'LONG' | 'SHORT'
+  ): Promise<{ passed: boolean; reason?: string; htfBias?: string }> {
+    try {
+      const htfKlines = await this.getKlines(symbol, '1h');
+      if (!htfKlines || htfKlines.length < 30) {
+        return { passed: true, htfBias: 'NEUTRAL' };
+      }
+      const closedHtf = htfKlines.slice(0, -1);
+      const closes = closedHtf.map(k => k.close);
+      const ema21Series = calculateEMA(closes, 21);
+      const ema50Series = calculateEMA(closes, 50);
+      const ema21 = ema21Series[ema21Series.length - 1] || closes[closes.length - 1];
+      const ema50 = ema50Series[ema50Series.length - 1] || closes[closes.length - 1];
+      const lastClose = closes[closes.length - 1];
+
+      let htfBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+      if (lastClose > ema50 && ema21 > ema50) {
+        htfBias = 'BULLISH';
+      } else if (lastClose < ema50 && ema21 < ema50) {
+        htfBias = 'BEARISH';
+      }
+
+      if (direction === 'LONG' && htfBias === 'BEARISH') {
+        return { 
+          passed: false, 
+          reason: 'HTF 1H trend is BEARISH (Price & EMA21 < EMA50). Long signals vetoed.', 
+          htfBias 
+        };
+      }
+      if (direction === 'SHORT' && htfBias === 'BULLISH') {
+        return { 
+          passed: false, 
+          reason: 'HTF 1H trend is BULLISH (Price & EMA21 > EMA50). Short signals vetoed.', 
+          htfBias 
+        };
+      }
+      return { passed: true, htfBias };
+    } catch (e) {
+      return { passed: true, htfBias: 'NEUTRAL' };
+    }
+  }
+
+  /**
+   * Regime-Aware Structure Invalidation Gate
+   * Continuation rules for TRENDING/BREAKOUT; Reversal/Exhaustion rules for EXHAUSTION/RANGING
+   */
+  private checkStructureValid(
+    closedKlines: any[],
+    direction: 'LONG' | 'SHORT',
+    currentPrice: number,
+    regime?: MarketRegimeType
+  ): { valid: boolean; reason?: string } {
+    if (!closedKlines || closedKlines.length < 30) return { valid: true };
+    const lastClosed = closedKlines[closedKlines.length - 1];
+    const closes = closedKlines.map(k => k.close);
+    const highs = closedKlines.map(k => k.high);
+    const lows = closedKlines.map(k => k.low);
+    const ema20Series = calculateEMA(closes, 20);
+    const ema50Series = calculateEMA(closes, 50);
+    const ema20 = ema20Series[ema20Series.length - 1] || currentPrice;
+    const ema50 = ema50Series[ema50Series.length - 1] || currentPrice;
+
+    // Calculate real 14-period ATR from closed candles
+    let atrSum = 0;
+    const len = closedKlines.length;
+    for (let i = len - 14; i < len; i++) {
+      if (i <= 0) continue;
+      atrSum += Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1]));
+    }
+    const realAtr = Math.max(atrSum / 14, currentPrice * 0.005);
+    const overextensionAtr = Math.abs(currentPrice - ema50) / realAtr;
+
+    const isExhaustion = regime === 'EXHAUSTION_UP' || regime === 'EXHAUSTION_DOWN';
+    const isRanging = regime === 'RANGING';
+
+    // 1. REVERSAL / EXHAUSTION REGIME STRUCTURE
+    if (isExhaustion) {
+      // Must not be runaway explosive blow-off beyond 4.0 ATR
+      if (overextensionAtr > 4.0) {
+        return { valid: false, reason: `Runaway parabolic trend: ${(overextensionAtr).toFixed(2)} ATR from EMA50 exceeds 4.0 ATR safety cap` };
+      }
+      // Exhaustion requires minimum dislocation (at least 1.3 ATR from EMA50)
+      if (overextensionAtr < 1.3) {
+        return { valid: false, reason: `Insufficient extension for exhaustion reversal: ${(overextensionAtr).toFixed(2)} ATR < 1.3 ATR` };
+      }
+
+      if (direction === 'SHORT') {
+        // Fading top: rejection wick on top
+        const range = lastClosed.high - lastClosed.low;
+        const upperWick = lastClosed.high - Math.max(lastClosed.open, lastClosed.close);
+        if (range > 0 && (upperWick / range) < 0.25 && lastClosed.close >= lastClosed.high - (0.15 * range)) {
+          return { valid: false, reason: 'Exhaustion structure invalid: No upper rejection wick on top-fade bar' };
+        }
+      } else if (direction === 'LONG') {
+        // Fading bottom: rejection wick on bottom
+        const range = lastClosed.high - lastClosed.low;
+        const lowerWick = Math.min(lastClosed.open, lastClosed.close) - lastClosed.low;
+        if (range > 0 && (lowerWick / range) < 0.25 && lastClosed.close <= lastClosed.low + (0.15 * range)) {
+          return { valid: false, reason: 'Exhaustion structure invalid: No lower rejection wick on bottom-fade bar' };
+        }
+      }
+      return { valid: true };
+    }
+
+    // 2. RANGE MEAN REVERSION REGIME STRUCTURE
+    if (isRanging) {
+      if (overextensionAtr > 2.5) {
+        return { valid: false, reason: `Range invalidation: Price broke out ${(overextensionAtr).toFixed(2)} ATR from EMA50` };
+      }
+      return { valid: true };
+    }
+
+    // 3. CONTINUATION REGIMES (TRENDING_UP, TRENDING_DOWN, BREAKOUT_UP, BREAKOUT_DOWN)
+    if (overextensionAtr > 2.2) {
+      return { 
+        valid: false, 
+        reason: `Overextended from EMA50: ${(overextensionAtr).toFixed(2)} ATR > 2.2 ATR threshold` 
+      };
+    }
+
+    const recent20 = closedKlines.slice(-20);
+    const recentHighs = recent20.map(k => k.high);
+    const recentLows = recent20.map(k => k.low);
+    const avgVol = recent20.reduce((s, k) => s + (k.volume || 0), 0) / (recent20.length || 1);
+
+    if (direction === 'LONG') {
+      const priorLows = recentLows.slice(0, -1);
+      const protectedLow = priorLows.length > 0 ? Math.min(...priorLows) : lastClosed.low;
+      if (lastClosed.close < protectedLow) {
+        return { valid: false, reason: `Structure Invalidation: Closed below protected swing low (${lastClosed.close} < ${protectedLow})` };
+      }
+      if (lastClosed.close < ema50) {
+        return { valid: false, reason: `Structure Invalidation: Closed below 50 EMA (${lastClosed.close} < ${ema50.toFixed(4)})` };
+      }
+      if (ema20 < ema50) {
+        return { valid: false, reason: `Structure Invalidation: Bearish EMA stack (EMA20 < EMA50)` };
+      }
+      if (lastClosed.close < lastClosed.open && (lastClosed.volume || 0) > avgVol * 2.2) {
+        return { valid: false, reason: `Structure Invalidation: Heavy opposing bearish volume spike (${((lastClosed.volume || 0)/avgVol).toFixed(1)}x avg)` };
+      }
+    } else {
+      const priorHighs = recentHighs.slice(0, -1);
+      const protectedHigh = priorHighs.length > 0 ? Math.max(...priorHighs) : lastClosed.high;
+      if (lastClosed.close > protectedHigh) {
+        return { valid: false, reason: `Structure Invalidation: Closed above protected swing high (${lastClosed.close} > ${protectedHigh})` };
+      }
+      if (lastClosed.close > ema50) {
+        return { valid: false, reason: `Structure Invalidation: Closed above 50 EMA (${lastClosed.close} > ${ema50.toFixed(4)})` };
+      }
+      if (ema20 > ema50) {
+        return { valid: false, reason: `Structure Invalidation: Bullish EMA stack (EMA20 > EMA50)` };
+      }
+      if (lastClosed.close > lastClosed.open && (lastClosed.volume || 0) > avgVol * 2.2) {
+        return { valid: false, reason: `Structure Invalidation: Heavy opposing bullish volume spike (${((lastClosed.volume || 0)/avgVol).toFixed(1)}x avg)` };
+      }
+    }
+
+    return { valid: true };
+  }
 
 
   constructor() {
     this.init();
   }
 
+  public isEngineActive(): boolean {
+    return this.isRunning && (this.settings.autoTradeEnabled !== false);
+  }
+
   public async init() {
     await this.loadSettings();
-    this.startLoop();
+    priceStream.subscribe((prices, batch) => this.processPendingSMC(prices));
+    if (this.settings.autoTradeEnabled !== false) {
+      this.startLoop();
+    } else {
+      this.isRunning = false;
+      console.log('🛑 [AutoTrader] Engine initialized in STOPPED mode (autoTradeEnabled is false).');
+    }
     this.startLogCleanupSchedule();
+    
+    // Reconciliation runs every 30 seconds
+    setInterval(() => {
+      reconciliationWorker.runReconciliation();
+    }, 30000);
   }
 
   private startLogCleanupSchedule() {
@@ -149,6 +370,9 @@ export class AutoTrader {
   }
 
   private async cleanupOldLogs() {
+    if (isQuotaExhausted()) {
+      return; // Skip cleanup while write quota is exhausted to prevent errors
+    }
     try {
       const FIFTEEN_DAYS_MS = 15 * 24 * 60 * 60 * 1000;
       const cutoffDate = new Date(Date.now() - FIFTEEN_DAYS_MS).toISOString();
@@ -162,7 +386,7 @@ export class AutoTrader {
       
       let logsDeleted = 0;
       for (const docSnap of logsSnap.docs) {
-        await deleteDoc(doc(db, 'trade_logs', docSnap.id));
+        await safeDeleteDoc(doc(db, 'trade_logs', docSnap.id));
         logsDeleted++;
       }
 
@@ -176,7 +400,7 @@ export class AutoTrader {
       for (const docSnap of posSnap.docs) {
         const data = docSnap.data();
         if (data.time_close && data.time_close < cutoffDate) {
-          await deleteDoc(doc(db, 'positions', docSnap.id));
+          await safeDeleteDoc(doc(db, 'positions', docSnap.id));
           posDeleted++;
         }
       }
@@ -188,34 +412,47 @@ export class AutoTrader {
   }
 
   public async loadSettings(): Promise<ServerBotSettings> {
-    try {
-      const docSnap = await getDoc(doc(db, 'settings', 'bot_config'));
-      if (docSnap.exists()) {
-        const data = docSnap.data() as Partial<ServerBotSettings>;
-        // Merge data, keeping any existing valid credentials if firestore values are empty
-        const updated = { ...this.settings };
-        for (const [key, val] of Object.entries(data)) {
-          if (val !== undefined && val !== null) {
-            (updated as any)[key] = val;
-          }
-        }
-        this.settings = updated;
-        if (!this.settings.strategyBucket || this.settings.strategyBucket.length === 0) {
-          this.settings.strategyBucket = DEFAULT_STRATEGY_BUCKET;
-        }
-        if (this.settings.telegramBotToken && this.settings.telegramChatId) {
-          telegramService.updateConfig(this.settings.telegramBotToken, this.settings.telegramChatId);
-        }
-        riskManager.updateSettings(this.settings.dailyLossLimitPct, undefined);
-        positionMonitor.settings = this.settings;
-      }
-    } catch (e) {
-      console.warn('AutoTrader: Could not load settings from Firestore, using defaults.');
+    // Load local settings first for immediate resilience
+    const localSettings = readLocalJson<Partial<ServerBotSettings>>('settings.json', {});
+    if (localSettings && Object.keys(localSettings).length > 0) {
+      this.settings = { ...this.settings, ...localSettings };
     }
+
+    if (!isQuotaExhausted()) {
+      try {
+        const snapRes = await safeGetDoc(doc(db, 'settings', 'bot_config'));
+        if (snapRes.success && snapRes.data) {
+          const data = snapRes.data as Partial<ServerBotSettings>;
+          // Merge data, keeping any existing valid credentials if firestore values are empty
+          const updated = { ...this.settings };
+          for (const [key, val] of Object.entries(data)) {
+            if (val !== undefined && val !== null) {
+              (updated as any)[key] = val;
+            }
+          }
+          this.settings = updated;
+          writeLocalJson('settings.json', this.settings);
+        }
+      } catch (e) {
+        console.warn('AutoTrader: Could not load settings from Firestore, using local settings.');
+      }
+    }
+
+    if (!this.settings.strategyBucket || this.settings.strategyBucket.length === 0) {
+      this.settings.strategyBucket = DEFAULT_STRATEGY_BUCKET;
+    }
+    if (this.settings.telegramBotToken && this.settings.telegramChatId) {
+      telegramService.updateConfig(this.settings.telegramBotToken, this.settings.telegramChatId);
+    }
+    telegramService.updateSettings(this.settings);
+    riskManager.updateSettings(this.settings.dailyLossLimitPct, undefined);
+    positionMonitor.settings = this.settings;
+
     return this.settings;
   }
 
-  public async saveSettings(newSettings: Partial<ServerBotSettings>): Promise<ServerBotSettings> {
+  public async saveSettings(newSettings: Partial<ServerBotSettings>, source: 'FRONTEND' | 'API' | 'SYSTEM' = 'FRONTEND'): Promise<ServerBotSettings> {
+    const before = { ...this.settings };
     const updated = { ...this.settings };
     for (const [k, v] of Object.entries(newSettings)) {
       if (v !== undefined && v !== null) {
@@ -228,17 +465,34 @@ export class AutoTrader {
       }
     }
     this.settings = updated;
+    if (newSettings.autoTradeEnabled !== undefined) {
+      if (newSettings.autoTradeEnabled) {
+        this.startLoop();
+      } else {
+        this.stopLoop();
+      }
+    }
     if (this.settings.telegramBotToken && this.settings.telegramChatId) {
       telegramService.updateConfig(this.settings.telegramBotToken, this.settings.telegramChatId);
     }
+    telegramService.updateSettings(this.settings);
     riskManager.updateSettings(this.settings.dailyLossLimitPct, undefined);
-        positionMonitor.settings = this.settings;
-    try {
-      await setDoc(doc(db, 'settings', 'bot_config'), this.settings, { merge: true });
-    } catch (e) {
-      console.error('AutoTrader: Failed to persist settings to Firestore:', e);
-    }
+    positionMonitor.settings = this.settings;
+
+    // Always persist locally
+    writeLocalJson('settings.json', this.settings);
+
+    // Safely attempt persistence to Firestore
+    await safeSetDoc(doc(db, 'settings', 'bot_config'), this.settings, { merge: true });
+
+    // Record audit trail of changes
+    recordSettingsAudit(before, this.settings, this.settings.settingsVersion || 1, source);
+
     return this.settings;
+  }
+
+  public getActiveSettingsVersion(): number {
+    return this.settings.settingsVersion || 1;
   }
 
   public getSettings(): ServerBotSettings {
@@ -246,6 +500,95 @@ export class AutoTrader {
       this.settings.strategyBucket = DEFAULT_STRATEGY_BUCKET;
     }
     return this.settings;
+  }
+
+  /**
+   * Hybrid Global Market Regime Filter (BTC / BTC+ETH):
+   * Assesses overall crypto macro health. If market is in an untradable regime
+   * (e.g., dead liquidity, violent un-hedged chaos), all 100 coin entries are paused.
+   */
+  public async getGlobalRegime(forceRefresh = false): Promise<GlobalMarketRegime> {
+    const now = Date.now();
+    if (!forceRefresh && this.cachedGlobalRegime && (now - this.lastGlobalRegimeTime < 60000)) {
+      return this.cachedGlobalRegime;
+    }
+
+    try {
+      const globalSymbol = this.settings.globalFilterSymbol || 'BTCUSDT';
+      const btcKlines = await this.getKlines('BTCUSDT', this.settings.timeframe || '15m');
+      const btcPrice = priceStream.getPrice('BTCUSDT') || (btcKlines.length > 0 ? btcKlines[btcKlines.length - 1].close : 68000);
+
+      if (!btcKlines || btcKlines.length < 30) {
+        const fallback: GlobalMarketRegime = {
+          regime: 'RANGING',
+          label: 'MACRO: AMBER – Initializing',
+          details: 'Initializing live BTC stream telemetry (trades permitted with high confidence threshold)',
+          symbol: 'BTCUSDT',
+          timestamp: now,
+          isTradable: true,
+          macroColor: 'AMBER',
+          btcPrice
+        };
+        this.cachedGlobalRegime = fallback;
+        this.lastGlobalRegimeTime = now;
+        return fallback;
+      }
+
+      const btcMacro = classifyBtcMacroRegime(btcKlines, btcPrice);
+      let finalRegime = btcMacro.regime;
+      let finalLabel = btcMacro.label;
+      let finalDetails = btcMacro.details;
+      let isTradable = btcMacro.isTradable;
+      let macroColor = btcMacro.macroColor;
+      let ethPrice: number | undefined = undefined;
+
+      // Option B: Consensus check requiring both BTC and ETH
+      if (globalSymbol === 'BTC_ETH') {
+        const ethKlines = await this.getKlines('ETHUSDT', this.settings.timeframe || '15m');
+        ethPrice = priceStream.getPrice('ETHUSDT') || (ethKlines.length > 0 ? ethKlines[ethKlines.length - 1].close : 3500);
+        if (ethKlines && ethKlines.length >= 30) {
+          const ethMacro = classifyBtcMacroRegime(ethKlines, ethPrice);
+          if (!ethMacro.isTradable || !btcMacro.isTradable) {
+            finalRegime = 'UNCLEAR';
+            isTradable = false;
+            macroColor = 'RED';
+            finalLabel = 'Consensus Breakdown';
+            finalDetails = `BTC (${btcMacro.label}) & ETH (${ethMacro.label}) liquidity failure or flash volatility`;
+          } else {
+            finalDetails = `BTC: ${btcMacro.label} | ETH: ${ethMacro.label} (Macro Tradable)`;
+          }
+        }
+      }
+
+      const result: GlobalMarketRegime = {
+        regime: finalRegime,
+        label: finalLabel,
+        details: finalDetails,
+        symbol: globalSymbol,
+        timestamp: now,
+        isTradable,
+        macroColor,
+        btcPrice,
+        ethPrice,
+        adx: btcMacro.adx,
+        atrPercentile: btcMacro.atrPercentile
+      };
+
+      this.cachedGlobalRegime = result;
+      this.lastGlobalRegimeTime = now;
+      return result;
+    } catch (e) {
+      console.warn('AutoTrader getGlobalRegime error:', e);
+      return {
+        regime: 'RANGING',
+        label: 'Global Fallback',
+        details: 'Local evaluation active',
+        symbol: 'BTCUSDT',
+        timestamp: now,
+        isTradable: true,
+        macroColor: 'AMBER'
+      };
+    }
   }
 
   public updateDemoBalance(pnl: number) {
@@ -261,6 +604,7 @@ export class AutoTrader {
 
 
   private processPendingSMC(prices: Map<string, number>) {
+    if (!this.isEngineActive()) return;
     const now = Date.now();
     for (const [symbol, setup] of this.pendingSmcSetups.entries()) {
       if (now > setup.expiryTime) {
@@ -283,10 +627,15 @@ export class AutoTrader {
           console.log(`⚡ [SMC] Retracement confirmed for ${symbol}! Tapped FVG zone. Executing...`);
           this.pendingSmcSetups.delete(symbol);
           
-          // Enforce Strict 1-2% Risk parameter
-          const accountEquity = 10000;
+          if (!this.isEngineActive()) {
+            console.log(`🛑 [SMC] Trade execution blocked for ${symbol}: Engine is stopped.`);
+            continue;
+          }
+
+          // C2 fix: Use settings-based equity instead of hardcoded $10,000
+          const accountEquity = this.settings.demoBalance ?? this.settings.startingBalance ?? 10000;
           const riskPct = this.settings.accountRiskPct ? (this.settings.accountRiskPct / 100) : 0.015; // default 1.5%
-          const userTargetAlloc = accountEquity * ((this.settings.positionSizePct || 10) / 100);
+          const userTargetAlloc = accountEquity * ((this.settings.positionSizePct || 3) / 100);
           const remainingExposure = riskManager.getRemainingExposure(accountEquity);
           const maxAllocation = Math.min(userTargetAlloc, remainingExposure);
           
@@ -301,7 +650,7 @@ export class AutoTrader {
               price,
               setup.sl,
               setup.direction,
-              { maxLeverage: this.settings.leverage || 1, maxAllocation },
+              { maxLeverage: this.settings.leverage || 5, maxAllocation },
               riskPct
           );
           
@@ -336,25 +685,40 @@ export class AutoTrader {
   }
 
   public startLoop() {
-    if (this.isRunning) return;
     this.isRunning = true;
-    priceStream.subscribe((prices, batch) => this.processPendingSMC(prices));
-
+    this.settings.autoTradeEnabled = true;
     if (this.loopInterval) clearInterval(this.loopInterval);
     // Background autonomous scan every 5 seconds for sniper execution
     this.loopInterval = setInterval(() => {
       this.runScanCycle();
     }, 5000);
+    console.log('▶️ [AutoTrader] Engine STARTED. Autonomous scanning & new trade execution active.');
+  }
 
-    // Initial run
-    setTimeout(() => this.runScanCycle(), 5000);
+  public stopLoop() {
+    this.isRunning = false;
+    this.settings.autoTradeEnabled = false;
+    if (this.loopInterval) {
+      clearInterval(this.loopInterval);
+      this.loopInterval = null;
+    }
+    this.pendingSymbols.clear();
+    this.pendingSmcSetups.clear();
+    console.log('🛑 [AutoTrader] Engine STOPPED. All new trade execution halted.');
   }
 
   private isScanning = false;
 
   public async runScanCycle() {
-    if (!this.settings.autoTradeEnabled) return;
+    if (!this.isEngineActive()) return;
     if (this.isScanning) return;
+    
+    
+    if (priceStream.isStale) {
+      console.warn("🛡️ [AutoTrader] Skipping cycle: Market Data is STALE. Failing closed.");
+      return;
+    }
+    
     this.isScanning = true;
 
     try {
@@ -365,13 +729,41 @@ export class AutoTrader {
         return; // Max concurrent trade limit reached
       }
 
-      // 1. Fetch top volume futures tickers
-      const topSymbols = await this.getTopVolumeSymbols(this.settings.coinCount || 25);
+      // 0. Macro Market Safety: Hybrid Global BTC/ETH Regime Filter
+      const useGlobalFilter = this.settings.useGlobalBtcFilter !== false;
+      if (useGlobalFilter) {
+        const globalRegime = await this.getGlobalRegime();
+        if (!globalRegime.isTradable || globalRegime.regime === 'PANIC' || globalRegime.macroColor === 'RED') {
+          this.globalFilterBlockActive = true;
+          this.globalFilterBlockReason = `Global Market & BTC Safety Filter: ${globalRegime.symbol} is '${globalRegime.regime}' (${globalRegime.details}). Macro risk management active — new entries paused.`;
+          console.log(`🛡️ [Global Macro Filter] Market Safety Lockout: ${globalRegime.symbol} is '${globalRegime.regime}' (${globalRegime.details}). New trade entries paused across all coins.`);
+          this.logScanResult(
+            globalRegime.symbol,
+            'NEUTRAL',
+            false,
+            `Global Macro Filter: Paused (${globalRegime.details})`,
+            globalRegime.btcPrice || 0,
+            0,
+            0,
+            0
+          );
+          return; // Block new entries on all 100 coins. Existing open positions continue managing SL/TP.
+        } else {
+          this.globalFilterBlockActive = false;
+          this.globalFilterBlockReason = null;
+        }
+      } else {
+        this.globalFilterBlockActive = false;
+        this.globalFilterBlockReason = null;
+      }
+
+      // 1. Fetch top volume futures tickers (supports up to 100 coins)
+      const scanLimit = Math.min(Math.max(this.settings.coinCount || 25, 5), 100);
+      const topSymbols = await this.getTopVolumeSymbols(scanLimit);
       
       for (const symbol of topSymbols) {
-        const cooldown = this.tradeCooldowns.get(symbol) || 0;
-        const cdLimit = this.getCooldownMs(this.settings.timeframe);
-        const inCooldown = (Date.now() - cooldown) < cdLimit;
+        const cooldownExpiry = this.tradeCooldowns.get(symbol) || 0;
+        const inCooldown = Date.now() < cooldownExpiry;
 
         if (activePositions.some(p => p.symbol === symbol) || this.pendingSymbols.has(symbol) || inCooldown) {
           continue;
@@ -380,11 +772,11 @@ export class AutoTrader {
         const currentPrice = priceStream.getPrice(symbol);
         if (!currentPrice || currentPrice <= 0) continue;
 
-        // 2. Fetch recent compact klines (cached 60s for bandwidth efficiency)
+        // 2. Fetch recent compact klines (cached 60s for bandwidth & rate-limit efficiency)
         const klines = await this.getKlines(symbol, this.settings.timeframe || '15m');
         if (!klines || klines.length < 50) continue;
 
-        // 3. Technical evaluation
+        // 3. Technical evaluation (includes per-symbol regime check)
         const signal = await this.evaluateSignal(symbol, klines, currentPrice);
         
         // Prevent re-trading the same closed signal candle
@@ -426,18 +818,18 @@ export class AutoTrader {
 
           // Calculate trade parameters
           const dummyBalance = this.settings.demoBalance !== undefined ? this.settings.demoBalance : (this.settings.startingBalance || 10000);
-          let allocatedBalance = dummyBalance * ((this.settings.positionSizePct || 10) / 100);
-          let leverage = this.settings.leverage || 1;
+          let allocatedBalance = dummyBalance * ((this.settings.positionSizePct || 3) / 100);
+          let leverage = this.settings.leverage || 5;
           let quantity = (allocatedBalance * leverage) / currentPrice;
 
-          const finalStrat = (signal as any).strategy || (this.settings.activeStrategy === 'AUTO_REGIME' ? 'BINANCE_COMPOSITE' : this.settings.activeStrategy);
+          const finalStrat = (signal as any).strategy || (this.settings.activeStrategy === 'AUTO_REGIME' ? 'VOLATILITY_COMPRESSION' : this.settings.activeStrategy);
           const marketRegime = (signal as any).marketRegime || null;
-          const isAutoRegime = this.settings.activeStrategy === 'AUTO_REGIME' || !!(signal as any).isAutoRegime;
+          const isAutoRegime = !!(signal as any).isAutoRegime;
 
-          // If VCB or Early Coil strategy, use Liquidation-Safe dynamic sizing (Section 9)
-          if ((finalStrat === 'VOLATILITY_COMPRESSION' || finalStrat === 'EARLY_COIL_BREAKOUT') && signal.sl) {
-            const riskPct = (this.settings.accountRiskPct || 1) / 100;
-            const userTargetAlloc = dummyBalance * ((this.settings.positionSizePct || 10) / 100);
+          // Universal Liquidation-Safe Dynamic Risk Sizing for any strategy with SL (Section 9)
+          if (signal.sl) {
+            const riskPct = (this.settings.accountRiskPct || 1.5) / 100;
+            const userTargetAlloc = dummyBalance * ((this.settings.positionSizePct || 3) / 100);
             const remainingExposure = riskManager.getRemainingExposure(dummyBalance);
             const maxAllocation = Math.min(userTargetAlloc, remainingExposure);
 
@@ -454,12 +846,12 @@ export class AutoTrader {
               currentPrice,
               signal.sl,
               signal.direction,
-              { maxLeverage: this.settings.leverage || 1, maxAllocation },
+              { maxLeverage: this.settings.leverage || 5, maxAllocation },
               riskPct
             );
 
             if (sizeResult.rejected || sizeResult.contracts <= 0) {
-              console.log(`[AutoTrader] VCB sizing rejected for ${symbol}: ${sizeResult.reason}`);
+              console.log(`[AutoTrader] Dynamic risk sizing rejected for ${symbol}: ${sizeResult.reason}`);
               this.logScanResult(symbol, signal.direction, false, `Risk Manager: ${sizeResult.reason}`, currentPrice, signal.sl, signal.tp1, signal.score);
               this.tradeCooldowns.set(symbol, Date.now() + 60000);
               this.pendingSymbols.delete(symbol);
@@ -482,6 +874,12 @@ export class AutoTrader {
             continue;
           }
 
+          if (!this.isEngineActive()) {
+            console.log(`🛑 [AutoTrader] Trade execution blocked for ${symbol}: Engine is stopped.`);
+            this.pendingSymbols.delete(symbol);
+            continue;
+          }
+
           oms.placeOrder(symbol, signal.direction, currentPrice, signal.score, signal.atr, {
             qty: quantity,
             leverage,
@@ -493,14 +891,30 @@ export class AutoTrader {
             strategy: finalStrat,
             marketRegime,
             isAutoRegime,
-            frequencyPreset: this.settings.tradeFrequency || 'MEDIUM',
+            frequencyPreset: this.settings.tradeFrequency || 'LOW',
             compressionHigh: (signal as any).compressionHigh,
-            compressionLow: (signal as any).compressionLow
+            compressionLow: (signal as any).compressionLow,
+            macroColor: (signal as any).macroColor,
+            macroLabel: (signal as any).macroLabel,
+            regimeConfidence: (signal as any).regimeConfidence,
+            confidenceLevel: (signal as any).confidenceLevel,
+            tradeQuality: (signal as any).tradeQuality,
+            strategyPriority: (signal as any).strategyPriority,
+            rrStruct: (signal as any).rrStruct,
+            structuralRR: (signal as any).structuralRR
           })
           .then(async (posId) => {
             if (posId) {
+              this.logScanResult(symbol, signal.direction, true, '', currentPrice, signal.sl, signal.tp1, signal.score, {
+                macroColor: (signal as any).macroColor,
+                marketRegime: (signal as any).marketRegime,
+                regimeConfidence: (signal as any).regimeConfidence,
+                tradeQuality: (signal as any).tradeQuality,
+                strategyPriority: (signal as any).strategyPriority,
+                structuralRR: (signal as any).structuralRR
+              });
               await positionMonitor.refreshOpenPositions();
-              this.tradeCooldowns.set(symbol, Date.now());
+              this.tradeCooldowns.set(symbol, Date.now() + this.getCooldownMs(this.settings.timeframe));
               if ((signal as any).signalTime) {
                   this.lastTradedSignal.set(symbol, (signal as any).signalTime);
               }
@@ -523,11 +937,12 @@ export class AutoTrader {
   }
 
   private getCooldownMs(tf: string): number {
-    console.log(`[AutoTrader] getCooldownMs called with tf="${tf}"`); switch(tf) {
-      case '1m': return 60000;
-      case '5m': return 300000;
-      case '15m': return 900000;
-      case '30m': return 1800000;
+    const normalized = tf.toUpperCase();
+    switch(normalized) {
+      case '1M': return 60000;
+      case '5M': return 300000;
+      case '15M': return 900000;
+      case '30M': return 1800000;
       case '1H': return 3600000;
       case '2H': return 7200000;
       case '4H': return 14400000;
@@ -537,7 +952,31 @@ export class AutoTrader {
   }
 
   
-  private logScanResult(symbol: string, direction: string, passes: boolean, rejectReason: string, price: number, sl: number, tp1: number, score: number) {
+  private logScanResult(
+    symbol: string, 
+    direction: string, 
+    passes: boolean, 
+    rejectReason: string, 
+    price: number, 
+    sl: number, 
+    tp1: number, 
+    score: number,
+    extra?: {
+      strategy?: string;
+      macroColor?: string;
+      marketRegime?: string;
+      regimeConfidence?: number;
+      tradeQuality?: string;
+      strategyPriority?: string;
+      structuralRR?: number;
+      gateResults?: Record<string, 'PASS' | 'FAIL' | 'NOT_CHECKED'>;
+      rejectionReasons?: string[];
+      spreadBps?: number | null;
+      volumePercentile?: number | null;
+      adx?: number | null;
+      atr?: number | null;
+    }
+  ) {
     try {
       const logLine = JSON.stringify({
         timestamp: new Date().toISOString(),
@@ -549,9 +988,43 @@ export class AutoTrader {
         sl,
         tp1,
         score,
-        strategy_version: 'v2.1_closed_candles'
+        macroColor: extra?.macroColor || null,
+        marketRegime: extra?.marketRegime || null,
+        regimeConfidence: extra?.regimeConfidence ?? null,
+        tradeQuality: extra?.tradeQuality || null,
+        strategyPriority: extra?.strategyPriority || null,
+        structuralRR: extra?.structuralRR ?? null,
+        gateResults: extra?.gateResults || null,
+        strategy_version: 'v2.2_regime_gated'
       }) + '\n';
       fs.appendFileSync(path.join(process.cwd(), 'data', 'scan_logs.jsonl'), logLine);
+    } catch(e) {}
+
+    // Signal Audit Trail integration
+    try {
+      const decision = passes ? 'ENTER' : (rejectReason?.includes('Paused') || rejectReason?.includes('Failed Technical') ? 'WATCH' : 'REJECT');
+      
+      writeSignalAudit({
+        signalId: `${symbol}-${Date.now()}`,
+        symbol: symbol,
+        timeframe: this.settings.timeframe || '15m',
+        strategy: extra?.strategy || extra?.strategyPriority || 'UNKNOWN_STRATEGY',
+        regime: extra?.marketRegime || 'UNKNOWN_REGIME',
+        direction: (direction === 'LONG' || direction === 'SHORT') ? direction : 'NONE',
+        confidence: extra?.regimeConfidence || score || 0,
+        decision: decision,
+        rejectionReasons: extra?.rejectionReasons && extra.rejectionReasons.length > 0 ? extra.rejectionReasons : (rejectReason ? [rejectReason] : []),
+        gateResults: extra?.gateResults || {
+          macro: extra?.macroColor ? 'PASS' : 'NOT_CHECKED'
+        },
+        entryPrice: price || null,
+        stopPrice: sl || null,
+        targetPrices: tp1 ? [tp1] : [],
+        riskReward: extra?.structuralRR || null,
+        spreadBps: extra?.spreadBps ?? null,
+        volumePercentile: extra?.volumePercentile ?? null,
+        settingsVersion: this.getActiveSettingsVersion()
+      });
     } catch(e) {}
   }
 
@@ -614,15 +1087,18 @@ export class AutoTrader {
         ? this.settings.min24hVolume
         : 25000000;
 
+      // Reliable symbol prioritization: BTC, ETH, SOL, XRP have verified real-time tracking
+      const prioritySymbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT'];
       const usdtPairs = data
         .filter((d: any) => d.symbol.endsWith('USDT') && !d.symbol.includes('_'))
         .filter((d: any) => parseFloat(d.quoteVolume || '0') >= minVolume)
         .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
-        .slice(0, limit)
         .map((d: any) => d.symbol);
-      return usdtPairs.length > 0 ? usdtPairs : ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
+
+      const orderedSymbols = Array.from(new Set([...prioritySymbols, ...usdtPairs])).slice(0, limit);
+      return orderedSymbols.length > 0 ? orderedSymbols : prioritySymbols;
     } catch (e) {
-      return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
+      return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT'];
     }
   }
 
@@ -641,8 +1117,8 @@ export class AutoTrader {
       if (interval === '4H') interval = '4h';
       if (interval === '1D') interval = '1d';
 
-      // 120 candles provides enough lookback for percentiles, EMAs, and pivot analysis
-      const res = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=120`);
+      // 220 candles provides enough lookback for 200 SMA, percentiles, EMAs, and pivot analysis
+      const res = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=220`);
       if (!res.ok) {
         await res.text().catch(() => {});
         return [];
@@ -654,17 +1130,120 @@ export class AutoTrader {
         high: parseFloat(k[2]),
         low: parseFloat(k[3]),
         close: parseFloat(k[4]),
-        volume: parseFloat(k[5])
+        volume: parseFloat(k[5]),
+        closeTime: Math.floor(k[6] / 1000)
       }));
 
       this.klineCache.set(cacheKey, { time: now, klines });
+      // Stagger non-cached calls slightly (20ms) to ensure smooth 100-coin scanning within Binance rate limits
+      await new Promise(r => setTimeout(r, 20));
       return klines;
     } catch (e) {
       return [];
     }
   }
 
-  private async evaluateSignal(symbol: string, klines: any[], currentPrice: number): Promise<{
+  
+  private async evaluateSignal(symbol: string, klines: any[], currentPrice: number) {
+    if (!this.isEngineActive()) return null;
+    if (klines.length < 35) return null;
+
+    // 0. Macro BTC Assessment (Layer 1)
+    const globalRegime = await this.getGlobalRegime();
+    if (this.settings.useGlobalBtcFilter !== false) {
+      if (!globalRegime.isTradable || globalRegime.macroColor === 'RED' || globalRegime.regime === 'PANIC') {
+        // RED - Non-Tradable (Safety Lockout): No new entries on any 100 coins. Stand aside in cash.
+        this.globalFilterBlockActive = true;
+        this.globalFilterBlockReason = `Global Market & BTC Safety Filter: ${globalRegime.symbol} is in extreme distress (${globalRegime.details}). Macro risk management active — new entries paused.`;
+        return null;
+      }
+    }
+
+    // 1. Local Per-Coin Regime Assessment (Layer 2)
+    // CRITICAL FIX: Slice off the live, in-progress candle so volume and ATR percentiles evaluate on closed bars
+    const closedKlines = klines.slice(0, -1);
+    const lastClosedCandle = closedKlines[closedKlines.length - 1];
+    const closedPrice = lastClosedCandle?.close || currentPrice;
+    const classification = classifyMarketRegime(closedKlines, closedPrice, globalRegime.macroColor);
+    
+    // Stand-Aside Rule: Skip if local regime is non-tradable (dead volume, extreme panic, or messy chop)
+    if (classification.regime === 'PANIC' || classification.regime === 'DEAD_VOLUME' || classification.regime === 'TRANSITION') {
+      return null;
+    }
+    
+    // Stand-Aside Rule: Strict regime confidence threshold (>= 60 for GREEN, >= 65 for AMBER)
+    const minConfidenceThreshold = globalRegime.macroColor === 'AMBER' ? 65 : 60;
+    if (classification.confidence < minConfidenceThreshold) {
+      return null;
+    }
+
+    // 2. Evaluate Strategy Routing (pass closed-candle classification to prevent dead code)
+    const rawSignal = await this._evaluateSignalRaw(symbol, klines, currentPrice, classification, globalRegime);
+    if (!rawSignal) return null;
+    
+    // 3. Structural R:R Filter >= 3.0 (Stand-Aside Rule)
+    const risk = Math.abs(currentPrice - rawSignal.sl);
+    // Enforce minimum stop distance (e.g., 0.3% to avoid spread/noise stops)
+    const minDistance = currentPrice * 0.003;
+    if (risk < minDistance) {
+      this.logScanResult(symbol, rawSignal.direction, false, `Gate Failed: SL too tight (Risk: ${(risk/currentPrice*100).toFixed(2)}%, Min: 0.3%)`, currentPrice, rawSignal.sl, rawSignal.tp1, rawSignal.score);
+      return null;
+    }
+    if (risk <= 0) return null;
+    
+    const reward3 = Math.abs(rawSignal.tp3 - currentPrice);
+    const structuralRR = reward3 / risk;
+    
+    const minRR = (rawSignal.strategy === 'DELTA_CLIMAX' || classification.regime.startsWith('EXHAUSTION')) ? 2.5 : 3.0;
+    if (structuralRR < minRR) {
+      return null; // structural target doesn't offer adequate R:R. Stand aside in cash!
+    }
+
+    // 4. Badges / Monitoring Metadata Computation
+    const confidenceLevel: 'High' | 'Medium' | 'Low' = 
+      classification.confidence >= 70 ? 'High' : (classification.confidence >= 50 ? 'Medium' : 'Low');
+    const rrStruct = structuralRR >= 4 ? '≥4' : '≥3.5';
+    
+    const bucket = (this.settings.strategyBucket && this.settings.strategyBucket.length > 0)
+      ? this.settings.strategyBucket
+      : DEFAULT_STRATEGY_BUCKET;
+    const stratItem = bucket.find(b => b.id === rawSignal.strategy);
+    const priorityNum = stratItem?.priority || 1;
+    const strategyPriority: 'P1' | 'P2' | 'P3' = `P${priorityNum}` as any;
+
+    let qualityScore = 0;
+    if (globalRegime.macroColor === 'GREEN') qualityScore += 30;
+    if (classification.confidence >= 75) qualityScore += 30;
+    else if (classification.confidence >= 65) qualityScore += 20;
+    if (structuralRR >= 4) qualityScore += 20;
+    if (priorityNum === 1) qualityScore += 20;
+
+    let tradeQuality: 'High' | 'Medium' | 'Low' = 'Low';
+    if (qualityScore >= 80) tradeQuality = 'High';
+    else if (qualityScore >= 55) tradeQuality = 'Medium';
+
+    return {
+      ...rawSignal,
+      macroColor: globalRegime.macroColor,
+      macroLabel: globalRegime.label,
+      marketRegime: classification.label,
+      regimeConfidence: classification.confidence,
+      confidenceLevel,
+      tradeQuality,
+      strategyPriority,
+      rrStruct,
+      structuralRR: parseFloat(structuralRR.toFixed(2))
+    };
+  }
+
+  private async _evaluateSingleStrategy(
+    strat: string,
+    symbol: string,
+    klines: any[],
+    currentPrice: number,
+    classification?: RegimeClassificationResult,
+    globalRegime?: GlobalMarketRegime
+  ): Promise<{
     direction: 'LONG' | 'SHORT';
     score: number;
     atr: number;
@@ -680,41 +1259,62 @@ export class AutoTrader {
     compressionHigh?: number;
     compressionLow?: number;
   } | null> {
-    if (klines.length < 30) return null;
-
-    // 0. Auto Regime-Adaptive Strategy Selection
-    if (this.settings.activeStrategy === 'AUTO_REGIME') {
-      return await this.evaluateAutoRegimeSignal(symbol, klines, currentPrice);
-    }
-
-    // 1. If user selected DELTA_CLIMAX strategy, run Climax Reversal algorithm
-    if (this.settings.activeStrategy === 'DELTA_CLIMAX') {
+    // 1. Climax Reversal algorithm
+    if (strat === 'DELTA_CLIMAX') {
       const sig = this.evaluateClimaxReversal(klines, currentPrice);
       if (!sig) return null;
       return { ...sig, strategy: 'DELTA_CLIMAX', marketRegime: 'Exhaustion Climax' };
     }
     
-    // 2. If user selected VOLATILITY_COMPRESSION strategy, run VCB algorithm with HTF alignment
-    if (this.settings.activeStrategy === 'VOLATILITY_COMPRESSION') {
+    // 2. Volatility Compression Breakout (VCB) Strategy - Primary canonical strategy
+    if (strat === 'VOLATILITY_COMPRESSION' || strat === 'AUTO_REGIME') {
       const sig = await this.evaluateVolatilityCompression(symbol, klines, currentPrice);
       if (!sig) return null;
       return { ...sig, strategy: 'VOLATILITY_COMPRESSION', marketRegime: 'Consolidation Squeeze' };
     }
     
-    // 3. If user selected TREND_PULLBACK strategy
-    if (this.settings.activeStrategy === 'EARLY_COIL_BREAKOUT') {
+    // 3. Early Coil Breakout
+    if (strat === 'EARLY_COIL_BREAKOUT') {
       const sig = evaluateEarlyCoilBreakout(klines, this.settings as any);
       if (!sig) return null;
       return { ...sig, strategy: 'EARLY_COIL_BREAKOUT', marketRegime: 'Fractal Breakout' };
     }
 
-    if (this.settings.activeStrategy === 'TREND_PULLBACK') {
-      const signal = evaluateTrendPullback(klines, currentPrice, this.settings as any);
+    // 4. Trend Pullback Strategy (5-pillar confirmation)
+    if (strat === 'TREND_PULLBACK') {
+      const closedKlines = klines.slice(0, -1);
+      const tradeTf = this.settings.timeframe || '15m';
+      const htf = getHigherTimeframe(tradeTf);
+      let htfKlines: any[] | null = null;
+      try {
+        htfKlines = await this.getKlines(symbol, htf);
+      } catch (e) {}
+
+      const signal = evaluateTrendPullback(
+        closedKlines,
+        htfKlines ? htfKlines.slice(0, -1) : null,
+        currentPrice,
+        {
+          tradeTimeframe: tradeTf,
+          htfTimeframe: htf,
+          symbol,
+          emaFast: this.settings.tpbEmaFast || 20,
+          emaSlow: this.settings.tpbEmaSlow || 50,
+          adxMin: this.settings.tpbAdxMin || 18,
+          volSmaPeriod: this.settings.tpbVolumeSmaPeriod || 20,
+          minVolumeRatio: this.settings.tpbMinVolumeRatio || 1.0,
+          requireVolume: this.settings.tpbRequireVolume !== false,
+          maxEntryDistanceAtr: this.settings.tpbMaxEntryDistanceAtr ?? 0.25,
+          minRrRatio: this.settings.tpbMinRrRatio || 1.5,
+          minScore: this.settings.tpbMinScore || 8
+        }
+      );
       if (!signal) return null;
       return { ...signal, strategy: 'TREND_PULLBACK', marketRegime: 'Trending [EMA Pullback]' };
     }
 
-    if (this.settings.activeStrategy === 'MACRO_RANGE_BREAKOUT') {
+    // 5. Macro Range Breakout
+    if (strat === 'MACRO_RANGE_BREAKOUT') {
       const atrSeries = calculateATR(klines, 14);
       const currentAtr = atrSeries[atrSeries.length - 1];
       const sig = detectMacroRangeBreakout(klines, currentPrice, currentAtr);
@@ -722,8 +1322,8 @@ export class AutoTrader {
       return { ...sig, strategy: 'MACRO_RANGE_BREAKOUT', marketRegime: 'Macro Accumulation' };
     }
 
-    // 5. SMC Liquidity Sweep
-    if (this.settings.activeStrategy === 'SMC_LIQUIDITY_SWEEP') {
+    // 6. SMC Liquidity Sweep
+    if (strat === 'SMC_LIQUIDITY_SWEEP') {
       try {
         const htfCandles = await this.getKlines(symbol, '1h');
         const sig = evaluateSmc(klines, htfCandles, currentPrice);
@@ -754,19 +1354,23 @@ export class AutoTrader {
       return null;
     }
 
-    // 4. Default: Ranging 1:3 R:R Mean-Reversion Strategy (Bollinger Bands + RSI Re-entry)
-    const compSig = this.evaluateCompositeStrategy(klines, currentPrice);
-    if (!compSig) return null;
-    return { ...compSig, strategy: 'BINANCE_COMPOSITE', marketRegime: 'Ranging [1:3 R:R Mean-Reversion]' };
+    // 7. Ranging Mean-Reversion Strategy
+    if (strat === 'BINANCE_COMPOSITE') {
+      const compSig = this.evaluateCompositeStrategy(klines, currentPrice);
+      if (!compSig) return null;
+      return { ...compSig, strategy: 'BINANCE_COMPOSITE', marketRegime: 'Ranging [1:3 R:R Mean-Reversion]' };
+    }
+
+    return null;
   }
 
-  /**
-   * Regime Filter & Strategy Bucket Selection:
-   * Restricts the bot to ONLY pick from strategies configured in the user's Strategy Bucket.
-   * Classifies current market regime (trending, ranging, exhaustion, breakout, or not_tradable).
-   * Runs enabled bucket strategies in order of user priority.
-   */
-  private async evaluateAutoRegimeSignal(symbol: string, klines: any[], currentPrice: number): Promise<{
+  private async _evaluateSignalRaw(
+    symbol: string, 
+    klines: any[], 
+    currentPrice: number,
+    classification?: RegimeClassificationResult,
+    globalRegime?: GlobalMarketRegime
+  ): Promise<{
     direction: 'LONG' | 'SHORT';
     score: number;
     atr: number;
@@ -782,150 +1386,385 @@ export class AutoTrader {
     compressionHigh?: number;
     compressionLow?: number;
   } | null> {
+    if (klines.length < 30) return null;
+
+    // Multi-strategy resolution: Gather all active strategies configured by user
+    let activeStrategies: string[] = [];
+    if (this.settings.enabledStrategies && Array.isArray(this.settings.enabledStrategies) && this.settings.enabledStrategies.length > 0) {
+      activeStrategies = [...this.settings.enabledStrategies];
+    } else if (this.settings.activeStrategy && (this.settings.activeStrategy as string) !== 'AUTO_REGIME') {
+      activeStrategies = [this.settings.activeStrategy];
+    } else {
+      activeStrategies = ['VOLATILITY_COMPRESSION'];
+    }
+
+    // Evaluate all active selective strategies
+    const candidateSignals: any[] = [];
+    for (const strat of activeStrategies) {
+      try {
+        const sig = await this._evaluateSingleStrategy(strat, symbol, klines, currentPrice, classification, globalRegime);
+        if (sig) {
+          candidateSignals.push(sig);
+        }
+      } catch (err) {
+        console.error(`[AutoTrader] Error evaluating strategy ${strat} on ${symbol}:`, err);
+      }
+    }
+
+    if (candidateSignals.length === 0) return null;
+    if (candidateSignals.length === 1) return candidateSignals[0];
+
+    // Arbitration: sort candidates by score descending, breaking ties by order of activeStrategies
+    candidateSignals.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const idxA = activeStrategies.indexOf(a.strategy);
+      const idxB = activeStrategies.indexOf(b.strategy);
+      return (idxA !== -1 ? idxA : 99) - (idxB !== -1 ? idxB : 99);
+    });
+
+    return candidateSignals[0];
+  }
+
+  /**
+   * Regime Filter & Strategy Bucket Selection:
+   * Restricts the bot to ONLY pick from strategies configured in the user's Strategy Bucket.
+   * Classifies current market regime (trending, ranging, exhaustion, breakout, or not_tradable).
+   * Runs enabled bucket strategies in order of user priority.
+   */
+  private async evaluateAutoRegimeSignal(
+    symbol: string,
+    klines: any[],
+    currentPrice: number,
+    cachedClassification?: any,
+    cachedGlobalRegime?: any
+  ): Promise<{
+    direction: 'LONG' | 'SHORT' | 'NEUTRAL';
+    score: number;
+    atr: number;
+    sl: number;
+    tp1: number;
+    tp2: number;
+    tp3: number;
+    reason?: string;
+    strategy?: string;
+    marketRegime?: string;
+    isAutoRegime?: boolean;
+    frequencyPreset?: string;
+    macroColor?: string;
+    signalTime?: number;
+    compressionHigh?: number;
+    compressionLow?: number;
+  } | null> {
     if (klines.length < 35) return null;
 
-    // 1. Detect current market regime via statistical filter
-    const classification = classifyMarketRegime(klines, currentPrice);
-    const currentRegime = classification.regime;
+    // Closed candle slice: guarantees 100% closed candle execution with zero lookahead
+    const closedKlines = klines.slice(0, -1);
+    const lastClosed = closedKlines[closedKlines.length - 1];
+    const closedCandleTime = lastClosed.time;
 
-    // If market regime is not tradable (dead volume, untradable chop), sit flat in cash!
-    if (currentRegime === 'not_tradable') {
+    const globalRegime = cachedGlobalRegime || await this.getGlobalRegime();
+    if (!globalRegime.isTradable || globalRegime.macroColor === 'RED') {
       return null;
     }
 
-    // 2. Fetch user's Strategy Bucket (fallback to DEFAULT_STRATEGY_BUCKET if not configured)
+    const classification = cachedClassification || classifyMarketRegime(closedKlines, currentPrice, globalRegime.macroColor);
+    const detectedRegime = classification.regime;
+
+    // Hard Gate: 2-Bar Confirmation Hysteresis & Immediate No-Trade Zone (TRANSITION/PANIC/DEAD_VOLUME/UNCLEAR)
+    const regimeCheck = this.updateAndCheckRegimeConfirmation(symbol, detectedRegime, closedCandleTime);
+    if (!regimeCheck.confirmed || !regimeCheck.regime) {
+      this.logScanResult(
+        symbol,
+        'NEUTRAL',
+        false,
+        regimeCheck.reason || 'Regime Not Confirmed',
+        currentPrice,
+        0,
+        0,
+        0,
+        {
+          marketRegime: detectedRegime,
+          macroColor: globalRegime.macroColor,
+          strategy: 'AUTO_REGIME',
+          gateResults: {
+            dataFresh: 'PASS',
+            regimeConfirmed: 'FAIL',
+            strategyAllowedInRegime: 'NOT_CHECKED',
+            directionAllowed: 'NOT_CHECKED',
+            higherTimeframeAligned: 'NOT_CHECKED',
+            structureValid: 'NOT_CHECKED',
+            confirmationCandleClosed: 'PASS',
+            volumeValid: 'NOT_CHECKED',
+            spreadValid: 'PASS',
+            stopStructurallyValid: 'NOT_CHECKED',
+            rrValid: 'NOT_CHECKED'
+          },
+          rejectionReasons: [regimeCheck.reason || 'Regime Not Confirmed']
+        }
+      );
+      return null;
+    }
+
+    const currentRegime = regimeCheck.regime;
+
     const bucket: StrategyBucketItem[] = (this.settings.strategyBucket && this.settings.strategyBucket.length > 0)
       ? this.settings.strategyBucket
       : DEFAULT_STRATEGY_BUCKET;
 
-    // 3. Filter bucket: candidate strategies must be both ENABLED and designated for this regime
-    const eligibleCandidates = getEligibleBucketStrategies(bucket, currentRegime);
+    const eligibleCandidates = getEligibleBucketStrategies(bucket, currentRegime, globalRegime.macroColor);
     if (eligibleCandidates.length === 0) {
-      // User has not enabled any strategies for this market regime
+      this.logScanResult(
+        symbol,
+        'NEUTRAL',
+        false,
+        `No eligible strategies mapped for confirmed regime '${currentRegime}'`,
+        currentPrice,
+        0,
+        0,
+        0,
+        {
+          marketRegime: currentRegime,
+          macroColor: globalRegime.macroColor,
+          strategy: 'AUTO_REGIME',
+          gateResults: {
+            dataFresh: 'PASS',
+            regimeConfirmed: 'PASS',
+            strategyAllowedInRegime: 'FAIL',
+            directionAllowed: 'NOT_CHECKED',
+            higherTimeframeAligned: 'NOT_CHECKED',
+            structureValid: 'NOT_CHECKED',
+            confirmationCandleClosed: 'PASS',
+            volumeValid: 'NOT_CHECKED',
+            spreadValid: 'PASS',
+            stopStructurallyValid: 'NOT_CHECKED',
+            rrValid: 'NOT_CHECKED'
+          },
+          rejectionReasons: [`No eligible strategies mapped for '${currentRegime}'`]
+        }
+      );
       return null;
     }
 
-    // 4. Evaluate eligible strategies in order of user priority (Priority 1 = highest)
     for (const candidate of eligibleCandidates) {
-      // DELTA CLIMAX REVERSAL
-      if (candidate.id === 'DELTA_CLIMAX') {
-        const climaxSignal = this.evaluateClimaxReversal(klines, currentPrice);
-        if (climaxSignal && climaxSignal.score >= this.settings.autoTradeThreshold) {
-          return {
-            ...climaxSignal,
-            strategy: 'DELTA_CLIMAX',
-            marketRegime: classification.label,
-            isAutoRegime: true,
-            reason: `[Auto Bucket #${candidate.priority}] DELTA_CLIMAX selected for ${classification.label} (${classification.details})`
-          };
+      let pendingSignal: any = null;
+
+      if (candidate.id === 'TREND_PULLBACK' && currentRegime.startsWith('TRENDING')) {
+        const tradeTf = this.settings.timeframe || '15m';
+        const htf = getHigherTimeframe(tradeTf);
+        let htfKlines: any[] | null = null;
+        try {
+          htfKlines = await this.getKlines(symbol, htf);
+        } catch (e) {}
+
+        const pullbackSignal = evaluateTrendPullback(
+          closedKlines,
+          htfKlines ? htfKlines.slice(0, -1) : null,
+          currentPrice,
+          {
+            tradeTimeframe: tradeTf,
+            htfTimeframe: htf,
+            symbol,
+            emaFast: this.settings.tpbEmaFast || 20,
+            emaSlow: this.settings.tpbEmaSlow || 50,
+            adxMin: this.settings.tpbAdxMin || 18,
+            volSmaPeriod: this.settings.tpbVolumeSmaPeriod || 20,
+            minVolumeRatio: this.settings.tpbMinVolumeRatio || 1.0,
+            requireVolume: this.settings.tpbRequireVolume !== false,
+            maxEntryDistanceAtr: this.settings.tpbMaxEntryDistanceAtr ?? 0.25,
+            minRrRatio: this.settings.tpbMinRrRatio || 1.5,
+            minScore: this.settings.tpbMinScore || 8
+          }
+        );
+        if (pullbackSignal && (!candidate.direction || pullbackSignal.direction === candidate.direction)) {
+          pendingSignal = { ...pullbackSignal };
         }
       }
 
-      // SMC LIQUIDITY SWEEP
-      if (candidate.id === 'SMC_LIQUIDITY_SWEEP') {
+      if (candidate.id === 'BINANCE_COMPOSITE' && currentRegime === 'RANGING') {
+        const compositeSignal = this.evaluateCompositeStrategy(closedKlines, currentPrice);
+        if (compositeSignal) {
+          pendingSignal = { ...compositeSignal };
+        }
+      }
+
+      if (candidate.id === 'VOLATILITY_COMPRESSION' && currentRegime.startsWith('BREAKOUT')) {
+        const vcbSignal = await this.evaluateVolatilityCompression(symbol, closedKlines, currentPrice);
+        if (vcbSignal && (!candidate.direction || vcbSignal.direction === candidate.direction)) {
+          pendingSignal = { ...vcbSignal };
+        }
+      }
+
+      if (candidate.id === 'EARLY_COIL_BREAKOUT' && currentRegime.startsWith('BREAKOUT')) {
+        const coilSignal = evaluateEarlyCoilBreakout(closedKlines, this.settings as any);
+        if (coilSignal && (!candidate.direction || coilSignal.direction === candidate.direction)) {
+          pendingSignal = { ...coilSignal };
+        }
+      }
+
+      if (candidate.id === 'DELTA_CLIMAX' && (currentRegime.startsWith('EXHAUSTION') || currentRegime === 'RANGING')) {
+        const climaxSignal = this.evaluateClimaxReversal(closedKlines, currentPrice);
+        if (climaxSignal && (!candidate.direction || climaxSignal.direction === candidate.direction)) {
+          pendingSignal = { ...climaxSignal };
+        }
+      }
+
+      if (candidate.id === 'SMC_LIQUIDITY_SWEEP' && (currentRegime.startsWith('EXHAUSTION') || currentRegime === 'RANGING' || currentRegime.startsWith('TRENDING'))) {
         try {
           const htfCandles = await this.getKlines(symbol, '1h');
-          const smcSig = evaluateSmc(klines, htfCandles, currentPrice);
-          if (smcSig && smcSig.score >= this.settings.autoTradeThreshold) {
-            const inZone = Math.abs(currentPrice - smcSig.entryPrice) / smcSig.entryPrice < 0.001;
-            if (inZone) {
-              const risk = Math.abs(currentPrice - smcSig.sl);
-              return {
-                direction: smcSig.direction,
-                score: 95,
-                atr: risk,
-                sl: smcSig.sl,
-                tp1: smcSig.tp1,
-                tp2: smcSig.direction === 'LONG' ? currentPrice + (risk * 3) : currentPrice - (risk * 3),
-                tp3: smcSig.direction === 'LONG' ? currentPrice + (risk * 5) : currentPrice - (risk * 5),
-                strategy: 'SMC_LIQUIDITY_SWEEP',
-                marketRegime: classification.label,
-                isAutoRegime: true,
-                reason: `[Auto Bucket #${candidate.priority}] SMC selected for ${classification.label}: ${smcSig.reason}`
-              };
-            }
-            const expiryTime = Date.now() + (15 * 60 * 1000 * 6);
-            this.pendingSmcSetups.set(symbol, { ...smcSig, expiryTime });
+          const smcSig = evaluateSmc(closedKlines, htfCandles, currentPrice);
+          if (smcSig && (!candidate.direction || smcSig.direction === candidate.direction)) {
+            const risk = Math.abs(currentPrice - smcSig.sl);
+            pendingSignal = {
+              direction: smcSig.direction,
+              score: smcSig.score,
+              atr: risk,
+              sl: smcSig.sl,
+              tp1: smcSig.tp1,
+              tp2: smcSig.direction === 'LONG' ? currentPrice + (risk * 3) : currentPrice - (risk * 3),
+              tp3: smcSig.direction === 'LONG' ? currentPrice + (risk * 5) : currentPrice - (risk * 5),
+              signalTime: smcSig.signalTime || lastClosed.time
+            };
           }
-        } catch(e) {}
-      }
-
-      // TREND PULLBACK
-      if (candidate.id === 'TREND_PULLBACK') {
-        const pullbackSignal = evaluateTrendPullback(klines, currentPrice, this.settings as any);
-        if (pullbackSignal && pullbackSignal.score >= this.settings.autoTradeThreshold) {
-          return {
-            ...pullbackSignal,
-            strategy: 'TREND_PULLBACK',
-            marketRegime: classification.label,
-            isAutoRegime: true,
-            reason: `[Auto Bucket #${candidate.priority}] TREND_PULLBACK selected for ${classification.label} (${classification.details})`
-          };
+        } catch (e) {
+          console.error(`HTF fetch failed for ${symbol} SMC sweep:`, e);
         }
       }
 
-      // MACRO RANGE BREAKOUT (Darvas Box)
-      if (candidate.id === 'MACRO_RANGE_BREAKOUT') {
-        const currentAtr = classification.metrics.atr;
-        const macroSignal = detectMacroRangeBreakout(klines, currentPrice, currentAtr);
-        if (macroSignal && macroSignal.score >= this.settings.autoTradeThreshold) {
-          return {
-            ...macroSignal,
-            strategy: 'MACRO_RANGE_BREAKOUT',
-            marketRegime: classification.label,
-            isAutoRegime: true,
-            reason: `[Auto Bucket #${candidate.priority}] MACRO_RANGE_BREAKOUT selected for ${classification.label} (Darvas Box Breakout)`
-          };
-        }
-      }
+      if (pendingSignal) {
+        // Evaluate the 10 Hard Vetoes BEFORE confidence scoring
+        const gateResults: Record<string, 'PASS' | 'FAIL' | 'NOT_CHECKED'> = {
+          dataFresh: 'PASS',
+          regimeConfirmed: 'PASS',
+          strategyAllowedInRegime: 'PASS',
+          directionAllowed: 'PASS',
+          higherTimeframeAligned: 'NOT_CHECKED',
+          structureValid: 'NOT_CHECKED',
+          confirmationCandleClosed: 'PASS',
+          volumeValid: 'PASS',
+          spreadValid: 'PASS',
+          stopStructurallyValid: 'NOT_CHECKED',
+          rrValid: 'NOT_CHECKED'
+        };
+        const rejectionReasons: string[] = [];
 
-      // VOLATILITY COMPRESSION BREAKOUT (VCB)
-      if (candidate.id === 'VOLATILITY_COMPRESSION') {
-        const vcbSignal = await this.evaluateVolatilityCompression(symbol, klines, currentPrice);
-        if (vcbSignal && vcbSignal.score >= this.settings.autoTradeThreshold) {
-          return {
-            ...vcbSignal,
-            strategy: 'VOLATILITY_COMPRESSION',
-            marketRegime: classification.label,
-            isAutoRegime: true,
-            reason: `[Auto Bucket #${candidate.priority}] VOLATILITY_COMPRESSION selected for ${classification.label} (Squeeze Release)`
-          };
+        // 1. Directional Alignment Gate with Regime
+        if (currentRegime === 'TRENDING_UP' || currentRegime === 'BREAKOUT_UP' || currentRegime === 'EXHAUSTION_DOWN') {
+          if (pendingSignal.direction !== 'LONG') {
+            gateResults.directionAllowed = 'FAIL';
+            rejectionReasons.push(`Direction conflict: Regime is ${currentRegime} but signal direction is ${pendingSignal.direction}`);
+          }
+        } else if (currentRegime === 'TRENDING_DOWN' || currentRegime === 'BREAKOUT_DOWN' || currentRegime === 'EXHAUSTION_UP') {
+          if (pendingSignal.direction !== 'SHORT') {
+            gateResults.directionAllowed = 'FAIL';
+            rejectionReasons.push(`Direction conflict: Regime is ${currentRegime} but signal direction is ${pendingSignal.direction}`);
+          }
         }
-      }
 
-      // EARLY COIL BREAKOUT
-      if (candidate.id === 'EARLY_COIL_BREAKOUT') {
-        const coilSignal = evaluateEarlyCoilBreakout(klines, this.settings as any);
-        if (coilSignal && coilSignal.score >= this.settings.autoTradeThreshold) {
-          return {
-            ...coilSignal,
-            strategy: 'EARLY_COIL_BREAKOUT',
-            marketRegime: classification.label,
-            isAutoRegime: true,
-            reason: `[Auto Bucket #${candidate.priority}] EARLY_COIL_BREAKOUT selected for ${classification.label} (Fractal Breakout)`
-          };
+        // 2. Higher-Timeframe Agreement Gate (1H vs 15m)
+        const htfCheck = await this.checkHtfAgreement(symbol, pendingSignal.direction);
+        if (!htfCheck.passed) {
+          gateResults.higherTimeframeAligned = 'FAIL';
+          rejectionReasons.push(htfCheck.reason || 'HTF 1H trend contradicts signal direction');
+        } else {
+          gateResults.higherTimeframeAligned = 'PASS';
         }
-      }
 
-      // RANGING 1:3 R:R MEAN-REVERSION (BINANCE_COMPOSITE)
-      if (candidate.id === 'BINANCE_COMPOSITE') {
-        const compositeSignal = this.evaluateCompositeStrategy(klines, currentPrice);
-        if (compositeSignal && compositeSignal.score >= this.settings.autoTradeThreshold) {
+        // 3. Structure Invalidation Gate (Swing Points, Overextension, Stack, Opposing Vol Spike)
+        const structureCheck = this.checkStructureValid(closedKlines, pendingSignal.direction, currentPrice, currentRegime);
+        if (!structureCheck.valid) {
+          gateResults.structureValid = 'FAIL';
+          rejectionReasons.push(structureCheck.reason || 'Structure invalidation gate failed');
+        } else {
+          gateResults.structureValid = 'PASS';
+        }
+
+        // 4. Stop Loss Structural Validity Gate
+        const risk = Math.abs(currentPrice - pendingSignal.sl);
+        const minRisk = currentPrice * 0.003; // At least 0.3% to avoid spread / noise stop-out
+        const maxRisk = currentPrice * 0.045; // Max 4.5% to avoid oversized risk
+        if (risk < minRisk) {
+          gateResults.stopStructurallyValid = 'FAIL';
+          rejectionReasons.push(`Stop loss too tight: ${(risk / currentPrice * 100).toFixed(2)}% < 0.3% minimum distance`);
+        } else if (risk > maxRisk) {
+          gateResults.stopStructurallyValid = 'FAIL';
+          rejectionReasons.push(`Stop loss too wide: ${(risk / currentPrice * 100).toFixed(2)}% > 4.5% maximum allowable risk`);
+        } else {
+          gateResults.stopStructurallyValid = 'PASS';
+        }
+
+        // 5. Structural Risk-to-Reward Gate (>= 3.0 required, or >= 2.5 for DELTA_CLIMAX / Mean Reversion)
+        const minRR = (candidate.id === 'DELTA_CLIMAX' || currentRegime.startsWith('EXHAUSTION')) ? 2.5 : 3.0;
+        const reward3 = Math.abs(pendingSignal.tp3 - currentPrice);
+        const structuralRR = risk > 0 ? (reward3 / risk) : 0;
+        if (structuralRR < minRR) {
+          gateResults.rrValid = 'FAIL';
+          rejectionReasons.push(`Structural RR ${structuralRR.toFixed(1)} is below required ${minRR.toFixed(1)}:1 threshold`);
+        } else {
+          gateResults.rrValid = 'PASS';
+        }
+
+        const allGatesPassed = Object.values(gateResults).every(res => res === 'PASS');
+        const minRequiredScore = globalRegime.macroColor === 'AMBER' ? 80 : (this.settings.autoTradeThreshold || 70);
+        const scorePassed = pendingSignal.score >= minRequiredScore;
+
+        if (allGatesPassed && scorePassed) {
+          this.logScanResult(
+            symbol,
+            pendingSignal.direction,
+            true,
+            `[${currentRegime}] ${candidate.id} Approved (Conf:${pendingSignal.score} RR:${structuralRR.toFixed(1)})`,
+            currentPrice,
+            pendingSignal.sl,
+            pendingSignal.tp1,
+            pendingSignal.score,
+            {
+              strategy: candidate.id,
+              marketRegime: currentRegime,
+              regimeConfidence: classification.confidence,
+              macroColor: globalRegime.macroColor,
+              structuralRR: parseFloat(structuralRR.toFixed(2)),
+              gateResults,
+              rejectionReasons: []
+            }
+          );
+
           return {
-            ...compositeSignal,
-            strategy: 'BINANCE_COMPOSITE',
-            marketRegime: classification.label,
+            ...pendingSignal,
+            strategy: candidate.id,
+            marketRegime: currentRegime,
             isAutoRegime: true,
-            reason: `[Auto Bucket #${candidate.priority}] Ranging 1:3 R:R selected for ${classification.label} (BB+RSI Mean-Reversion)`
+            signalTime: lastClosed.time,
+            reason: `[${currentRegime}] ${candidate.id} Conf:${pendingSignal.score} RR:${structuralRR.toFixed(1)}`
           };
+        } else {
+          if (!scorePassed && allGatesPassed) {
+            rejectionReasons.push(`Score ${pendingSignal.score} is below threshold ${minRequiredScore}`);
+          }
+          this.logScanResult(
+            symbol,
+            pendingSignal.direction,
+            false,
+            rejectionReasons.join('; '),
+            currentPrice,
+            pendingSignal.sl,
+            pendingSignal.tp1,
+            pendingSignal.score,
+            {
+              strategy: candidate.id,
+              marketRegime: currentRegime,
+              regimeConfidence: classification.confidence,
+              macroColor: globalRegime.macroColor,
+              structuralRR: parseFloat(structuralRR.toFixed(2)),
+              gateResults,
+              rejectionReasons
+            }
+          );
         }
       }
     }
 
-    // STRICT DISCIPLINE: No fallback forcing outside the bucket or regime!
     return null;
   }
-
   /**
    * Ranging-Market 1:3 R:R Mean-Reversion Strategy (Bollinger Bands + RSI Re-entry)
    * Enforces:
@@ -987,12 +1826,12 @@ export class AutoTrader {
 
     const lookback = 20;
     const lastIdx = candles.length - 1;
-    const cClosed = candles[lastIdx - 1];
-    const cPrev = candles[lastIdx - 2];
+    const cClosed = candles[lastIdx];
+    const cPrev = candles[lastIdx - 1];
 
-    // Compute ATR
+    // Compute ATR over last 14 closed candles
     let atrSum = 0;
-    for (let i = lastIdx - 14; i < lastIdx; i++) {
+    for (let i = lastIdx - 13; i <= lastIdx; i++) {
       if (i <= 0) continue;
       const h = candles[i].high;
       const l = candles[i].low;
@@ -1002,19 +1841,19 @@ export class AutoTrader {
     const atr = Math.max(atrSum / 14, currentPrice * 0.01);
 
     // 20-period average volume
-    const volSlice = candles.slice(Math.max(0, lastIdx - lookback - 1), lastIdx - 1);
+    const volSlice = candles.slice(Math.max(0, lastIdx - lookback), lastIdx);
     const avgVol = volSlice.reduce((s, c) => s + (c.volume || 0), 0) / (volSlice.length || 1);
 
-    // Recent Swing High / Low over last 25 bars
-    const recentCandles = candles.slice(Math.max(0, lastIdx - 25), lastIdx - 1);
-    const highestHigh = Math.max(...recentCandles.map(c => c.high));
-    const lowestLow = Math.min(...recentCandles.map(c => c.low));
+    // Recent Swing High / Low over last 25 bars (excluding the trigger candle itself)
+    const recentCandles = candles.slice(Math.max(0, lastIdx - 25), lastIdx);
+    const highestHigh = recentCandles.length > 0 ? Math.max(...recentCandles.map(c => c.high)) : cClosed.high;
+    const lowestLow = recentCandles.length > 0 ? Math.min(...recentCandles.map(c => c.low)) : cClosed.low;
 
     // Pure Setup Check: Statistical Overextension from EMA50
     // A climax reversal ONLY occurs after extreme exhaustion away from mean value (>= 1.6 ATR)
     const closes = candles.map(c => c.close);
     const ema50Series = calculateEMA(closes, 50);
-    const ema50 = ema50Series[lastIdx - 1] || currentPrice;
+    const ema50 = ema50Series[lastIdx] || currentPrice;
 
     const isBullOverextended = (highestHigh - ema50) >= (1.6 * atr);
     const isBearOverextended = (ema50 - lowestLow) >= (1.6 * atr);
@@ -1134,19 +1973,13 @@ export class AutoTrader {
     compressionLow?: number;
     signalTime?: number;
     reason?: string;
+    checklist?: VcbChecklistResult;
   } | null> {
     if (candles.length < 35) return null;
     
-    // Clone array so we don't mutate cached references
-    const candlesCopy = candles.map(c => ({ ...c }));
-    
-    // Inject live tick price into last candle
-    const lastCandle = candlesCopy[candlesCopy.length - 1];
-    lastCandle.close = currentPrice;
-    lastCandle.high = Math.max(lastCandle.high, currentPrice);
-    lastCandle.low = Math.min(lastCandle.low, currentPrice);
-
-    const previousCandles = candlesCopy.slice(0, -1);
+    // Pure closed candles breakout: trigger is strictly the last closed candle
+    const lastClosedCandle = candles[candles.length - 1];
+    const previousCandles = candles.slice(0, -1);
     
     const atrSeries = calculateATR(previousCandles, 14);
     const atr = atrSeries[atrSeries.length - 1] || currentPrice * 0.015;
@@ -1156,7 +1989,7 @@ export class AutoTrader {
     
     // Pure Setup + Volume Detection
     const compression = detectCompression(previousCandles, atr, atrAvg, settingsObj);
-    const breakout = detectBreakout(lastCandle, compression, atr, settingsObj, candlesCopy);
+    const breakout = detectBreakout(lastClosedCandle, compression, atr, settingsObj, candles);
     
     if (!breakout) return null;
     
@@ -1164,7 +1997,7 @@ export class AutoTrader {
     let score = scoreBreakout(breakout, settingsObj);
     
     // Apply trend and momentum alignment bonus/penalty
-    const closes = candlesCopy.map(c => c.close);
+    const closes = candles.map(c => c.close);
     const ema9 = calculateEMA(closes, 9).pop() || 0;
     const ema21 = calculateEMA(closes, 21).pop() || 0;
     const ema50 = calculateEMA(closes, 50).pop() || 0;
@@ -1173,12 +2006,40 @@ export class AutoTrader {
 
     if (score < this.settings.autoTradeThreshold) return null;
     
-    const sl = determineStopLoss(breakout.direction as 'LONG'|'SHORT', compression, atr, settingsObj, candlesCopy, currentPrice);
+    const sl = determineStopLoss(breakout.direction as 'LONG'|'SHORT', compression, atr, settingsObj, candles, currentPrice);
     const risk = Math.abs(currentPrice - sl);
     if (risk <= 0) return null;
 
     // Asymmetric Volatility Expansion targets (10x-15% runner potential)
     const { tp1, tp2, tp3 } = calculateVcbTargets(currentPrice, breakout.direction as 'LONG'|'SHORT', risk, compression);
+
+    // Fetch HTF candles for Checklist validation
+    const tradeTf = this.settings.timeframe || '15m';
+    const htf = getHigherTimeframe(tradeTf);
+    let htfCandles: any[] | null = null;
+    try {
+      htfCandles = await this.getKlines(symbol, htf);
+    } catch (e) {}
+
+    // VCB Strategy Final Gate Checklist ("Before Executing a VCB Trade - Quick Checklist")
+    const checklist = evaluateVcbChecklist(
+      candles,
+      htfCandles ? htfCandles.slice(0, -1) : null,
+      breakout,
+      compression,
+      currentPrice,
+      sl,
+      tp1,
+      tp2,
+      atr,
+      this.settings
+    );
+
+    // Final Gate: If checklist does not pass (score < minScore or mandatory gates failed), block entry
+    if (!checklist.passed) {
+      console.log(`🛡️ [VCB Checklist] ${symbol} rejected by final gate checklist: ${checklist.summary}`);
+      return null;
+    }
     
     return {
       direction: breakout.direction as 'LONG'|'SHORT',
@@ -1190,8 +2051,9 @@ export class AutoTrader {
       tp3,
       compressionHigh: compression.windowHigh,
       compressionLow: compression.windowLow,
-      signalTime: lastCandle.time,
-      reason: `VCB Breakout Inception (RVOL: ${breakout.rvol.toFixed(1)}x, Squeeze: ${compression.isSqueezed ? 'YES' : 'ATR'})`
+      signalTime: lastClosedCandle.time,
+      reason: `VCB Breakout Inception [Checklist: ${checklist.score}/${checklist.maxScore} ${checklist.recommendation}] (RVOL: ${breakout.rvol.toFixed(1)}x, Squeeze: ${compression.isSqueezed ? 'YES' : 'ATR'})`,
+      checklist
     };
   }
 }
@@ -1200,3 +2062,4 @@ export const autoTrader = new AutoTrader();
 oms.onTradeClosed = (pnl: number) => {
   autoTrader.updateDemoBalance(pnl);
 };
+oms.isEngineActive = () => autoTrader.isEngineActive();

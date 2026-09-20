@@ -55,7 +55,7 @@ export default function GateManager({
   onSelectCoin,
 }: GateManagerProps) {
   const [selectedStrategy, setSelectedStrategy] = useState<string>(
-    settings.activeStrategy || 'BINANCE_COMPOSITE'
+    settings.activeStrategy || 'VOLATILITY_COMPRESSION'
   );
   const [activeCoinSymbol, setActiveCoinSymbol] = useState<string>(selectedSymbol || coins[0]?.symbol || 'BTCUSDT');
   const [importanceFilter, setImportanceFilter] = useState<'ALL' | GateImportance>('ALL');
@@ -283,8 +283,8 @@ export default function GateManager({
           </button>
           <button
             onClick={() => {
-              setSelectedStrategy('AUTO_REGIME');
-              const next: AppSettings = { ...settings, activeStrategy: 'AUTO_REGIME' };
+              setSelectedStrategy('TREND_PULLBACK');
+              const next: AppSettings = { ...settings, activeStrategy: 'TREND_PULLBACK' };
               setSettings(next);
               fetch('/api/bot/settings', {
                 method: 'POST',
@@ -293,13 +293,13 @@ export default function GateManager({
               }).catch(console.error);
             }}
             className={`px-3 py-1.5 rounded text-[11px] font-bold transition flex items-center gap-1.5 ${
-              selectedStrategy === 'AUTO_REGIME'
+              selectedStrategy === 'TREND_PULLBACK'
                 ? 'bg-blue-600 text-white shadow-sm'
                 : 'text-gray-400 hover:text-gray-200 hover:bg-[#21262D]'
             }`}
           >
-            <Cpu className="w-3.5 h-3.5" />
-            <span>Auto Regime Adaptive</span>
+            <Activity className="w-3.5 h-3.5" />
+            <span>Trend Pullback</span>
           </button>
           <button
             onClick={() => {
