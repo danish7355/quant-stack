@@ -5,7 +5,7 @@ import { oms } from './OMS.js';
 import { executionAdapter } from './ExecutionAdapter.js';
 import { telegramService } from './TelegramService.js';
 import { riskManager } from './RiskManager.js';
-import { isQuotaExhausted, safeUpdateDoc, readLocalJson, writeLocalJson } from './firestoreSafe.js';
+import { isQuotaExhausted, safeUpdateDoc, safeGetDocs, readLocalJson, writeLocalJson } from './firestoreSafe.js';
 
 export interface MonitoredPosition {
   id: string;
@@ -90,25 +90,53 @@ export class PositionMonitor {
       if (isQuotaExhausted()) {
         const local = readLocalJson<MonitoredPosition[]>('positions.json', []);
         if (local && local.length > 0) {
-          this.activePositions = local.filter(p => p.status === 'OPEN');
-          const totalAllocated = this.activePositions.reduce((sum, p) => sum + (p.allocated_balance || 0), 0);
-          riskManager.updateCurrentExposure(totalAllocated);
+          this.mergePositions(local.filter(p => p.status === 'OPEN'));
         }
         return;
       }
       const q = query(collection(db, 'positions'), where('status', '==', 'OPEN'));
-      const snapshot = await getDocs(q);
-      this.activePositions = snapshot.docs.map(doc => doc.data() as MonitoredPosition);
-      writeLocalJson('positions.json', this.activePositions);
-      const totalAllocated = this.activePositions.reduce((sum, p) => sum + (p.allocated_balance || 0), 0);
-      riskManager.updateCurrentExposure(totalAllocated);
+      const res = await safeGetDocs(q);
+      if (res.success && res.docs) {
+        const remote = res.docs.map(doc => doc.data() as MonitoredPosition);
+        this.mergePositions(remote);
+      } else {
+        const local = readLocalJson<MonitoredPosition[]>('positions.json', []);
+        if (local && local.length > 0) {
+          this.mergePositions(local.filter(p => p.status === 'OPEN'));
+        }
+      }
     } catch (e) {
       const local = readLocalJson<MonitoredPosition[]>('positions.json', []);
       if (local && local.length > 0) {
-        this.activePositions = local.filter(p => p.status === 'OPEN');
+        this.mergePositions(local.filter(p => p.status === 'OPEN'));
       }
       console.warn('PositionMonitor: Could not refresh from Firestore, maintained local/in-memory positions.');
     }
+  }
+
+  private mergePositions(freshPositions: MonitoredPosition[]) {
+    const map = new Map<string, MonitoredPosition>();
+    // 1. Keep active in-memory positions
+    for (const p of this.activePositions) {
+      if (p && p.id && p.status === 'OPEN' && !this.closingSet.has(p.id)) {
+        map.set(p.id, p);
+      }
+    }
+    // 2. Add or merge from remote/disk
+    for (const p of freshPositions) {
+      if (p && p.id && p.status === 'OPEN' && !this.closingSet.has(p.id)) {
+        if (map.has(p.id)) {
+          const existing = map.get(p.id)!;
+          map.set(p.id, { ...p, current_price: existing.current_price || p.current_price });
+        } else {
+          map.set(p.id, p);
+        }
+      }
+    }
+    this.activePositions = Array.from(map.values());
+    writeLocalJson('positions.json', this.activePositions);
+    const totalAllocated = this.activePositions.reduce((sum, p) => sum + (p.allocated_balance || 0), 0);
+    riskManager.updateCurrentExposure(totalAllocated);
   }
 
   private async evaluatePositions(prices: Map<string, number>) {

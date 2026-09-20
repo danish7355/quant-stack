@@ -118,31 +118,26 @@ export class OMS {
       const posId = `sig_${Date.now()}_${Math.random().toString(36).substring(4)}`;
       const strategyPrefix = (customOpts?.strategy || 'GEN').substring(0, 8).replace(/[^a-zA-Z0-9]/g, '');
       
-      // Trade Admission Record (Audit Trail)
+      // Trade Admission Record (Audit Trail) - Non-blocking async
       if (!isQuotaExhausted()) {
-        try {
-          await writeBatch(db).set(doc(collection(db, 'trade_admissions')), {
-             posId,
-             symbol,
-             direction,
-             requestedPrice: price,
-             computedSl: sl,
-             computedTp1: tp1,
-             confidenceScore: score,
-             strategy: customOpts?.strategy || 'UNKNOWN',
-             marketRegime: customOpts?.marketRegime || 'UNKNOWN',
-             allocatedBalance: finalAllocated,
-             leverage: finalLeverageResolved,
-             quantity: finalQuantityResolved,
-             timestamp: Date.now(),
-             status: 'APPROVED'
-          }).commit();
-        } catch (admissionErr: any) {
-          if (admissionErr && (admissionErr.code === 'resource-exhausted' || String(admissionErr).includes('resource-exhausted'))) {
-            const { markQuotaExhausted } = await import('./firestoreSafe.js');
-            markQuotaExhausted();
-          }
-        }
+        safeSetDoc(doc(collection(db, 'trade_admissions'), posId), {
+           posId,
+           symbol,
+           direction,
+           requestedPrice: price,
+           computedSl: sl,
+           computedTp1: tp1,
+           confidenceScore: score,
+           strategy: customOpts?.strategy || 'UNKNOWN',
+           marketRegime: customOpts?.marketRegime || 'UNKNOWN',
+           allocatedBalance: finalAllocated,
+           leverage: finalLeverageResolved,
+           quantity: finalQuantityResolved,
+           timestamp: Date.now(),
+           status: 'APPROVED'
+        }).catch((admissionErr: any) => {
+          console.warn(`[OMS] Trade admission record skipped:`, admissionErr?.message || admissionErr);
+        });
       }
 
       // Generate 36-char max deterministic Client Order IDs
@@ -229,7 +224,7 @@ export class OMS {
       positionMonitor.addPosition(positionData as any);
 
       const docRef = doc(db, 'positions', posId);
-      await safeSetDoc(docRef, positionData);
+      safeSetDoc(docRef, positionData).catch(() => {});
 
       // Trigger 24/7 background Telegram notification asynchronously
       telegramService.notifyTradeOpen({

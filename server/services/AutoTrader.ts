@@ -905,6 +905,7 @@ export class AutoTrader {
           })
           .then(async (posId) => {
             if (posId) {
+              console.log(`✅ [AutoTrader] Trade filled and active: ${symbol} (${signal.direction}) PosId: ${posId}`);
               this.logScanResult(symbol, signal.direction, true, '', currentPrice, signal.sl, signal.tp1, signal.score, {
                 macroColor: (signal as any).macroColor,
                 marketRegime: (signal as any).marketRegime,
@@ -921,7 +922,11 @@ export class AutoTrader {
             }
           })
           .catch((err) => {
-            if (err.message && err.message.includes("Risk manager check disallowed trade")) { console.log(`AutoTrader skipped ${symbol}: ${err.message}`); } else { console.error(`AutoTrader error opening ${symbol}:`, err); }
+            if (err.message && err.message.includes("Risk manager check disallowed trade")) {
+              console.log(`🛡️ [AutoTrader] Skipped ${symbol}: ${err.message}`);
+            } else {
+              console.error(`❌ [AutoTrader] Error executing order on ${symbol}:`, err);
+            }
             this.tradeCooldowns.set(symbol, Date.now() + 60000);
           })
           .finally(() => {

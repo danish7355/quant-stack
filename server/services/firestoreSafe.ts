@@ -127,7 +127,19 @@ export function getRecentTradeLogsFromDisk(limitCount = 50): any[] {
   }
 }
 
-// --- Safe Firestore Operations ---
+// --- Safe Firestore Operations with Non-blocking Timeouts ---
+
+export async function withTimeout<T>(promise: Promise<T>, timeoutMs = 3000, fallbackMsg = 'Firestore timeout'): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(fallbackMsg)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
 
 export async function safeSetDoc<T extends Record<string, any>>(
   ref: DocumentReference,
@@ -140,9 +152,9 @@ export async function safeSetDoc<T extends Record<string, any>>(
 
   try {
     if (options) {
-      await setDoc(ref, data, options);
+      await withTimeout(setDoc(ref, data, options), 3000);
     } else {
-      await setDoc(ref, data);
+      await withTimeout(setDoc(ref, data), 3000);
     }
     return { success: true, isQuotaExhausted: false };
   } catch (error: any) {
@@ -150,7 +162,7 @@ export async function safeSetDoc<T extends Record<string, any>>(
       markQuotaExhausted();
       return { success: false, isQuotaExhausted: true };
     }
-    console.warn(`[Firestore] Safe setDoc warning for ${ref.path}:`, error?.message || error);
+    console.warn(`[Firestore] Safe setDoc fallback for ${ref.path}:`, error?.message || error);
     return { success: false, isQuotaExhausted: false };
   }
 }
@@ -164,14 +176,14 @@ export async function safeUpdateDoc(
   }
 
   try {
-    await updateDoc(ref, data);
+    await withTimeout(updateDoc(ref, data), 3000);
     return { success: true, isQuotaExhausted: false };
   } catch (error: any) {
     if (isQuotaError(error)) {
       markQuotaExhausted();
       return { success: false, isQuotaExhausted: true };
     }
-    console.warn(`[Firestore] Safe updateDoc warning for ${ref.path}:`, error?.message || error);
+    console.warn(`[Firestore] Safe updateDoc fallback for ${ref.path}:`, error?.message || error);
     return { success: false, isQuotaExhausted: false };
   }
 }
@@ -184,21 +196,21 @@ export async function safeDeleteDoc(
   }
 
   try {
-    await deleteDoc(ref);
+    await withTimeout(deleteDoc(ref), 3000);
     return { success: true, isQuotaExhausted: false };
   } catch (error: any) {
     if (isQuotaError(error)) {
       markQuotaExhausted();
       return { success: false, isQuotaExhausted: true };
     }
-    console.warn(`[Firestore] Safe deleteDoc warning for ${ref.path}:`, error?.message || error);
+    console.warn(`[Firestore] Safe deleteDoc fallback for ${ref.path}:`, error?.message || error);
     return { success: false, isQuotaExhausted: false };
   }
 }
 
 export async function safeGetDoc(ref: DocumentReference) {
   try {
-    const snap = await getDoc(ref);
+    const snap = await withTimeout(getDoc(ref), 3000);
     return { success: true, exists: snap.exists(), data: snap.exists() ? snap.data() : null };
   } catch (error: any) {
     if (isQuotaError(error)) {
@@ -210,7 +222,7 @@ export async function safeGetDoc(ref: DocumentReference) {
 
 export async function safeGetDocs(q: Query) {
   try {
-    const snap = await getDocs(q);
+    const snap = await withTimeout(getDocs(q), 3000);
     return { success: true, docs: snap.docs };
   } catch (error: any) {
     if (isQuotaError(error)) {

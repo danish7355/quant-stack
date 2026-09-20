@@ -398,14 +398,30 @@ async function startServer() {
 
   app.get("/api/positions", async (req, res) => {
     try {
-      if (isQuotaExhausted()) {
-        const local = positionMonitor.getActivePositions();
-        return res.json(local.length > 0 ? local : readLocalJson('positions.json', []));
+      // 1. Instant response from live in-memory PositionMonitor (with real-time WebSocket tick prices)
+      const local = positionMonitor.getActivePositions();
+      if (local && local.length > 0) {
+        return res.json(local);
       }
-      const q = query(collection(db, 'positions'), where('status', '==', 'OPEN'));
-      const snapshot = await getDocs(q);
-      const positions = snapshot.docs.map(doc => doc.data());
-      res.json(positions);
+
+      // 2. Check local disk store
+      const onDisk = readLocalJson<any[]>('positions.json', []).filter((p: any) => p && p.status === 'OPEN');
+      if (onDisk.length > 0) {
+        return res.json(onDisk);
+      }
+
+      // 3. Fallback to Firestore with non-blocking safe timeout
+      if (!isQuotaExhausted()) {
+        const q = query(collection(db, 'positions'), where('status', '==', 'OPEN'));
+        const { safeGetDocs } = await import('./server/services/firestoreSafe.js');
+        const snap = await safeGetDocs(q);
+        if (snap.success && snap.docs.length > 0) {
+          const positions = snap.docs.map(doc => doc.data());
+          return res.json(positions);
+        }
+      }
+
+      res.json([]);
     } catch(e) {
       const local = positionMonitor.getActivePositions();
       res.json(local.length > 0 ? local : readLocalJson('positions.json', []));
