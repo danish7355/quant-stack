@@ -179,10 +179,17 @@ export interface TradingSettings {
   tpbVolumeSmaPeriod?: number;
   tpbMinVolumeRatio?: number;
   tpbRequireVolume?: boolean;
+  tpbAllowUnconfirmedVolume?: boolean;
   tpbMaxEntryDistanceAtr?: number;
+  tpbMinStopDistanceAtr?: number;
+  tpbMaxStopDistanceAtr?: number;
   tpbMinRrRatio?: number;
   tpbMinScore?: number;
   tpbAtrBuffer?: number;
+  tpbMaxSpreadAtr?: number;
+  tpbAllowLongs?: boolean;
+  tpbAllowShorts?: boolean;
+  tpbAllowBroadStop?: boolean;
 
   // SMC High-Probability Strategy Settings
   smcHtfResolution?: string;
@@ -239,6 +246,9 @@ export const NUMERIC_BOUNDS: Record<string, { min: number; max: number; step?: n
   tpbAdxMin: { min: 10, max: 50, step: 1, label: 'Trend Pullback Min ADX' },
   tpbMinVolumeRatio: { min: 0.5, max: 5.0, step: 0.1, label: 'Trend Pullback Min Volume Ratio' },
   tpbMaxEntryDistanceAtr: { min: 0.1, max: 3.0, step: 0.05, label: 'Trend Pullback Max Entry Distance (ATR)' },
+  tpbMinStopDistanceAtr: { min: 0.2, max: 2.0, step: 0.1, label: 'Trend Pullback Min Stop Distance (ATR)' },
+  tpbMaxStopDistanceAtr: { min: 1.0, max: 6.0, step: 0.1, label: 'Trend Pullback Max Stop Distance (ATR)' },
+  tpbMaxSpreadAtr: { min: 0.05, max: 1.0, step: 0.05, label: 'Trend Pullback Max Spread (ATR)' },
   tpbMinScore: { min: 5, max: 10, step: 1, label: 'Trend Pullback Min Confirmation Score' },
   vcbChecklistMinScore: { min: 5, max: 11, step: 1, label: 'VCB Checklist Min Score' },
   vcbMinRrRatio: { min: 1.5, max: 5.0, step: 0.1, label: 'VCB Min Risk-to-Reward Ratio' },
@@ -518,10 +528,17 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   tpbVolumeSmaPeriod: 20,
   tpbMinVolumeRatio: 1.0,
   tpbRequireVolume: true,
+  tpbAllowUnconfirmedVolume: false,
   tpbMaxEntryDistanceAtr: 0.25,
+  tpbMinStopDistanceAtr: 0.8,
+  tpbMaxStopDistanceAtr: 3.0,
   tpbMinRrRatio: 1.5,
   tpbMinScore: 8,
   tpbAtrBuffer: 0.3,
+  tpbMaxSpreadAtr: 0.3,
+  tpbAllowLongs: true,
+  tpbAllowShorts: true,
+  tpbAllowBroadStop: false,
 
   rmrMaxAdx: 22,
   rmrMaxAtrRatio: 1.25,

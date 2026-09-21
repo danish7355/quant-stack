@@ -843,9 +843,64 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({ settings, setSettings, gl
                 <InputRow label="Volume SMA Lookback Period" desc="Lookback period for baseline volume moving average (default: 20)" value={settings.tpbVolumeSmaPeriod ?? 20} onChange={(v: any) => handleInputChange('tpbVolumeSmaPeriod', v)} min={5} max={50} />
                 <InputRow label="Min Volume Surge Ratio" desc="Retest bounce candle volume vs SMA ratio (default: 1.0x)" value={settings.tpbMinVolumeRatio ?? 1.0} onChange={(v: any) => handleInputChange('tpbMinVolumeRatio', v)} step={0.1} min={0.5} max={5.0} />
                 <InputRow label="Max Entry Distance from EMA (x ATR)" desc="Max allowable price extension from Fast EMA (default: 0.25)" value={settings.tpbMaxEntryDistanceAtr ?? 0.25} onChange={(v: any) => handleInputChange('tpbMaxEntryDistanceAtr', v)} step={0.05} min={0.1} max={3.0} />
+                <InputRow label="Min Stop Distance (x ATR)" desc="Minimum stop distance in ATR units to reject market noise (default: 0.8)" value={settings.tpbMinStopDistanceAtr ?? 0.8} onChange={(v: any) => handleInputChange('tpbMinStopDistanceAtr', v)} step={0.1} min={0.2} max={2.0} />
+                <InputRow label="Max Stop Distance (x ATR)" desc="Maximum allowable stop distance in ATR units for timeframe (default: 3.0)" value={settings.tpbMaxStopDistanceAtr ?? 3.0} onChange={(v: any) => handleInputChange('tpbMaxStopDistanceAtr', v)} step={0.1} min={1.0} max={6.0} />
+                <InputRow label="Max Spread / Slippage (x ATR)" desc="Maximum allowable spread in ATR units before entry is blocked (default: 0.3)" value={settings.tpbMaxSpreadAtr ?? 0.3} onChange={(v: any) => handleInputChange('tpbMaxSpreadAtr', v)} step={0.05} min={0.05} max={1.0} />
                 <InputRow label="Minimum Risk-to-Reward Ratio" desc="Required minimum asymmetric target multiple (default: 1.5)" value={settings.tpbMinRrRatio ?? 1.5} onChange={(v: any) => handleInputChange('tpbMinRrRatio', v)} step={0.1} min={1.0} max={5.0} />
                 <InputRow label="Min Confirmation Score" desc="Minimum 5-pillar confirmation score to enter trade (default: 8/10)" value={settings.tpbMinScore ?? 8} onChange={(v: any) => handleInputChange('tpbMinScore', v)} min={5} max={10} />
                 <InputRow label="Stop Loss ATR Buffer" desc="Buffer added beyond recent swing low/high in ATR (default: 0.3)" value={settings.tpbAtrBuffer ?? 0.3} onChange={(v: any) => handleInputChange('tpbAtrBuffer', v)} step={0.1} min={0.1} max={2.0} />
+
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Allow Long Setups</span>
+                    <span className="text-xs text-gray-500 mt-1">Enable bullish trend-pullback trade execution</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.tpbAllowLongs !== false}
+                    onChange={(e) => handleInputChange('tpbAllowLongs', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-blue-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Allow Short Setups</span>
+                    <span className="text-xs text-gray-500 mt-1">Enable bearish trend-pullback trade execution</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.tpbAllowShorts !== false}
+                    onChange={(e) => handleInputChange('tpbAllowShorts', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-blue-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Allow Broad Structural Stops</span>
+                    <span className="text-xs text-gray-500 mt-1">If unchecked, prefers Local Execution Stop and rejects distant HTF stops</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.tpbAllowBroadStop === true}
+                    onChange={(e) => handleInputChange('tpbAllowBroadStop', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-blue-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Unconfirmed Volume Mode</span>
+                    <span className="text-xs text-gray-500 mt-1">Allow signal execution when exchange volume is unconfirmed (marked lower confidence)</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.tpbAllowUnconfirmedVolume === true}
+                    onChange={(e) => handleInputChange('tpbAllowUnconfirmedVolume', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-blue-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
 
                 <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
                   <div className="flex flex-col">

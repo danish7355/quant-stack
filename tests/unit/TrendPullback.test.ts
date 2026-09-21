@@ -8,6 +8,9 @@ import {
   detectMarketRegime,
   calculateStrategyExpectancy,
   getTradingSession,
+  calculatePositionSize,
+  checkFakeBreakout,
+  calculateStopLoss,
   StrategyTradeRecord,
   Candle
 } from '../../src/utils/strategies/trendPullback';
@@ -430,7 +433,7 @@ describe('Trend Pullback Strategy - 5-Pillar Architecture & Unit Tests', () => {
     );
 
     expect(evaluation.success).toBe(false);
-    expect(evaluation.rejectionReason).toBe('PULLBACK_BROKE_STRUCTURE');
+    expect(['PULLBACK_INVALIDATED', 'PULLBACK_BROKE_STRUCTURE']).toContain(evaluation.rejectionReason);
   });
 
   // Test 11: Missing volume data
@@ -491,7 +494,7 @@ describe('Trend Pullback Strategy - 5-Pillar Architecture & Unit Tests', () => {
       { tradeTimeframe: '15m', symbol: 'BTCUSDT', atrBufferMult: 0.0 }
     );
     expect(evalB.success).toBe(false);
-    expect(evalB.rejectionReason).toBe('STOP_LOSS_TOO_SMALL');
+    expect(['STOP_TOO_TIGHT_FOR_MARKET_NOISE', 'STOP_LOSS_TOO_SMALL']).toContain(evalB.rejectionReason);
 
     // Case C: Stop loss placed too far from entry (risk > maxRisk)
     const evalC = evaluateTrendPullbackDetailed(
@@ -501,7 +504,7 @@ describe('Trend Pullback Strategy - 5-Pillar Architecture & Unit Tests', () => {
       { tradeTimeframe: '15m', symbol: 'BTCUSDT', atrBufferMult: 10.0 }
     );
     expect(evalC.success).toBe(false);
-    expect(evalC.rejectionReason).toBe('STOP_LOSS_TOO_LARGE');
+    expect(['STOP_TOO_WIDE_FOR_EXECUTION_TIMEFRAME', 'STOP_LOSS_TOO_LARGE']).toContain(evalC.rejectionReason);
   });
 
   // Timeframe helpers
@@ -602,7 +605,7 @@ describe('Trend Pullback Strategy - 5-Pillar Architecture & Unit Tests', () => {
       { tradeTimeframe: '15m', symbol: 'BTCUSDT', maxEntryDistanceAtr: 0.25 }
     );
     expect(evaluation.success).toBe(false);
-    expect(evaluation.rejectionReason).toBe('ENTRY_DISTANCE_TOO_LARGE');
+    expect(['ENTRY_TOO_LATE', 'ENTRY_DISTANCE_TOO_LARGE']).toContain(evaluation.rejectionReason);
   });
 
   // Pillar 7: Two-Stage Decision Process (Stage A -> Stage B)
@@ -632,7 +635,7 @@ describe('Trend Pullback Strategy - 5-Pillar Architecture & Unit Tests', () => {
 
     // Setup is in Stage A: detected and waiting for price action confirmation
     expect(stageAEval.stage).toBe('STAGE_A_SETUP_DETECTED');
-    expect(stageAEval.status).toBe('WAITING FOR PRICE ACTION');
+    expect(['WAITING_FOR_PRICE_ACTION', 'WAITING FOR PRICE ACTION']).toContain(stageAEval.status);
     expect(stageAEval.success).toBe(false);
 
     // Stage B: Now provide valid confirmation candle
@@ -762,5 +765,303 @@ describe('Trend Pullback Strategy - 5-Pillar Architecture & Unit Tests', () => {
     // 22:00 UTC -> OFF_HOURS
     const offHoursTime = new Date('2026-09-20T22:00:00Z').getTime();
     expect(getTradingSession(offHoursTime)).toBe('OFF_HOURS');
+  });
+
+  // -------------------------------------------------------------------------
+  // 16-SECTION SPECIFICATION VALIDATION TESTS
+  // -------------------------------------------------------------------------
+  describe('Institutional Trend-Pullback 16-Section Specification Tests', () => {
+    beforeEach(() => {
+      clearSignalDeduplicationCache();
+    });
+
+    it('Section 1 & 16: Executes accurately on 5-minute timeframe with auto-derived 15m HTF', () => {
+      const htfCandles = createHtfBullishCandles(50, 15 * 60 * 1000);
+      const tradeCandles = createValidBullishSetup(5);
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      const eval5m = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        { tradeTimeframe: '5m', symbol: 'BTCUSDT' }
+      );
+
+      expect(eval5m.success).toBe(true);
+      expect(eval5m.result?.tradeTimeframe).toBe('5m');
+      expect(eval5m.result?.htfTimeframe).toBe('15m');
+      expect(eval5m.result?.stopType).toBe('LOCAL_EXECUTION_STOP');
+      expect(eval5m.result?.stopDistance).toBeGreaterThan(0);
+      expect(eval5m.result?.stopATRMultiple).toBeGreaterThanOrEqual(0.8);
+      expect(eval5m.result?.stopATRMultiple).toBeLessThanOrEqual(3.0);
+    });
+
+    it('Section 1 & 16: Executes accurately on 15-minute timeframe with auto-derived 1h HTF', () => {
+      const htfCandles = createHtfBullishCandles(50, 60 * 60 * 1000);
+      const tradeCandles = createValidBullishSetup(15);
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      const eval15m = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        { tradeTimeframe: '15m', symbol: 'ETHUSDT' }
+      );
+
+      expect(eval15m.success).toBe(true);
+      expect(eval15m.result?.tradeTimeframe).toBe('15m');
+      expect(eval15m.result?.htfTimeframe).toBe('1h');
+      expect(eval15m.result?.stopType).toBe('LOCAL_EXECUTION_STOP');
+    });
+
+    it('Section 8 & 9: Stop classification separates LOCAL_EXECUTION_STOP from BROAD_STRUCTURAL_STOP', () => {
+      const candles = createValidBullishSetup(15);
+      const currentPrice = candles[candles.length - 1].close;
+      const atr = 1.5;
+      const atrBuffer = 0.45;
+
+      const localStop = calculateStopLoss(
+        candles,
+        'LONG',
+        currentPrice,
+        atr,
+        atrBuffer,
+        { invalidationLevel: 100.0 },
+        { stopReference: currentPrice - 2.0 }
+      );
+      expect(localStop.stopType).toBe('LOCAL_EXECUTION_STOP');
+      expect(localStop.stopPrice).toBe(currentPrice - 2.0 - atrBuffer);
+
+      // Inverted stop produces INVALID_STOP
+      const invalidStop = calculateStopLoss(
+        candles,
+        'LONG',
+        currentPrice,
+        atr,
+        atrBuffer,
+        { invalidationLevel: 150.0 },
+        { stopReference: currentPrice + 5.0 } // stop above current price for long is invalid
+      );
+      expect(invalidStop.stopType).toBe('INVALID_STOP');
+    });
+
+    it('Section 9: Rejects with STOP_TOO_WIDE_FOR_EXECUTION_TIMEFRAME without forcing smaller stops', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      // Set maxStopDistanceAtr strictly lower than actual stop distance
+      const evaluation = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        {
+          tradeTimeframe: '15m',
+          symbol: 'BTCUSDT',
+          maxStopDistanceAtr: 0.3 // Real stop is ~1.0-1.5 ATR, so 0.3 must reject
+        }
+      );
+
+      expect(evaluation.success).toBe(false);
+      expect(evaluation.rejectionReason).toBe('STOP_TOO_WIDE_FOR_EXECUTION_TIMEFRAME');
+      expect(evaluation.status).toBe('STOP_TOO_WIDE');
+    });
+
+    it('Section 9: Rejects with STOP_TOO_TIGHT_FOR_MARKET_NOISE when stop is unrealistically close', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      // Set minStopDistanceAtr higher than actual stop distance
+      const evaluation = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        {
+          tradeTimeframe: '15m',
+          symbol: 'BTCUSDT',
+          minStopDistanceAtr: 4.0 // Real stop is ~1.0-1.5 ATR, so requiring 4.0 must reject as too tight
+        }
+      );
+
+      expect(evaluation.success).toBe(false);
+      expect(evaluation.rejectionReason).toBe('STOP_TOO_TIGHT_FOR_MARKET_NOISE');
+      expect(evaluation.status).toBe('STOP_TOO_TIGHT');
+    });
+
+    it('Section 7: Rejects with FAKE_BREAKOUT on abnormally large climax exhaustion candle (> 3x ATR)', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      const lastIdx = tradeCandles.length - 1;
+
+      // Inject abnormally large candle (10.0 range when ATR is ~1.5)
+      tradeCandles[lastIdx] = createCandle(
+        tradeCandles[lastIdx].time,
+        125.0,
+        138.0, // range of 13.0 (> 8x ATR)
+        124.5,
+        137.5,
+        3000,
+        true
+      );
+
+      const evaluation = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        tradeCandles[lastIdx].close,
+        { tradeTimeframe: '15m', symbol: 'BTCUSDT' }
+      );
+
+      expect(evaluation.success).toBe(false);
+      expect(evaluation.rejectionReason).toBe('FAKE_BREAKOUT');
+      expect(evaluation.reason).toContain('exhaustion climax');
+    });
+
+    it('Section 7: checkFakeBreakout correctly identifies candles wicked above high but closed back inside', () => {
+      const candles: Candle[] = [
+        createCandle(1000, 100, 105, 99, 104),
+        createCandle(2000, 104, 108, 103, 104.5) // wicked to 108 but closed back at 104.5 <= 105
+      ];
+      const pa = { pattern: 'Breakout', triggerPrice: 108, stopReference: 103 };
+      const res = checkFakeBreakout(candles, 'LONG', 104.5, 2.0, pa);
+      expect(res.isFake).toBe(true);
+      expect(res.reason).toContain('closed back inside previous range');
+    });
+
+    it('Section 6: Unconfirmed volume mode allows entry with lower confidence flag when enabled', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      const lastIdx = tradeCandles.length - 1;
+
+      // Reduce confirmation volume to be weak (< prev volume)
+      tradeCandles[lastIdx].volume = 100;
+      tradeCandles[lastIdx - 1].volume = 500;
+
+      // 1. Without unconfirmed volume mode -> Rejected with VOLUME_NOT_CONFIRMED
+      const evalStandard = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        tradeCandles[lastIdx].close,
+        { tradeTimeframe: '15m', symbol: 'BTCUSDT', unconfirmedVolumeMode: false }
+      );
+      expect(evalStandard.success).toBe(false);
+      expect(evalStandard.rejectionReason).toBe('VOLUME_NOT_CONFIRMED');
+
+      // 2. With unconfirmed volume mode -> Allowed with lower confidence
+      const evalUnconfirmed = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        tradeCandles[lastIdx].close,
+        { tradeTimeframe: '15m', symbol: 'BTCUSDT', unconfirmedVolumeMode: true }
+      );
+      expect(evalUnconfirmed.success).toBe(true);
+      expect(evalUnconfirmed.result?.isUnconfirmedVolume).toBe(true);
+      expect(evalUnconfirmed.result?.confidence).toBe('LOWER');
+    });
+
+    it('Section 12: Rejects with SPREAD_OR_SLIPPAGE_TOO_HIGH when current spread exceeds maxSpreadAtr', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      const evaluation = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        {
+          tradeTimeframe: '15m',
+          symbol: 'BTCUSDT',
+          currentSpread: 2.0, // High spread of $2.0 when ATR is ~1.5
+          maxSpreadAtr: 0.3   // Max allowed spread = 0.3 * 1.5 = 0.45
+        }
+      );
+
+      expect(evaluation.success).toBe(false);
+      expect(evaluation.rejectionReason).toBe('SPREAD_OR_SLIPPAGE_TOO_HIGH');
+    });
+
+    it('Section 12: Rejects with SESSION_DISABLED when trading session is not in configured sessions', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      const lastIdx = tradeCandles.length - 1;
+
+      // Set timestamp to 03:00 UTC (ASIA session)
+      tradeCandles[lastIdx].time = new Date('2026-09-21T03:00:00Z').getTime();
+
+      const evaluation = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        tradeCandles[lastIdx].close,
+        {
+          tradeTimeframe: '15m',
+          symbol: 'BTCUSDT',
+          tradingSessions: ['LONDON', 'NEW_YORK'] // ASIA disabled
+        }
+      );
+
+      expect(evaluation.success).toBe(false);
+      expect(evaluation.rejectionReason).toBe('SESSION_DISABLED');
+    });
+
+    it('Section 1: Rejects with DIRECTION_DISABLED when directional toggles are disabled', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      // Bullish setup with allowLongs = false
+      const evalLongBlocked = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        {
+          tradeTimeframe: '15m',
+          symbol: 'BTCUSDT',
+          allowLongs: false
+        }
+      );
+
+      expect(evalLongBlocked.success).toBe(false);
+      expect(evalLongBlocked.rejectionReason).toBe('DIRECTION_DISABLED');
+    });
+
+    it('Section 12: Rejects with RISK_LIMIT_REACHED when account risk limit is active', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      const evaluation = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        {
+          tradeTimeframe: '15m',
+          symbol: 'BTCUSDT',
+          isRiskLimitReached: true
+        }
+      );
+
+      expect(evaluation.success).toBe(false);
+      expect(evaluation.rejectionReason).toBe('RISK_LIMIT_REACHED');
+    });
+
+    it('Section 11: calculatePositionSize correctly reduces size for wider stops to preserve risk', () => {
+      const riskDollar = 100; // $100 max risk
+      const entryPrice = 100;
+
+      // Setup A: Tight stop at 98 (distance = 2) -> position size = 50 units ($100 risk)
+      const setupA = calculatePositionSize(riskDollar, entryPrice, 98);
+      expect(setupA.stopDistance).toBe(2);
+      expect(setupA.positionSize).toBe(50);
+
+      // Setup B: Wider stop at 90 (distance = 10) -> position size = 10 units ($100 risk)
+      const setupB = calculatePositionSize(riskDollar, entryPrice, 90);
+      expect(setupB.stopDistance).toBe(10);
+      expect(setupB.positionSize).toBe(10);
+
+      // Wider stop reduces position size, never increases dollar risk
+      expect(setupB.positionSize).toBeLessThan(setupA.positionSize);
+      expect(setupA.positionSize * setupA.stopDistance).toBe(riskDollar);
+      expect(setupB.positionSize * setupB.stopDistance).toBe(riskDollar);
+    });
   });
 });

@@ -1389,7 +1389,14 @@ export class AutoTrader {
           volSmaPeriod: this.settings.tpbVolumeSmaPeriod || 20,
           minVolumeRatio: this.settings.tpbMinVolumeRatio || 1.0,
           requireVolume: this.settings.tpbRequireVolume !== false,
+          unconfirmedVolumeMode: this.settings.tpbAllowUnconfirmedVolume === true,
           maxEntryDistanceAtr: this.settings.tpbMaxEntryDistanceAtr ?? 0.25,
+          minStopDistanceAtr: this.settings.tpbMinStopDistanceAtr ?? 0.8,
+          maxStopDistanceAtr: this.settings.tpbMaxStopDistanceAtr ?? 3.0,
+          allowBroadStop: this.settings.tpbAllowBroadStop === true,
+          maxSpreadAtr: this.settings.tpbMaxSpreadAtr ?? 0.3,
+          allowLongs: this.settings.tpbAllowLongs !== false,
+          allowShorts: this.settings.tpbAllowShorts !== false,
           minRrRatio: this.settings.tpbMinRrRatio || 1.5,
           minScore: this.settings.tpbMinScore || 8
         }
@@ -1672,7 +1679,14 @@ export class AutoTrader {
             volSmaPeriod: this.settings.tpbVolumeSmaPeriod || 20,
             minVolumeRatio: this.settings.tpbMinVolumeRatio || 1.0,
             requireVolume: this.settings.tpbRequireVolume !== false,
+            unconfirmedVolumeMode: this.settings.tpbAllowUnconfirmedVolume === true,
             maxEntryDistanceAtr: this.settings.tpbMaxEntryDistanceAtr ?? 0.25,
+            minStopDistanceAtr: this.settings.tpbMinStopDistanceAtr ?? 0.8,
+            maxStopDistanceAtr: this.settings.tpbMaxStopDistanceAtr ?? 3.0,
+            allowBroadStop: this.settings.tpbAllowBroadStop === true,
+            maxSpreadAtr: this.settings.tpbMaxSpreadAtr ?? 0.3,
+            allowLongs: this.settings.tpbAllowLongs !== false,
+            allowShorts: this.settings.tpbAllowShorts !== false,
             minRrRatio: this.settings.tpbMinRrRatio || 1.5,
             minScore: this.settings.tpbMinScore || 8
           }

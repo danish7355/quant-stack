@@ -1303,9 +1303,76 @@ export default function SettingsPanel({
                 <InputRow label="Volume SMA Lookback Period" desc="Lookback period for baseline volume moving average (default: 20)" value={settings.tpbVolumeSmaPeriod ?? 20} onChange={(v: any) => handleInputChange('tpbVolumeSmaPeriod', v)} min={5} max={50} />
                 <InputRow label="Min Volume Surge Ratio" desc="Retest bounce candle volume vs SMA ratio (default: 1.0x)" value={settings.tpbMinVolumeRatio ?? 1.0} onChange={(v: any) => handleInputChange('tpbMinVolumeRatio', v)} min={0.5} max={5.0} />
                 <InputRow label="Max Entry Distance from EMA (x ATR)" desc="Maximum allowable price extension from Fast EMA to trigger entry (default: 0.25)" value={settings.tpbMaxEntryDistanceAtr ?? 0.25} onChange={(v: any) => handleInputChange('tpbMaxEntryDistanceAtr', v)} min={0.1} max={3.0} />
+                <InputRow label="Min Stop Distance (x ATR)" desc="Minimum stop distance in ATR units to reject market noise (default: 0.8)" value={settings.tpbMinStopDistanceAtr ?? 0.8} onChange={(v: any) => handleInputChange('tpbMinStopDistanceAtr', v)} min={0.2} max={2.0} />
+                <InputRow label="Max Stop Distance (x ATR)" desc="Maximum allowable stop distance in ATR units for timeframe (default: 3.0)" value={settings.tpbMaxStopDistanceAtr ?? 3.0} onChange={(v: any) => handleInputChange('tpbMaxStopDistanceAtr', v)} min={1.0} max={6.0} />
+                <InputRow label="Max Spread / Slippage (x ATR)" desc="Maximum allowable spread in ATR units before entry is blocked (default: 0.3)" value={settings.tpbMaxSpreadAtr ?? 0.3} onChange={(v: any) => handleInputChange('tpbMaxSpreadAtr', v)} min={0.05} max={1.0} />
                 <InputRow label="Minimum Risk-to-Reward Ratio" desc="Required minimum asymmetric target multiple (default: 1.5)" value={settings.tpbMinRrRatio ?? 1.5} onChange={(v: any) => handleInputChange('tpbMinRrRatio', v)} min={1.0} max={5.0} />
                 <InputRow label="Min Confirmation Score" desc="Minimum 5-pillar confirmation score required to enter trade (default: 8/10)" value={settings.tpbMinScore ?? 8} onChange={(v: any) => handleInputChange('tpbMinScore', v)} min={5} max={10} />
                 <InputRow label="Stop Loss ATR Buffer" desc="Buffer added beyond recent swing low/high in multiples of ATR (default: 0.3)" value={settings.tpbAtrBuffer ?? 0.3} onChange={(v: any) => handleInputChange('tpbAtrBuffer', v)} min={0.1} max={2.0} />
+
+                <div className="flex justify-between items-center py-3">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold text-gray-200">Allow Long Setups</span>
+                    <span className="text-[11px] text-gray-500">Enable bullish trend-pullback trade execution.</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleInputChange('tpbAllowLongs', settings.tpbAllowLongs === false)}
+                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
+                      settings.tpbAllowLongs !== false ? 'bg-blue-600' : 'bg-gray-700'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.tpbAllowLongs !== false ? 'transform translate-x-6' : ''}`} />
+                  </button>
+                </div>
+
+                <div className="flex justify-between items-center py-3">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold text-gray-200">Allow Short Setups</span>
+                    <span className="text-[11px] text-gray-500">Enable bearish trend-pullback trade execution.</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleInputChange('tpbAllowShorts', settings.tpbAllowShorts === false)}
+                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
+                      settings.tpbAllowShorts !== false ? 'bg-blue-600' : 'bg-gray-700'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.tpbAllowShorts !== false ? 'transform translate-x-6' : ''}`} />
+                  </button>
+                </div>
+
+                <div className="flex justify-between items-center py-3">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold text-gray-200">Allow Broad Structural Stops</span>
+                    <span className="text-[11px] text-gray-500">If false, prefers Local Execution Stop and rejects distant HTF stops.</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleInputChange('tpbAllowBroadStop', !settings.tpbAllowBroadStop)}
+                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
+                      settings.tpbAllowBroadStop ? 'bg-blue-600' : 'bg-gray-700'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.tpbAllowBroadStop ? 'transform translate-x-6' : ''}`} />
+                  </button>
+                </div>
+
+                <div className="flex justify-between items-center py-3">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold text-gray-200">Unconfirmed Volume Mode</span>
+                    <span className="text-[11px] text-gray-500">Allow signal execution when exchange volume is unconfirmed (marked lower confidence).</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleInputChange('tpbAllowUnconfirmedVolume', !settings.tpbAllowUnconfirmedVolume)}
+                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
+                      settings.tpbAllowUnconfirmedVolume ? 'bg-blue-600' : 'bg-gray-700'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.tpbAllowUnconfirmedVolume ? 'transform translate-x-6' : ''}`} />
+                  </button>
+                </div>
 
                 <div className="flex justify-between items-center py-3">
                   <div className="flex flex-col">

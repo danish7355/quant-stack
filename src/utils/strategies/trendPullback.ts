@@ -1,6 +1,19 @@
 import { calculateEMA, calculateATR, calculateADX } from '../indicators.js';
 
-export type MarketRegimeType = 'TRENDING_UP' | 'TRENDING_DOWN' | 'RANGE_OR_TRANSITION';
+export type MarketRegimeType =
+  | 'TRENDING_UP'
+  | 'TRENDING_DOWN'
+  | 'RANGING'
+  | 'TRANSITION'
+  | 'HIGH_VOLATILITY'
+  | 'LOW_LIQUIDITY'
+  | 'UNKNOWN'
+  | 'RANGE_OR_TRANSITION';
+
+export type StopPlacementType =
+  | 'LOCAL_EXECUTION_STOP'
+  | 'BROAD_STRUCTURAL_STOP'
+  | 'INVALID_STOP';
 
 export interface MarketRegimeDetails {
   regime: MarketRegimeType;
@@ -27,19 +40,37 @@ export type TrendPullbackStage =
 export interface TrendPullbackOptions {
   tradeTimeframe?: string;       // e.g. '5m', '15m'
   htfTimeframe?: string;         // e.g. '15m', '1h' (if omitted, auto-derived)
+  triggerTimeframe?: string;     // optional lower trigger timeframe
   emaFast?: number;              // default 20
   emaSlow?: number;              // default 50
+  atrPeriod?: number;            // default 14
+  adxPeriod?: number;            // default 14
   adxMin?: number;               // default 18 (trend strength filter)
   volSmaPeriod?: number;         // default 20
   minVolumeRatio?: number;       // default 1.0 (confirmation vol vs volSma20)
   requireVolume?: boolean;       // default true
+  unconfirmedVolumeMode?: boolean; // default false (if true, allows signal on unconfirmed volume with lower confidence)
   maxEntryDistanceAtr?: number;  // default 0.25 (anti-chasing filter)
+  minStopDistanceAtr?: number;   // default 0.8 (minimum ATR multiple to reject market noise)
+  maxStopDistanceAtr?: number;   // default 3.0 (maximum ATR multiple for timeframe)
   minRrRatio?: number;           // default 1.5
   minScore?: number;             // default 8 (out of 10)
   atrBufferMult?: number;        // default 0.3
+  maxSpreadAtr?: number;         // default 0.3 (maximum spread in ATR units)
+  currentSpread?: number;        // current market spread in price units
+  slippage?: number;             // expected slippage
+  tradingSessions?: ('ASIA' | 'LONDON' | 'NEW_YORK' | 'OFF_HOURS')[];
+  maxTradesPerSession?: number;
+  maxDailyLoss?: number;
+  riskPercentage?: number;
+  cooldownPeriodMs?: number;
+  allowLongs?: boolean;          // default true
+  allowShorts?: boolean;         // default true
+  allowBroadStop?: boolean;      // default false (prefers LOCAL_EXECUTION_STOP)
   symbol?: string;               // symbol name for unique ID
   isCandleClosed?: boolean;      // strict closed-candle check
   recentSignalIds?: string[] | Set<string>; // deduplication history
+  isRiskLimitReached?: boolean;  // circuit breaker / account risk limit flag
 }
 
 export type TrendPullbackStatus =
@@ -50,28 +81,48 @@ export type TrendPullbackStatus =
   | 'WAITING_FOR_CONFIRMATION'
   | 'SIGNAL CONFIRMED'
   | 'TRADE EXECUTED'
-  | 'TRADE REJECTED';
+  | 'TRADE REJECTED'
+  | 'WAITING_FOR_TREND'
+  | 'WAITING_FOR_PULLBACK'
+  | 'WAITING_FOR_PRICE_ACTION'
+  | 'WAITING_FOR_VOLUME'
+  | 'WAITING_FOR_REGIME_CONFIRMATION'
+  | 'STOP_TOO_WIDE'
+  | 'STOP_TOO_TIGHT'
+  | 'ENTRY_TOO_LATE';
 
 export type TrendPullbackRejection =
+  | 'INVALID_MARKET_DATA'
+  | 'CANDLE_NOT_CLOSED'
+  | 'TIMEFRAME_MISMATCH'
   | 'UNFAVORABLE_MARKET_REGIME'
   | 'HTF_TREND_NOT_CONFIRMED'
+  | 'INVALID_TREND_STRUCTURE'
   | 'NO_VALID_PULLBACK'
+  | 'PULLBACK_INVALIDATED'
   | 'PULLBACK_BROKE_STRUCTURE'
   | 'PULLBACK_REVERSAL_RISK'
   | 'PRICE_ACTION_NOT_CONFIRMED'
   | 'VOLUME_NOT_CONFIRMED'
-  | 'TIMEFRAME_MISMATCH'
+  | 'MISSING_VOLUME_DATA'
+  | 'FAKE_BREAKOUT'
+  | 'ENTRY_TOO_LATE'
   | 'ENTRY_DISTANCE_TOO_LARGE'
-  | 'STOP_LOSS_TOO_SMALL'
+  | 'INVALID_STOP_PLACEMENT'
+  | 'STOP_TOO_WIDE_FOR_EXECUTION_TIMEFRAME'
   | 'STOP_LOSS_TOO_LARGE'
+  | 'STOP_TOO_TIGHT_FOR_MARKET_NOISE'
+  | 'STOP_LOSS_TOO_SMALL'
   | 'RISK_REWARD_TOO_LOW'
   | 'OPPOSING_BARRIER_BLOCKS_RR'
   | 'TARGET_ALREADY_REACHED'
+  | 'SPREAD_OR_SLIPPAGE_TOO_HIGH'
+  | 'DUPLICATE_SIGNAL'
+  | 'RISK_LIMIT_REACHED'
   | 'CHOPPY_MARKET'
   | 'CONFIRMATION_SCORE_TOO_LOW'
-  | 'DUPLICATE_SIGNAL'
-  | 'CANDLE_NOT_CLOSED'
-  | 'MISSING_VOLUME_DATA';
+  | 'SESSION_DISABLED'
+  | 'DIRECTION_DISABLED';
 
 export interface TrendPullbackScoreBreakdown {
   htfTrend: number;          // max 2 points
@@ -79,6 +130,7 @@ export interface TrendPullbackScoreBreakdown {
   pullbackZone: number;      // max 1 point
   priceAction: number;       // max 2 points
   volume: number;            // max 2 points
+  volatilityRegime?: number; // max 1 point
   noOpposingLevel: number;   // max 1 point
   total: number;             // 0 - 10
 }
@@ -102,6 +154,14 @@ export interface TrendPullbackResult {
   status: TrendPullbackStatus;
   rejectionReason?: TrendPullbackRejection;
   marketRegime: MarketRegimeType;
+  stopType: StopPlacementType;
+  stopDistance: number;
+  stopATRMultiple: number;
+  entryDistanceATR: number;
+  volumeConfirmed: boolean;
+  isUnconfirmedVolume?: boolean;
+  confidence: 'HIGH' | 'MEDIUM' | 'LOWER';
+  session?: 'ASIA' | 'LONDON' | 'NEW_YORK' | 'OFF_HOURS';
   details: {
     htfTrendStatus: 'BULLISH' | 'BEARISH' | 'SIDEWAYS';
     regimeDetails: MarketRegimeDetails;
@@ -849,15 +909,22 @@ export function checkPriceActionConfirmation(
  */
 export function checkVolumeConfirmation(
   candles: Candle[],
-  options: { volSmaPeriod?: number; minVolumeRatio?: number; requireVolume?: boolean } = {}
+  options: {
+    volSmaPeriod?: number;
+    minVolumeRatio?: number;
+    requireVolume?: boolean;
+    unconfirmedVolumeMode?: boolean;
+  } = {}
 ): {
   confirmed: boolean;
   volumeRatio: number;
   volSma20: number;
   reason?: TrendPullbackRejection;
   isRealVolume: boolean;
+  isUnconfirmedVolume?: boolean;
 } {
   const requireVol = options.requireVolume !== undefined ? options.requireVolume : true;
+  const unconfirmedMode = options.unconfirmedVolumeMode === true;
   const minRatio = options.minVolumeRatio !== undefined ? options.minVolumeRatio : 1.0;
   const period = options.volSmaPeriod || 20;
 
@@ -868,6 +935,9 @@ export function checkVolumeConfirmation(
   // Check for missing/invalid volume data across candles
   const totalVolumeInWindow = candles.slice(-period).reduce((s, c) => s + (c.volume || 0), 0);
   if (totalVolumeInWindow <= 0) {
+    if (unconfirmedMode) {
+      return { confirmed: true, volumeRatio: 1.0, volSma20: 0, isRealVolume: false, isUnconfirmedVolume: true };
+    }
     if (requireVol) {
       return { confirmed: false, volumeRatio: 0, volSma20: 0, reason: 'MISSING_VOLUME_DATA', isRealVolume: false };
     }
@@ -884,10 +954,136 @@ export function checkVolumeConfirmation(
   const hasAdequateRatio = volumeRatio >= minRatio;
 
   if (!hasExpandingVol || !hasAdequateRatio) {
-    return { confirmed: false, volumeRatio, volSma20, reason: 'VOLUME_NOT_CONFIRMED', isRealVolume: true };
+    if (unconfirmedMode) {
+      return { confirmed: true, volumeRatio, volSma20, isRealVolume: true, isUnconfirmedVolume: true };
+    }
+    return { confirmed: false, volumeRatio, volSma20, reason: 'VOLUME_NOT_CONFIRMED', isRealVolume: true, isUnconfirmedVolume: false };
   }
 
-  return { confirmed: true, volumeRatio, volSma20, isRealVolume: true };
+  return { confirmed: true, volumeRatio, volSma20, isRealVolume: true, isUnconfirmedVolume: false };
+}
+
+// ---------------------------------------------------------------------------
+// 6. FAKE-BREAKOUT FILTERS & STOP-LOSS CALCULATION
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates against fake breakouts:
+ * - Abnormally large candle range compared with recent ATR (> 3.0 ATR = climax exhaustion)
+ * - Candle wicked above/below level but closed back inside range
+ * - Large opposing wick (> 40% of range)
+ */
+export function checkFakeBreakout(
+  candles: Candle[],
+  direction: 'LONG' | 'SHORT',
+  currentPrice: number,
+  atr: number,
+  pa: { pattern: string; triggerPrice: number; stopReference: number }
+): { isFake: boolean; reason?: string } {
+  const len = candles.length - 1;
+  const c0 = candles[len];
+  const c1 = candles[len - 1];
+  const range0 = c0.high - c0.low;
+
+  // 1. Abnormally large candle range compared to recent ATR (> 3.0 * ATR exhaustion)
+  if (range0 > 3.0 * atr) {
+    return { isFake: true, reason: `Abnormally large candle range (${(range0 / atr).toFixed(1)}x ATR) indicates exhaustion climax` };
+  }
+
+  // 2. Failed breakout closing back inside previous range
+  if (direction === 'LONG' && c0.high > c1.high && c0.close <= c1.high && Math.abs(c0.close - c0.open) < range0 * 0.4) {
+    return { isFake: true, reason: 'Candle wicked above previous high but closed back inside previous range' };
+  }
+  if (direction === 'SHORT' && c0.low < c1.low && c0.close >= c1.low && Math.abs(c0.close - c0.open) < range0 * 0.4) {
+    return { isFake: true, reason: 'Candle wicked below previous low but closed back inside previous range' };
+  }
+
+  // 3. Large opposing wick (> 40% of range)
+  const upperWick0 = c0.high - Math.max(c0.open, c0.close);
+  const lowerWick0 = Math.min(c0.open, c0.close) - c0.low;
+  if (direction === 'LONG' && range0 > 0 && (upperWick0 / range0) > 0.40) {
+    return { isFake: true, reason: `Large opposing upper wick (${((upperWick0 / range0) * 100).toFixed(0)}% of range)` };
+  }
+  if (direction === 'SHORT' && range0 > 0 && (lowerWick0 / range0) > 0.40) {
+    return { isFake: true, reason: `Large opposing lower wick (${((lowerWick0 / range0) * 100).toFixed(0)}% of range)` };
+  }
+
+  return { isFake: false };
+}
+
+/**
+ * Calculates stop-loss placement based on technical invalidation:
+ * Classifies stop placement as:
+ * - LOCAL_EXECUTION_STOP: based on confirmed pullback structure on execution timeframe
+ * - BROAD_STRUCTURAL_STOP: based on distant higher-timeframe structure
+ * - INVALID_STOP: technically unclear, inverted, or zero distance
+ */
+export function calculateStopLoss(
+  candles: Candle[],
+  direction: 'LONG' | 'SHORT',
+  currentPrice: number,
+  atr: number,
+  atrBuffer: number,
+  pullback: { invalidationLevel: number },
+  pa: { stopReference: number }
+): { stopPrice: number; stopType: StopPlacementType; stopDistance: number } {
+  if (direction === 'LONG') {
+    const localStop = pa.stopReference - atrBuffer;
+    if (localStop < currentPrice && (currentPrice - localStop) > 0) {
+      return {
+        stopPrice: localStop,
+        stopType: 'LOCAL_EXECUTION_STOP',
+        stopDistance: currentPrice - localStop
+      };
+    }
+
+    const broadStop = pullback.invalidationLevel - atrBuffer;
+    if (broadStop < currentPrice && (currentPrice - broadStop) > 0) {
+      return {
+        stopPrice: broadStop,
+        stopType: 'BROAD_STRUCTURAL_STOP',
+        stopDistance: currentPrice - broadStop
+      };
+    }
+
+    return { stopPrice: currentPrice, stopType: 'INVALID_STOP', stopDistance: 0 };
+  } else {
+    // SHORT
+    const localStop = pa.stopReference + atrBuffer;
+    if (localStop > currentPrice && (localStop - currentPrice) > 0) {
+      return {
+        stopPrice: localStop,
+        stopType: 'LOCAL_EXECUTION_STOP',
+        stopDistance: localStop - currentPrice
+      };
+    }
+
+    const broadStop = pullback.invalidationLevel + atrBuffer;
+    if (broadStop > currentPrice && (broadStop - currentPrice) > 0) {
+      return {
+        stopPrice: broadStop,
+        stopType: 'BROAD_STRUCTURAL_STOP',
+        stopDistance: broadStop - currentPrice
+      };
+    }
+
+    return { stopPrice: currentPrice, stopType: 'INVALID_STOP', stopDistance: 0 };
+  }
+}
+
+/**
+ * Calculates position size based on dollar risk:
+ * positionSize = allowedRiskAmount / stopDistance
+ */
+export function calculatePositionSize(
+  accountRiskAmount: number,
+  entryPrice: number,
+  stopPrice: number
+): { positionSize: number; stopDistance: number } {
+  const stopDistance = Math.abs(entryPrice - stopPrice);
+  if (stopDistance <= 0) return { positionSize: 0, stopDistance: 0 };
+  const positionSize = accountRiskAmount / stopDistance;
+  return { positionSize, stopDistance };
 }
 
 // ---------------------------------------------------------------------------
@@ -943,20 +1139,23 @@ export function evaluateTrendPullbackDetailed(
   const htf = options.htfTimeframe || getHigherTimeframe(tradeTf);
   const symbol = options.symbol || 'UNKNOWN';
 
-  // Mandatory Gate 1: Strict closed-candle verification
+  // 1. if (!dataAvailable) reject("INVALID_MARKET_DATA")
   const len = tradeCandles ? tradeCandles.length - 1 : -1;
-  if (len < 0) {
+  if (len < 0 || !tradeCandles || tradeCandles.length < 30) {
     return {
       success: false,
       status: 'TRADE REJECTED',
       stage: 'NONE',
-      reason: 'No candle data provided',
+      rejectionReason: 'INVALID_MARKET_DATA',
+      reason: 'Signal rejected: invalid or insufficient market data (minimum 30 candles required).',
       score: 0,
       result: null
     };
   }
 
   const lastCandle = tradeCandles[len];
+
+  // 2. if (!candleClosed) reject("CANDLE_NOT_CLOSED")
   if (options.isCandleClosed === false || lastCandle.isClosed === false) {
     return {
       success: false,
@@ -969,18 +1168,7 @@ export function evaluateTrendPullbackDetailed(
     };
   }
 
-  if (tradeCandles.length < 35) {
-    return {
-      success: false,
-      status: 'TRADE REJECTED',
-      stage: 'NONE',
-      reason: 'Insufficient candle history for analysis (minimum 35 candles required)',
-      score: 0,
-      result: null
-    };
-  }
-
-  // Mandatory Gate 2: Timeframe mismatch detection
+  // 3. if (!timeframeAligned) reject("TIMEFRAME_MISMATCH")
   const detectedIntervalMin = detectCandleIntervalMinutes(tradeCandles);
   const expectedIntervalMin = timeframeToMinutes(tradeTf);
   if (detectedIntervalMin && Math.abs(detectedIntervalMin - expectedIntervalMin) >= 5) {
@@ -996,17 +1184,18 @@ export function evaluateTrendPullbackDetailed(
   }
 
   const signalTime = lastCandle.time;
+  const session = getTradingSession(signalTime);
 
-  // Technical calculations
+  // Technical calculations on execution timeframe
   const closes = tradeCandles.map(c => c.close);
   const highs = tradeCandles.map(c => c.high);
   const lows = tradeCandles.map(c => c.low);
   const emaFast = calculateEMA(closes, options.emaFast || 20);
   const emaSlow = calculateEMA(closes, options.emaSlow || 50);
-  const atrSeries = calculateATR(highs, lows, closes, 14);
+  const atrSeries = calculateATR(highs, lows, closes, options.atrPeriod || 14);
   const atr = atrSeries[len] || (currentPrice * 0.015);
 
-  // 1. Pillar 1: Market Regime Detection on HTF
+  // 4. if (!marketRegimeFavorable) reject("UNFAVORABLE_MARKET_REGIME")
   const effectiveHtfCandles = htfCandles && htfCandles.length >= 25 ? htfCandles : tradeCandles;
   const regimeDetails = detectMarketRegime(effectiveHtfCandles, {
     emaFast: options.emaFast,
@@ -1014,13 +1203,13 @@ export function evaluateTrendPullbackDetailed(
     adxMin: options.adxMin ?? 18
   });
 
-  if (regimeDetails.regime === 'RANGE_OR_TRANSITION' || !regimeDetails.isTrending) {
+  if (regimeDetails.regime !== 'TRENDING_UP' && regimeDetails.regime !== 'TRENDING_DOWN') {
     return {
       success: false,
-      status: 'WAITING FOR HIGHER-TIMEFRAME ALIGNMENT',
+      status: 'WAITING_FOR_REGIME_CONFIRMATION',
       stage: 'NONE',
       rejectionReason: 'UNFAVORABLE_MARKET_REGIME',
-      reason: `Signal rejected: market regime is RANGE_OR_TRANSITION (${regimeDetails.reason}).`,
+      reason: `Signal rejected: market regime is ${regimeDetails.regime} (${regimeDetails.reason}).`,
       score: 0,
       result: null
     };
@@ -1028,7 +1217,31 @@ export function evaluateTrendPullbackDetailed(
 
   const direction: 'LONG' | 'SHORT' = regimeDetails.regime === 'TRENDING_UP' ? 'LONG' : 'SHORT';
 
-  // Pillar 2 MTF Alignment: Execution timeframe must agree with HTF regime
+  // Direction toggle check
+  if (direction === 'LONG' && options.allowLongs === false) {
+    return {
+      success: false,
+      status: 'TRADE REJECTED',
+      stage: 'NONE',
+      rejectionReason: 'DIRECTION_DISABLED',
+      reason: 'Signal rejected: Long trades are disabled in configuration.',
+      score: 1,
+      result: null
+    };
+  }
+  if (direction === 'SHORT' && options.allowShorts === false) {
+    return {
+      success: false,
+      status: 'TRADE REJECTED',
+      stage: 'NONE',
+      rejectionReason: 'DIRECTION_DISABLED',
+      reason: 'Signal rejected: Short trades are disabled in configuration.',
+      score: 1,
+      result: null
+    };
+  }
+
+  // Multi-Timeframe Alignment: Execution timeframe must agree with HTF regime
   const tradeTfCurrentPrice = currentPrice;
   const tradeTfEFast = emaFast[len] || tradeTfCurrentPrice;
   const tradeTfESlow = emaSlow[len] || tradeTfCurrentPrice;
@@ -1036,7 +1249,7 @@ export function evaluateTrendPullbackDetailed(
   if (direction === 'LONG' && tradeTfCurrentPrice < tradeTfESlow && tradeTfEFast < tradeTfESlow) {
     return {
       success: false,
-      status: 'WAITING FOR HIGHER-TIMEFRAME ALIGNMENT',
+      status: 'WAITING_FOR_TREND',
       stage: 'NONE',
       rejectionReason: 'HTF_TREND_NOT_CONFIRMED',
       reason: 'Signal rejected: HTF is trending up but execution timeframe is heavily suppressed below EMA50 (MTF conflict).',
@@ -1048,7 +1261,7 @@ export function evaluateTrendPullbackDetailed(
   if (direction === 'SHORT' && tradeTfCurrentPrice > tradeTfESlow && tradeTfEFast > tradeTfESlow) {
     return {
       success: false,
-      status: 'WAITING FOR HIGHER-TIMEFRAME ALIGNMENT',
+      status: 'WAITING_FOR_TREND',
       stage: 'NONE',
       rejectionReason: 'HTF_TREND_NOT_CONFIRMED',
       reason: 'Signal rejected: HTF is trending down but execution timeframe is heavily elevated above EMA50 (MTF conflict).',
@@ -1057,19 +1270,59 @@ export function evaluateTrendPullbackDetailed(
     };
   }
 
-  // Pillar 3: Pullback Structure & STAGE A: Setup Detection
+  // Session filtering
+  if (options.tradingSessions && options.tradingSessions.length > 0 && !options.tradingSessions.includes(session)) {
+    return {
+      success: false,
+      status: 'TRADE REJECTED',
+      stage: 'NONE',
+      rejectionReason: 'SESSION_DISABLED',
+      reason: `Signal rejected: current session ${session} is not in allowed sessions list (${options.tradingSessions.join(', ')}).`,
+      score: 2,
+      result: null
+    };
+  }
+
+  // Structure & Pullback Evaluation
   const pullback = checkPullbackStructure(tradeCandles, direction, currentPrice, {
     emaFast: options.emaFast,
     emaSlow: options.emaSlow,
     atr
   });
 
+  // 5. if (!trendStructureValid) reject("INVALID_TREND_STRUCTURE")
+  if (!pullback.impulseDisplacementValid) {
+    return {
+      success: false,
+      status: 'WAITING_FOR_TREND',
+      stage: 'NONE',
+      rejectionReason: 'INVALID_TREND_STRUCTURE',
+      reason: 'Signal rejected: no strong prior impulse displacement (>= 1.0 ATR) detected before pullback.',
+      score: 2,
+      result: null
+    };
+  }
+
+  // 6. if (!validPullback) reject("NO_VALID_PULLBACK")
+  if (!pullback.valid && !pullback.brokeStructure && !pullback.reversalRisk) {
+    return {
+      success: false,
+      status: 'WAITING_FOR_PULLBACK',
+      stage: 'NONE',
+      rejectionReason: 'NO_VALID_PULLBACK',
+      reason: 'Signal rejected: price has not pulled back to dynamic value zone (EMA 20/50).',
+      score: 2,
+      result: null
+    };
+  }
+
+  // 7. if (pullbackInvalidated) reject("PULLBACK_INVALIDATED")
   if (pullback.brokeStructure) {
     return {
       success: false,
       status: 'TRADE REJECTED',
       stage: 'NONE',
-      rejectionReason: 'PULLBACK_BROKE_STRUCTURE',
+      rejectionReason: 'PULLBACK_INVALIDATED',
       reason: 'Signal rejected: pullback broke key trend structure invalidation level.',
       score: 2,
       result: null
@@ -1081,34 +1334,19 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'NONE',
-      rejectionReason: 'PULLBACK_REVERSAL_RISK',
+      rejectionReason: 'PULLBACK_INVALIDATED',
       reason: 'Signal rejected: large violent candle sliced through EMA50, posing reversal risk.',
       score: 2,
       result: null
     };
   }
 
-  if (!pullback.valid) {
-    return {
-      success: false,
-      status: 'WAITING FOR PULLBACK',
-      stage: 'NONE',
-      rejectionReason: 'NO_VALID_PULLBACK',
-      reason: 'Signal rejected: price has not pulled back to dynamic value zone (EMA 20/50).',
-      score: 2,
-      result: null
-    };
-  }
-
-  // At this point: STAGE A Setup is DETECTED!
-  // (Regime trending, impulse established, reached pullback zone, structure intact)
-
-  // Pillar 4: Price Action Confirmation
+  // 8. if (!priceActionConfirmed) reject("PRICE_ACTION_NOT_CONFIRMED")
   const pa = checkPriceActionConfirmation(tradeCandles, direction, emaFast);
   if (!pa.confirmed) {
     return {
       success: false,
-      status: 'WAITING FOR PRICE ACTION',
+      status: 'WAITING_FOR_PRICE_ACTION',
       stage: 'STAGE_A_SETUP_DETECTED',
       rejectionReason: pa.reason || 'PRICE_ACTION_NOT_CONFIRMED',
       reason: `Stage A setup detected, but waiting for closed candle price-action confirmation (${pa.pattern}).`,
@@ -1117,29 +1355,29 @@ export function evaluateTrendPullbackDetailed(
     };
   }
 
-  // Pillar 5: Volume Confirmation
+  // 9. if (!volumeConfirmed) reject("VOLUME_NOT_CONFIRMED")
   const vol = checkVolumeConfirmation(tradeCandles, {
     volSmaPeriod: options.volSmaPeriod,
     minVolumeRatio: options.minVolumeRatio,
-    requireVolume: options.requireVolume
+    requireVolume: options.requireVolume,
+    unconfirmedVolumeMode: options.unconfirmedVolumeMode
   });
 
-  if (vol.reason === 'MISSING_VOLUME_DATA') {
-    return {
-      success: false,
-      status: 'TRADE REJECTED',
-      stage: 'STAGE_A_SETUP_DETECTED',
-      rejectionReason: 'MISSING_VOLUME_DATA',
-      reason: 'Signal rejected: volume data is missing or zero.',
-      score: 6,
-      result: null
-    };
-  }
-
   if (!vol.confirmed) {
+    if (vol.reason === 'MISSING_VOLUME_DATA') {
+      return {
+        success: false,
+        status: 'TRADE REJECTED',
+        stage: 'STAGE_A_SETUP_DETECTED',
+        rejectionReason: 'MISSING_VOLUME_DATA',
+        reason: 'Signal rejected: volume data is missing or zero.',
+        score: 6,
+        result: null
+      };
+    }
     return {
       success: false,
-      status: 'WAITING FOR VOLUME',
+      status: 'WAITING_FOR_VOLUME',
       stage: 'STAGE_A_SETUP_DETECTED',
       rejectionReason: 'VOLUME_NOT_CONFIRMED',
       reason: `Stage A setup detected, but volume did not confirm (ratio: ${vol.volumeRatio.toFixed(2)}x, 20-SMA: ${vol.volSma20.toFixed(0)}).`,
@@ -1148,98 +1386,121 @@ export function evaluateTrendPullbackDetailed(
     };
   }
 
-  // Filter: Anti-Chasing Late Entry Distance (Default 0.25 * ATR)
-  const maxEntryDist = (options.maxEntryDistanceAtr !== undefined ? options.maxEntryDistanceAtr : 0.25) * atr;
-  if (direction === 'LONG' && (currentPrice - pa.triggerPrice) > maxEntryDist) {
+  // 10. if (fakeBreakoutDetected) reject("FAKE_BREAKOUT")
+  const fb = checkFakeBreakout(tradeCandles, direction, currentPrice, atr, pa);
+  if (fb.isFake) {
     return {
       success: false,
       status: 'TRADE REJECTED',
       stage: 'STAGE_A_SETUP_DETECTED',
-      rejectionReason: 'ENTRY_DISTANCE_TOO_LARGE',
-      reason: `Signal rejected: late entry distance (${(currentPrice - pa.triggerPrice).toFixed(4)}) exceeds ${maxEntryDist.toFixed(4)} ATR limit.`,
-      score: 7,
+      rejectionReason: 'FAKE_BREAKOUT',
+      reason: `Signal rejected: fake breakout detected (${fb.reason}).`,
+      score: 6,
       result: null
     };
   }
-  if (direction === 'SHORT' && (pa.triggerPrice - currentPrice) > maxEntryDist) {
+
+  // 11. if (entryTooLate) reject("ENTRY_TOO_LATE")
+  const entryDistance = Math.abs(currentPrice - pa.triggerPrice);
+  const entryDistanceATR = entryDistance / (atr || 1);
+  const maxEntryDistAtr = options.maxEntryDistanceAtr !== undefined ? options.maxEntryDistanceAtr : 0.25;
+
+  if (entryDistanceATR > maxEntryDistAtr) {
     return {
       success: false,
-      status: 'TRADE REJECTED',
+      status: 'ENTRY_TOO_LATE',
       stage: 'STAGE_A_SETUP_DETECTED',
-      rejectionReason: 'ENTRY_DISTANCE_TOO_LARGE',
-      reason: `Signal rejected: late entry distance (${(pa.triggerPrice - currentPrice).toFixed(4)}) exceeds ${maxEntryDist.toFixed(4)} ATR limit.`,
+      rejectionReason: 'ENTRY_TOO_LATE',
+      reason: `Signal rejected: late entry distance (${entryDistanceATR.toFixed(2)} ATR) exceeds ${maxEntryDistAtr} ATR limit.`,
       score: 7,
       result: null
     };
   }
 
-  // Deduplication Check
-  const signalId = `TPB-${symbol}-${tradeTf}-${signalTime}-${direction}-v2`;
-  if (isDuplicateSignal(signalId, options.recentSignalIds)) {
+  // Stop Loss Placement & Classification
+  const atrBuffer = (options.atrBufferMult !== undefined ? options.atrBufferMult : 0.3) * atr;
+  const { stopPrice, stopType, stopDistance } = calculateStopLoss(
+    tradeCandles,
+    direction,
+    currentPrice,
+    atr,
+    atrBuffer,
+    pullback,
+    pa
+  );
+
+  // 12. if (!stopPlacementValid) reject("INVALID_STOP_PLACEMENT")
+  if (stopType === 'INVALID_STOP' || stopDistance <= 0 || (direction === 'LONG' && stopPrice >= currentPrice) || (direction === 'SHORT' && stopPrice <= currentPrice)) {
     return {
       success: false,
       status: 'TRADE REJECTED',
       stage: 'STAGE_A_SETUP_DETECTED',
-      rejectionReason: 'DUPLICATE_SIGNAL',
-      reason: `Signal rejected: duplicate signal ${signalId} already processed for this candle.`,
+      rejectionReason: 'INVALID_STOP_PLACEMENT',
+      reason: 'Signal rejected: stop placement is technically invalid or inverted.',
       score: 7,
       result: null
     };
   }
 
-  // Take Profit Targets & Risk-to-Reward Ratio Check
-  const minRr = options.minRrRatio || 1.5;
-  if (options.minRrRatio !== undefined && options.minRrRatio < 1.0) {
+  if (stopType === 'BROAD_STRUCTURAL_STOP' && !options.allowBroadStop) {
+    return {
+      success: false,
+      status: 'STOP_TOO_WIDE',
+      stage: 'STAGE_A_SETUP_DETECTED',
+      rejectionReason: 'STOP_TOO_WIDE_FOR_EXECUTION_TIMEFRAME',
+      reason: 'Signal rejected: setup relies on broad structural stop from higher timeframe without local confirmation structure.',
+      score: 7,
+      result: null
+    };
+  }
+
+  // 13. if (stopTooWide) reject("STOP_TOO_WIDE_FOR_EXECUTION_TIMEFRAME")
+  const stopATRMultiple = stopDistance / (atr || 1);
+  const minStopAtr = options.minStopDistanceAtr !== undefined ? options.minStopDistanceAtr : 0.8;
+  const maxStopAtr = options.maxStopDistanceAtr !== undefined ? options.maxStopDistanceAtr : 3.0;
+
+  if (stopATRMultiple > maxStopAtr || (options.atrBufferMult && options.atrBufferMult >= 10.0)) {
+    return {
+      success: false,
+      status: 'STOP_TOO_WIDE',
+      stage: 'STAGE_A_SETUP_DETECTED',
+      rejectionReason: 'STOP_TOO_WIDE_FOR_EXECUTION_TIMEFRAME',
+      reason: `Signal rejected: stop distance (${stopATRMultiple.toFixed(2)} ATR) exceeds maximum ${maxStopAtr} ATR limit for ${tradeTf} timeframe.`,
+      score: 7,
+      result: null
+    };
+  }
+
+  // 14. if (stopTooTight) reject("STOP_TOO_TIGHT_FOR_MARKET_NOISE")
+  if (stopATRMultiple < minStopAtr || stopDistance < Math.max(currentPrice * 0.003, 0.3 * atr)) {
+    return {
+      success: false,
+      status: 'STOP_TOO_TIGHT',
+      stage: 'STAGE_A_SETUP_DETECTED',
+      rejectionReason: 'STOP_TOO_TIGHT_FOR_MARKET_NOISE',
+      reason: `Signal rejected: stop distance (${stopATRMultiple.toFixed(2)} ATR) is below minimum ${minStopAtr} ATR limit and prone to market noise.`,
+      score: 7,
+      result: null
+    };
+  }
+
+  // 15. if (!riskRewardValid) reject("RISK_REWARD_TOO_LOW")
+  const minRr = options.minRrRatio !== undefined ? options.minRrRatio : 1.5;
+  if (minRr < 1.0) {
     return {
       success: false,
       status: 'TRADE REJECTED',
       stage: 'STAGE_A_SETUP_DETECTED',
       rejectionReason: 'RISK_REWARD_TOO_LOW',
-      reason: `Signal rejected: configured minimum risk-reward ratio (${options.minRrRatio}) is below acceptable 1.0 threshold.`,
+      reason: `Signal rejected: configured minimum risk-reward ratio (${minRr}) is below acceptable 1.0 threshold.`,
       score: 7,
       result: null
     };
   }
 
-  // Risk Management & Stop Loss Placement (recent pullback swing low/high + ATR buffer)
-  const atrBuffer = (options.atrBufferMult !== undefined ? options.atrBufferMult : 0.3) * atr;
-  const sl = direction === 'LONG'
-    ? pa.stopReference - atrBuffer
-    : pa.stopReference + atrBuffer;
-
-  const risk = Math.abs(currentPrice - sl);
-
-  // Validate Stop Loss Bounds
-  const minRisk = Math.max(currentPrice * 0.003, 0.3 * atr);
-  const maxRisk = Math.min(currentPrice * 0.045, 3.5 * atr);
-
-  if (risk < minRisk) {
-    return {
-      success: false,
-      status: 'TRADE REJECTED',
-      stage: 'STAGE_A_SETUP_DETECTED',
-      rejectionReason: 'STOP_LOSS_TOO_SMALL',
-      reason: `Signal rejected: stop loss is too tight (${risk.toFixed(4)} < ${minRisk.toFixed(4)}).`,
-      score: 7,
-      result: null
-    };
-  }
-
-  if (risk > maxRisk) {
-    return {
-      success: false,
-      status: 'TRADE REJECTED',
-      stage: 'STAGE_A_SETUP_DETECTED',
-      rejectionReason: 'STOP_LOSS_TOO_LARGE',
-      reason: `Signal rejected: stop loss is too wide (${risk.toFixed(4)} > ${maxRisk.toFixed(4)}).`,
-      score: 7,
-      result: null
-    };
-  }
-
-  const tp1 = direction === 'LONG' ? currentPrice + (risk * minRr) : currentPrice - (risk * minRr);
-  const tp2 = direction === 'LONG' ? currentPrice + (risk * 2.5) : currentPrice - (risk * 2.5);
-  const tp3 = direction === 'LONG' ? currentPrice + (risk * 4.0) : currentPrice - (risk * 4.0);
+  const tp1 = direction === 'LONG' ? currentPrice + (stopDistance * minRr) : currentPrice - (stopDistance * minRr);
+  const tp2 = direction === 'LONG' ? currentPrice + (stopDistance * 2.5) : currentPrice - (stopDistance * 2.5);
+  const tp3 = direction === 'LONG' ? currentPrice + (stopDistance * 4.0) : currentPrice - (stopDistance * 4.0);
 
   // Target already reached check
   if ((direction === 'LONG' && currentPrice >= tp1) || (direction === 'SHORT' && currentPrice <= tp1)) {
@@ -1254,14 +1515,14 @@ export function evaluateTrendPullbackDetailed(
     };
   }
 
-  // 9. Opposing Barrier Proximity Check (R:R gate against nearest swing barrier)
+  // Opposing Barrier Proximity Check
   const { highs: swingHighs, lows: swingLows } = detectSwingPoints(tradeCandles, 2);
   let noOpposingLevelScore = 1;
 
   if (direction === 'LONG' && swingHighs.length > 0) {
     const recentResistance = Math.max(...swingHighs.slice(-3).map(h => h.price));
     if (recentResistance > currentPrice) {
-      const rrToResistance = (recentResistance - currentPrice) / (risk || 1);
+      const rrToResistance = (recentResistance - currentPrice) / (stopDistance || 1);
       if (rrToResistance < minRr) {
         return {
           success: false,
@@ -1277,7 +1538,7 @@ export function evaluateTrendPullbackDetailed(
   } else if (direction === 'SHORT' && swingLows.length > 0) {
     const recentSupport = Math.min(...swingLows.slice(-3).map(l => l.price));
     if (recentSupport < currentPrice) {
-      const rrToSupport = (currentPrice - recentSupport) / (risk || 1);
+      const rrToSupport = (currentPrice - recentSupport) / (stopDistance || 1);
       if (rrToSupport < minRr) {
         return {
           success: false,
@@ -1292,20 +1553,65 @@ export function evaluateTrendPullbackDetailed(
     }
   }
 
-  // 8. 10-Point Scoring Matrix
+  // 16. if (!spreadValid) reject("SPREAD_OR_SLIPPAGE_TOO_HIGH")
+  if (options.currentSpread !== undefined) {
+    const maxSpreadPrice = (options.maxSpreadAtr !== undefined ? options.maxSpreadAtr : 0.3) * atr;
+    if (options.currentSpread > maxSpreadPrice) {
+      return {
+        success: false,
+        status: 'TRADE REJECTED',
+        stage: 'STAGE_A_SETUP_DETECTED',
+        rejectionReason: 'SPREAD_OR_SLIPPAGE_TOO_HIGH',
+        reason: `Signal rejected: spread (${options.currentSpread.toFixed(4)}) exceeds maximum allowed ${maxSpreadPrice.toFixed(4)} (${(options.maxSpreadAtr ?? 0.3)} ATR).`,
+        score: 7,
+        result: null
+      };
+    }
+  }
+
+  // 17. if (duplicateSignal) reject("DUPLICATE_SIGNAL")
+  const signalId = `TPB-${symbol}-${tradeTf}-${signalTime}-${direction}-v2`;
+  if (isDuplicateSignal(signalId, options.recentSignalIds)) {
+    return {
+      success: false,
+      status: 'TRADE REJECTED',
+      stage: 'STAGE_A_SETUP_DETECTED',
+      rejectionReason: 'DUPLICATE_SIGNAL',
+      reason: `Signal rejected: duplicate signal ${signalId} already processed for this candle.`,
+      score: 7,
+      result: null
+    };
+  }
+
+  // 18. if (!riskLimitsValid) reject("RISK_LIMIT_REACHED")
+  if (options.isRiskLimitReached === true) {
+    return {
+      success: false,
+      status: 'TRADE REJECTED',
+      stage: 'STAGE_A_SETUP_DETECTED',
+      rejectionReason: 'RISK_LIMIT_REACHED',
+      reason: 'Signal rejected: account risk limit (daily loss, max positions, or cooldown) reached.',
+      score: 7,
+      result: null
+    };
+  }
+
+  // Section 13: Confirmation Score (0 to 10 points)
   const breakdown: TrendPullbackScoreBreakdown = {
-    htfTrend: regimeDetails.isTrending ? 2 : 0,                                   // 2 pts: HTF trend alignment & slope
-    marketStructure: (pullback.impulseDisplacementValid && !pullback.brokeStructure) ? 2 : 1, // 2 pts: clean structure & impulse
-    pullbackZone: pullback.touchedValue ? 1 : 0,                                  // 1 pt: confluence at EMA value zone
-    priceAction: pa.confirmed ? 2 : 0,                                            // 2 pts: strong closed confirmation candle
-    volume: (vol.confirmed && pullback.pullbackAvgVol <= pullback.impulseAvgVol) ? 2 : 1, // 2 pts: expansion on confirmation + contraction
-    noOpposingLevel: noOpposingLevelScore,                                        // 1 pt: no blocking barrier
+    htfTrend: regimeDetails.isTrending ? 2 : 0,
+    marketStructure: (pullback.impulseDisplacementValid && !pullback.brokeStructure) ? 2 : 1,
+    pullbackZone: pullback.touchedValue ? 1 : 0,
+    priceAction: pa.confirmed ? 2 : 0,
+    volume: (vol.confirmed && pullback.pullbackAvgVol <= pullback.impulseAvgVol) ? 2 : 1,
+    volatilityRegime: (regimeDetails.regime === 'TRENDING_UP' || regimeDetails.regime === 'TRENDING_DOWN') ? 1 : 0,
+    noOpposingLevel: noOpposingLevelScore,
     total: 0
   };
-  breakdown.total = breakdown.htfTrend + breakdown.marketStructure + breakdown.pullbackZone + breakdown.priceAction + breakdown.volume + breakdown.noOpposingLevel;
+  breakdown.total = breakdown.htfTrend + breakdown.marketStructure + breakdown.pullbackZone + breakdown.priceAction + breakdown.volume + (breakdown.volatilityRegime || 0) + breakdown.noOpposingLevel;
+  breakdown.total = Math.min(10, breakdown.total);
 
   const score = breakdown.total;
-  const requiredScore = options.minScore || 8; // Default 8 out of 10 points
+  const requiredScore = options.minScore || 8;
 
   if (score < requiredScore) {
     return {
@@ -1320,6 +1626,9 @@ export function evaluateTrendPullbackDetailed(
   }
 
   const scaledScore = Math.min(99, Math.round(score * 9.8));
+  const confidence: 'HIGH' | 'MEDIUM' | 'LOWER' = vol.isUnconfirmedVolume
+    ? 'LOWER'
+    : score >= 9 ? 'HIGH' : 'MEDIUM';
 
   // STAGE B: TRADE CONFIRMED & EXECUTED
   const result: TrendPullbackResult = {
@@ -1329,7 +1638,7 @@ export function evaluateTrendPullbackDetailed(
     stage: 'STAGE_B_TRADE_CONFIRMED',
     atr,
     entryPrice: currentPrice,
-    sl,
+    sl: stopPrice,
     tp1,
     tp2,
     tp3,
@@ -1337,9 +1646,17 @@ export function evaluateTrendPullbackDetailed(
     htfTimeframe: htf,
     signalTime,
     signalId,
-    reason: `Trend Pullback [${tradeTf}/${htf}]: ${pa.pattern} + Vol (${vol.volumeRatio.toFixed(1)}x) [Score: ${score}/10]`,
+    reason: `Trend Pullback [${tradeTf}/${htf}]: ${pa.pattern} + Vol (${vol.volumeRatio.toFixed(1)}x) [Score: ${score}/10] [Stop: ${stopType} @ ${(stopATRMultiple).toFixed(2)} ATR]`,
     status: 'SIGNAL CONFIRMED',
     marketRegime: regimeDetails.regime,
+    stopType,
+    stopDistance,
+    stopATRMultiple,
+    entryDistanceATR,
+    volumeConfirmed: vol.confirmed,
+    isUnconfirmedVolume: vol.isUnconfirmedVolume,
+    confidence,
+    session,
     details: {
       htfTrendStatus: regimeDetails.regime === 'TRENDING_UP' ? 'BULLISH' : 'BEARISH',
       regimeDetails,
@@ -1492,6 +1809,11 @@ export function calculateStrategyExpectancy(trades: StrategyTradeRecord[]): Expe
       byRegime: {
         TRENDING_UP: calculateSubgroup([]),
         TRENDING_DOWN: calculateSubgroup([]),
+        RANGING: calculateSubgroup([]),
+        TRANSITION: calculateSubgroup([]),
+        HIGH_VOLATILITY: calculateSubgroup([]),
+        LOW_LIQUIDITY: calculateSubgroup([]),
+        UNKNOWN: calculateSubgroup([]),
         RANGE_OR_TRANSITION: calculateSubgroup([])
       },
       bySymbol: {},
@@ -1519,6 +1841,11 @@ export function calculateStrategyExpectancy(trades: StrategyTradeRecord[]): Expe
   const byRegime: Record<MarketRegimeType, ExpectancySubgroup> = {
     TRENDING_UP: calculateSubgroup(trades.filter(t => t.marketRegime === 'TRENDING_UP')),
     TRENDING_DOWN: calculateSubgroup(trades.filter(t => t.marketRegime === 'TRENDING_DOWN')),
+    RANGING: calculateSubgroup(trades.filter(t => t.marketRegime === 'RANGING')),
+    TRANSITION: calculateSubgroup(trades.filter(t => t.marketRegime === 'TRANSITION')),
+    HIGH_VOLATILITY: calculateSubgroup(trades.filter(t => t.marketRegime === 'HIGH_VOLATILITY')),
+    LOW_LIQUIDITY: calculateSubgroup(trades.filter(t => t.marketRegime === 'LOW_LIQUIDITY')),
+    UNKNOWN: calculateSubgroup(trades.filter(t => t.marketRegime === 'UNKNOWN')),
     RANGE_OR_TRANSITION: calculateSubgroup(trades.filter(t => t.marketRegime === 'RANGE_OR_TRANSITION'))
   };
 
