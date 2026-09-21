@@ -68,4 +68,57 @@ describe('RiskManager', () => {
     riskManager.setBypassMaxPositions(false);
     expect(riskManager.checkEntryAllowed(100000, 200, 10).allowed).toBe(false);
   });
+
+  it('allows user to customize maxConsecutiveLosses via updateSettings', () => {
+    // Set custom consecutive losses limit to 6
+    riskManager.updateSettings(undefined, 6);
+    expect(riskManager.getMaxConsecutiveLosses()).toBe(6);
+
+    // Record 5 losses
+    for (let i = 0; i < 5; i++) {
+      riskManager.recordTradeResult(-10, 10000);
+    }
+    // 5 losses is allowed under limit of 6
+    expect(riskManager.checkEntryAllowed(10000, 200, 0).allowed).toBe(true);
+
+    // 6th loss hits the limit
+    riskManager.recordTradeResult(-10, 10000);
+    const check = riskManager.checkEntryAllowed(10000, 200, 0);
+    expect(check.allowed).toBe(false);
+    expect(check.reason).toContain('Max consecutive losses (6) reached');
+  });
+
+  it('allows user to bypass consecutive losses limit via bypassMaxConsecutiveLosses', () => {
+    // Record 4 losses (default limit is 4)
+    for (let i = 0; i < 4; i++) {
+      riskManager.recordTradeResult(-10, 10000);
+    }
+    // Initially blocked at default 4
+    expect(riskManager.checkEntryAllowed(10000, 200, 0).allowed).toBe(false);
+
+    // Enable bypass
+    riskManager.updateSettings(undefined, undefined, undefined, undefined, undefined, true);
+    expect(riskManager.isBypassMaxConsecutiveLosses()).toBe(true);
+
+    // Entry is now allowed despite losing streak
+    expect(riskManager.checkEntryAllowed(10000, 200, 0).allowed).toBe(true);
+
+    // Disabling bypass re-enforces the check
+    riskManager.setBypassMaxConsecutiveLosses(false);
+    expect(riskManager.checkEntryAllowed(10000, 200, 0).allowed).toBe(false);
+  });
+
+  it('allows resetting consecutive loss streak on demand', () => {
+    // Record 4 losses
+    for (let i = 0; i < 4; i++) {
+      riskManager.recordTradeResult(-10, 10000);
+    }
+    expect(riskManager.getConsecutiveLosses()).toBe(4);
+    expect(riskManager.checkEntryAllowed(10000, 200, 0).allowed).toBe(false);
+
+    // Reset streak
+    riskManager.resetConsecutiveLosses();
+    expect(riskManager.getConsecutiveLosses()).toBe(0);
+    expect(riskManager.checkEntryAllowed(10000, 200, 0).allowed).toBe(true);
+  });
 });

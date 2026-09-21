@@ -252,6 +252,7 @@ async function startServer() {
         positionSizePct: [0.1, 100],
         accountRiskPct: [0.1, 10],
         maxConcurrentTrades: [1, 50],
+        maxConsecutiveLosses: [1, 20],
         dailyLossLimitPct: [0.5, 25],
         maxDrawdownPct: [1, 50],
         autoTradeThreshold: [50, 100],
@@ -348,10 +349,24 @@ async function startServer() {
         dailyLossLimitPct: current.dailyLossLimitPct,
         maxConcurrentTrades: current.maxConcurrentTrades,
         bypassMaxPositions: Boolean(current.bypassMaxPositions),
+        maxConsecutiveLosses: current.maxConsecutiveLosses || 5,
+        bypassMaxConsecutiveLosses: Boolean(current.bypassMaxConsecutiveLosses),
+        consecutiveLosses: riskManager.getConsecutiveLosses(),
         leverage: current.leverage
       });
     } catch (e) {
       res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // Risk Manager Reset Consecutive Losses Endpoint
+  app.post("/api/risk/reset-losses", (req, res) => {
+    try {
+      riskManager.resetConsecutiveLosses();
+      console.log('🛡️ [RiskManager] Consecutive losses streak reset to 0 by user request.');
+      res.json({ success: true, consecutiveLosses: 0 });
+    } catch (e) {
+      res.status(500).json({ success: false, error: String(e) });
     }
   });
 

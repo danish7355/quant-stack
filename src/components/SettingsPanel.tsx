@@ -116,6 +116,8 @@ export default function SettingsPanel({
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [isResettingLosses, setIsResettingLosses] = useState(false);
+  const [resetLossStatus, setResetLossStatus] = useState<string | null>(null);
 
   // Snapshot of last-saved configuration to detect exact diffs
   const [savedSnapshot, setSavedSnapshot] = useState<AppSettings>(settings);
@@ -283,6 +285,25 @@ export default function SettingsPanel({
       }
     } catch (e: any) {
       setTelegramStatus(`Network error: ${e.message}`);
+    }
+  };
+
+  const handleResetLossStreak = async () => {
+    setIsResettingLosses(true);
+    setResetLossStatus(null);
+    try {
+      const res = await fetch('/api/risk/reset-losses', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setResetLossStatus('✓ Streak reset to 0');
+        setTimeout(() => setResetLossStatus(null), 3500);
+      } else {
+        setResetLossStatus(`Failed: ${data.error || 'Server error'}`);
+      }
+    } catch (e: any) {
+      setResetLossStatus(`Network error: ${e.message}`);
+    } finally {
+      setIsResettingLosses(false);
     }
   };
 
@@ -733,25 +754,49 @@ export default function SettingsPanel({
         {activeTab === 'risk' && (
           <div className="space-y-4">
             {/* Risk Control Notice Banner */}
-            <div className={`p-4 rounded-xl border flex items-start space-x-3.5 transition-all ${
-              settings.bypassMaxPositions
+            <div className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 transition-all ${
+              settings.bypassMaxPositions || settings.bypassMaxConsecutiveLosses
                 ? 'bg-amber-950/30 border-amber-500/50 shadow-lg shadow-amber-950/20'
                 : 'bg-indigo-950/20 border-indigo-500/30'
             }`}>
-              <div className={`w-3 h-3 rounded-full mt-1 shrink-0 ${
-                settings.bypassMaxPositions ? 'bg-amber-400 animate-pulse' : 'bg-indigo-400'
-              }`} />
-              <div className="text-xs text-gray-300 leading-relaxed">
-                <strong className={settings.bypassMaxPositions ? 'text-amber-400 font-bold' : 'text-indigo-300 font-bold'}>
-                  {settings.bypassMaxPositions ? '⚡ Positions Limit Bypassed:' : '🛡️ Simultaneous Positions Control:'}
-                </strong>{' '}
-                {settings.bypassMaxPositions
-                  ? 'Autonomous execution is allowed to open unlimited simultaneous trades without being blocked by the position count limit. Position sizing & portfolio risk safety filters remain active.'
-                  : `RiskManager strictly caps simultaneous active positions at ${settings.maxConcurrentTrades || 10}. Any qualified signals beyond this ceiling are blocked. Toggle "Bypass Max Positions" below to allow unlimited concurrent positions.`}
+              <div className="flex items-start space-x-3.5">
+                <div className={`w-3 h-3 rounded-full mt-1 shrink-0 ${
+                  settings.bypassMaxPositions || settings.bypassMaxConsecutiveLosses ? 'bg-amber-400 animate-pulse' : 'bg-indigo-400'
+                }`} />
+                <div className="text-xs text-gray-300 leading-relaxed">
+                  <strong className={settings.bypassMaxPositions || settings.bypassMaxConsecutiveLosses ? 'text-amber-400 font-bold' : 'text-indigo-300 font-bold'}>
+                    {settings.bypassMaxPositions || settings.bypassMaxConsecutiveLosses ? '⚡ Risk Circuit Breakers Bypassed:' : '🛡️ Risk Circuit Breakers Active:'}
+                  </strong>{' '}
+                  {settings.bypassMaxPositions && settings.bypassMaxConsecutiveLosses
+                    ? 'Both maximum positions and consecutive losses limits are currently bypassed.'
+                    : settings.bypassMaxPositions
+                    ? 'Max simultaneous positions limit is bypassed. Max consecutive losses limit is enforced.'
+                    : settings.bypassMaxConsecutiveLosses
+                    ? 'Max consecutive losses limit is bypassed. Max simultaneous positions limit is enforced.'
+                    : `RiskManager enforces maximum ${settings.maxConcurrentTrades || 10} positions and ${settings.maxConsecutiveLosses ?? 5} consecutive losses.`}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 self-end sm:self-center pl-6 sm:pl-0">
+                {resetLossStatus && (
+                  <span className="text-[11px] font-mono text-emerald-400 font-bold px-2 py-0.5 rounded bg-emerald-950/50 border border-emerald-500/30">
+                    {resetLossStatus}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={handleResetLossStreak}
+                  disabled={isResettingLosses}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 transition-colors shadow cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isResettingLosses ? 'animate-spin' : ''}`} />
+                  <span>{isResettingLosses ? 'Resetting...' : 'Reset Loss Streak'}</span>
+                </button>
               </div>
             </div>
 
             <div className="bg-[#0E1117]/90 rounded-xl border border-[#30363D] p-5 divide-y divide-[#30363D]/40">
+              {/* Bypass Max Positions */}
               <div className="flex justify-between items-center py-3.5">
                 <div className="flex flex-col pr-4">
                   <div className="flex items-center gap-2">
@@ -765,7 +810,7 @@ export default function SettingsPanel({
                     </span>
                   </div>
                   <span className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
-                    Completely bypasses the "Max simultaneous positions reached" block in RiskManager. Enables new trade entries regardless of how many positions are currently open.
+                    Bypasses the "Max simultaneous positions reached" block. Enables entering new trade signals regardless of active positions count.
                   </span>
                 </div>
                 <button
@@ -783,6 +828,38 @@ export default function SettingsPanel({
                 </button>
               </div>
 
+              {/* Bypass Max Consecutive Losses */}
+              <div className="flex justify-between items-center py-3.5">
+                <div className="flex flex-col pr-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-gray-100">Bypass Max Consecutive Losses</span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border transition-colors ${
+                      settings.bypassMaxConsecutiveLosses 
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' 
+                        : 'bg-gray-800 text-gray-400 border-gray-700'
+                    }`}>
+                      {settings.bypassMaxConsecutiveLosses ? 'ACTIVE (BYPASSED)' : 'ENFORCED'}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
+                    Bypasses the "Max consecutive losses reached" block. Enables entering new trade signals without pausing after losing streaks.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleInputChange('bypassMaxConsecutiveLosses', !settings.bypassMaxConsecutiveLosses)}
+                  className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
+                    settings.bypassMaxConsecutiveLosses ? 'bg-amber-500' : 'bg-gray-700'
+                  }`}
+                >
+                  <div
+                    className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                      settings.bypassMaxConsecutiveLosses ? 'transform translate-x-6' : ''
+                    }`}
+                  />
+                </button>
+              </div>
+
               <InputRow 
                 label="Max Open Trades / Positions" 
                 desc="Ceiling of simultaneous positions enforced by RiskManager (1 - 50). Ignored if Bypass is ON." 
@@ -790,6 +867,14 @@ export default function SettingsPanel({
                 onChange={(v: any) => handleInputChange('maxConcurrentTrades', v)} 
                 min={1} 
                 max={50} 
+              />
+              <InputRow 
+                label="Max Consecutive Losses" 
+                desc="Pause new entries after this many consecutive losing trades (1 - 20, default: 5). Ignored if Bypass is ON." 
+                value={settings.maxConsecutiveLosses ?? 5} 
+                onChange={(v: any) => handleInputChange('maxConsecutiveLosses', v)} 
+                min={1} 
+                max={20} 
               />
               <InputRow 
                 label="Account Risk Per Trade %" 

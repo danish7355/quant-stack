@@ -18,6 +18,8 @@ export interface TradingSettings {
   leverage: number;                // Max leverage (1 - 125)
   maxConcurrentTrades: number;     // Max open trades (1 - 50)
   bypassMaxPositions?: boolean;    // Bypass maximum simultaneous positions limit
+  maxConsecutiveLosses?: number;   // Max consecutive losses before cooling down (1 - 20)
+  bypassMaxConsecutiveLosses?: boolean; // Bypass max consecutive losses limit
   dailyLossLimitPct: number;       // Max daily loss % before circuit breaker (0.5 - 25)
   maxDrawdownPct: number;          // Max portfolio drawdown % (1 - 50)
   startingBalance: number;         // Starting demo/paper balance
@@ -201,6 +203,7 @@ export const NUMERIC_BOUNDS: Record<string, { min: number; max: number; step?: n
   positionSizePct: { min: 0.1, max: 100, step: 1, label: 'Position Margin per Trade (%)' },
   leverage: { min: 1, max: 125, step: 1, label: 'Leverage Multiplier', highRisk: true },
   maxConcurrentTrades: { min: 1, max: 50, step: 1, label: 'Max Open Trades' },
+  maxConsecutiveLosses: { min: 1, max: 20, step: 1, label: 'Max Consecutive Losses' },
   dailyLossLimitPct: { min: 0.5, max: 25, step: 0.5, label: 'Daily Max Loss (%)', highRisk: true },
   maxDrawdownPct: { min: 1, max: 50, step: 1, label: 'Max Drawdown (%)' },
   autoTradeThreshold: { min: 50, max: 100, step: 1, label: 'Min Score Threshold' },
@@ -282,7 +285,7 @@ export function validateTradingSettings(input: unknown): ValidationResult {
     'crEnabled', 'useMtfAlignment', 'useVpvrFilter', 'useAtrTrailingStop',
     'vcbRequireSweep', 'vcbRequireRetest', 'vcbEnforceKillZone',
     'smcUseKillZone', 'smcStrictHtfRegime', 'tpbRequireVolume',
-    'bypassMaxPositions',
+    'bypassMaxPositions', 'bypassMaxConsecutiveLosses',
     'alertOnNewSignal', 'alertOnTradeExecuted', 'alertOnTpHit', 'alertOnSlHit',
     'alertOnTsMoved', 'alertOnDailyLossLimit', 'alertOnRangingDetected',
     'alertSilentMode', 'binanceTestnet', 'scanOnlyWatchlist'
@@ -411,6 +414,8 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   leverage: 1,
   maxConcurrentTrades: 10,
   bypassMaxPositions: false,
+  maxConsecutiveLosses: 4,
+  bypassMaxConsecutiveLosses: false,
   dailyLossLimitPct: 3,
   maxDrawdownPct: 10,
 

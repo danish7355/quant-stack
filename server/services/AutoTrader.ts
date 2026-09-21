@@ -447,10 +447,11 @@ export class AutoTrader {
     telegramService.updateSettings(this.settings);
     riskManager.updateSettings(
       this.settings.dailyLossLimitPct, 
-      undefined, 
+      this.settings.maxConsecutiveLosses ?? 5, 
       undefined, 
       this.settings.maxConcurrentTrades, 
-      this.settings.bypassMaxPositions
+      this.settings.bypassMaxPositions,
+      this.settings.bypassMaxConsecutiveLosses
     );
     positionMonitor.settings = this.settings;
 
@@ -484,10 +485,11 @@ export class AutoTrader {
     telegramService.updateSettings(this.settings);
     riskManager.updateSettings(
       this.settings.dailyLossLimitPct, 
-      undefined, 
+      this.settings.maxConsecutiveLosses ?? 5, 
       undefined, 
       this.settings.maxConcurrentTrades, 
-      this.settings.bypassMaxPositions
+      this.settings.bypassMaxPositions,
+      this.settings.bypassMaxConsecutiveLosses
     );
     positionMonitor.settings = this.settings;
 

@@ -6,6 +6,7 @@ export class RiskManager {
   private currentExposure = 0;
   private consecutiveLosses = 0;
   private maxConsecutiveLosses = 4;
+  private bypassMaxConsecutiveLosses = false;
   private dailyLossLimitPct = -10.0;
   private currentDailyLossPct = 0;
   private killSwitchActive = false;
@@ -16,12 +17,13 @@ export class RiskManager {
     maxLosses?: number, 
     maxExposure?: number, 
     maxTrades?: number, 
-    bypassMaxPositions?: boolean
+    bypassMaxPositions?: boolean,
+    bypassMaxConsecutiveLosses?: boolean
   ) {
     if (limitPct !== undefined && limitPct !== null) {
       this.dailyLossLimitPct = -Math.abs(limitPct); // Ensure it's negative
     }
-    if (maxLosses !== undefined && maxLosses !== null) {
+    if (maxLosses !== undefined && maxLosses !== null && maxLosses > 0) {
       this.maxConsecutiveLosses = maxLosses;
     }
     if (maxExposure !== undefined && maxExposure !== null && maxExposure > 0) {
@@ -32,6 +34,9 @@ export class RiskManager {
     }
     if (bypassMaxPositions !== undefined && bypassMaxPositions !== null) {
       this.bypassMaxPositions = Boolean(bypassMaxPositions);
+    }
+    if (bypassMaxConsecutiveLosses !== undefined && bypassMaxConsecutiveLosses !== null) {
+      this.bypassMaxConsecutiveLosses = Boolean(bypassMaxConsecutiveLosses);
     }
   }
 
@@ -73,7 +78,7 @@ export class RiskManager {
       return { allowed: false, reason: `Daily loss limit reached (${this.currentDailyLossPct.toFixed(2)}%)` };
     }
 
-    if (this.consecutiveLosses >= this.maxConsecutiveLosses) {
+    if (!this.bypassMaxConsecutiveLosses && this.maxConsecutiveLosses > 0 && this.consecutiveLosses >= this.maxConsecutiveLosses) {
       return { allowed: false, reason: `Max consecutive losses (${this.maxConsecutiveLosses}) reached.` };
     }
     
@@ -228,6 +233,30 @@ export class RiskManager {
 
   public setBypassMaxPositions(bypass: boolean) {
     this.bypassMaxPositions = Boolean(bypass);
+  }
+
+  public getConsecutiveLosses(): number {
+    return this.consecutiveLosses;
+  }
+
+  public resetConsecutiveLosses() {
+    this.consecutiveLosses = 0;
+  }
+
+  public getMaxConsecutiveLosses(): number {
+    return this.maxConsecutiveLosses;
+  }
+
+  public setMaxConsecutiveLosses(val: number) {
+    this.maxConsecutiveLosses = Math.max(1, val);
+  }
+
+  public isBypassMaxConsecutiveLosses(): boolean {
+    return this.bypassMaxConsecutiveLosses;
+  }
+
+  public setBypassMaxConsecutiveLosses(val: boolean) {
+    this.bypassMaxConsecutiveLosses = Boolean(val);
   }
 }
 
