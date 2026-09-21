@@ -445,17 +445,36 @@ export class AutoTrader {
       telegramService.updateConfig(this.settings.telegramBotToken, this.settings.telegramChatId);
     }
     telegramService.updateSettings(this.settings);
-    riskManager.updateSettings(
-      this.settings.dailyLossLimitPct, 
-      this.settings.maxConsecutiveLosses ?? 5, 
-      undefined, 
-      this.settings.maxConcurrentTrades, 
-      this.settings.bypassMaxPositions,
-      this.settings.bypassMaxConsecutiveLosses
-    );
+    this.syncRiskManagerSettings();
     positionMonitor.settings = this.settings;
 
     return this.settings;
+  }
+
+  private syncRiskManagerSettings() {
+    riskManager.updateSettings({
+      limitPct: this.settings.dailyLossLimitPct,
+      maxLosses: this.settings.maxConsecutiveLosses ?? 4,
+      maxExposure: this.settings.maxPortfolioExposurePct ?? 100,
+      maxTrades: this.settings.maxConcurrentTrades,
+      bypassMaxPositions: this.settings.bypassMaxPositions,
+      bypassMaxConsecutiveLosses: this.settings.bypassMaxConsecutiveLosses,
+      bypassDailyLossLimit: this.settings.bypassDailyLossLimit,
+      bypassExposureLimit: this.settings.bypassExposureLimit,
+      bypassLiquidationBuffer: this.settings.bypassLiquidationBuffer,
+      minLiquidationBuffer: this.settings.minLiquidationBuffer ?? 1.3,
+      maxSinglePositionExposureMult: this.settings.maxSinglePositionExposureMult ?? 5,
+      minStopDistancePct: this.settings.minStopDistancePct ?? 0.005,
+      allowFractionalContracts: this.settings.allowFractionalContracts !== false,
+      killSwitchActive: this.settings.killSwitchActive,
+    });
+  }
+
+  private setTradeCooldown(symbol: string) {
+    if (this.settings.bypassTradeCooldown) return;
+    const cooldownSecs = this.settings.tradeCooldownSeconds !== undefined ? this.settings.tradeCooldownSeconds : 60;
+    if (cooldownSecs <= 0) return;
+    this.tradeCooldowns.set(symbol, Date.now() + cooldownSecs * 1000);
   }
 
   public async saveSettings(newSettings: Partial<ServerBotSettings>, source: 'FRONTEND' | 'API' | 'SYSTEM' = 'FRONTEND'): Promise<ServerBotSettings> {
@@ -483,14 +502,7 @@ export class AutoTrader {
       telegramService.updateConfig(this.settings.telegramBotToken, this.settings.telegramChatId);
     }
     telegramService.updateSettings(this.settings);
-    riskManager.updateSettings(
-      this.settings.dailyLossLimitPct, 
-      this.settings.maxConsecutiveLosses ?? 5, 
-      undefined, 
-      this.settings.maxConcurrentTrades, 
-      this.settings.bypassMaxPositions,
-      this.settings.bypassMaxConsecutiveLosses
-    );
+    this.syncRiskManagerSettings();
     positionMonitor.settings = this.settings;
 
     // Always persist locally
@@ -651,11 +663,13 @@ export class AutoTrader {
           const riskPct = this.settings.accountRiskPct ? (this.settings.accountRiskPct / 100) : 0.015; // default 1.5%
           const userTargetAlloc = accountEquity * ((this.settings.positionSizePct || 3) / 100);
           const remainingExposure = riskManager.getRemainingExposure(accountEquity);
-          const maxAllocation = Math.min(userTargetAlloc, remainingExposure);
+          const maxAllocation = this.settings.bypassExposureLimit
+            ? userTargetAlloc
+            : Math.min(userTargetAlloc, remainingExposure);
           
-          if (maxAllocation <= 0) {
+          if (!this.settings.bypassExposureLimit && maxAllocation <= 0) {
               console.log(`🛡️ [SMC] Setup for ${symbol} skipped: Portfolio exposure limit reached.`);
-              this.tradeCooldowns.set(symbol, Date.now() + 60000);
+              this.setTradeCooldown(symbol);
               continue;
           }
 
@@ -664,13 +678,17 @@ export class AutoTrader {
               price,
               setup.sl,
               setup.direction,
-              { maxLeverage: this.settings.leverage || 5, maxAllocation },
+              { 
+                maxLeverage: this.settings.leverage || 5, 
+                maxAllocation,
+                allowFractional: this.settings.allowFractionalContracts !== false
+              },
               riskPct
           );
           
           if (safeSize.rejected || safeSize.contracts <= 0) {
               console.log(`🚫 [SMC] Setup for ${symbol} rejected by RiskManager: ${safeSize.reason}`);
-              this.tradeCooldowns.set(symbol, Date.now() + 60000);
+              this.setTradeCooldown(symbol);
               continue;
           }
 
@@ -678,7 +696,7 @@ export class AutoTrader {
           const riskCheck = riskManager.checkEntryAllowed(accountEquity, safeSize.allocatedBalance, activePositions.length);
           if (!riskCheck.allowed) {
               console.log(`🛡️ [SMC] Trade blocked by RiskManager for ${symbol}: ${riskCheck.reason}`);
-              this.tradeCooldowns.set(symbol, Date.now() + 60000);
+              this.setTradeCooldown(symbol);
               continue;
           }
 
@@ -692,7 +710,7 @@ export class AutoTrader {
              tp1: setup.tp1
           }).catch((err) => {
              console.error(`SMC error opening ${symbol}:`, err);
-             this.tradeCooldowns.set(symbol, Date.now() + 60000);
+             this.setTradeCooldown(symbol);
           });
       }
     }
@@ -856,9 +874,11 @@ export class AutoTrader {
             const riskPct = (this.settings.accountRiskPct || 1.5) / 100;
             const userTargetAlloc = dummyBalance * ((this.settings.positionSizePct || 3) / 100);
             const remainingExposure = riskManager.getRemainingExposure(dummyBalance);
-            const maxAllocation = Math.min(userTargetAlloc, remainingExposure);
+            const maxAllocation = this.settings.bypassExposureLimit
+              ? userTargetAlloc
+              : Math.min(userTargetAlloc, remainingExposure);
 
-            if (maxAllocation <= 0) {
+            if (!this.settings.bypassExposureLimit && maxAllocation <= 0) {
               console.log(`🛡️ [AutoTrader] Sizing skipped for ${symbol}: Maximum exposure limit reached.`);
               this.logScanResult(symbol, signal.direction, false, 'Risk Manager: Maximum exposure limit reached', currentPrice, signal.sl, signal.tp1, signal.score, {
                 strategy: finalStrat,
@@ -869,7 +889,7 @@ export class AutoTrader {
                 strategyPriority: (signal as any).strategyPriority,
                 structuralRR: (signal as any).structuralRR
               });
-              this.tradeCooldowns.set(symbol, Date.now() + 60000);
+              this.setTradeCooldown(symbol);
               this.pendingSymbols.delete(symbol);
               continue;
             }
@@ -879,7 +899,11 @@ export class AutoTrader {
               currentPrice,
               signal.sl,
               signal.direction,
-              { maxLeverage: this.settings.leverage || 5, maxAllocation },
+              { 
+                maxLeverage: this.settings.leverage || 5, 
+                maxAllocation,
+                allowFractional: this.settings.allowFractionalContracts !== false
+              },
               riskPct
             );
 
@@ -894,7 +918,7 @@ export class AutoTrader {
                 strategyPriority: (signal as any).strategyPriority,
                 structuralRR: (signal as any).structuralRR
               });
-              this.tradeCooldowns.set(symbol, Date.now() + 60000);
+              this.setTradeCooldown(symbol);
               this.pendingSymbols.delete(symbol);
               continue;
             }
@@ -918,7 +942,7 @@ export class AutoTrader {
               strategyPriority: (signal as any).strategyPriority,
               structuralRR: (signal as any).structuralRR
             });
-            this.tradeCooldowns.set(symbol, Date.now() + 60000);
+            this.setTradeCooldown(symbol);
             this.pendingSymbols.delete(symbol);
             continue;
           }
@@ -978,7 +1002,7 @@ export class AutoTrader {
             } else {
               console.error(`❌ [AutoTrader] Error executing order on ${symbol}:`, err);
             }
-            this.tradeCooldowns.set(symbol, Date.now() + 60000);
+            this.setTradeCooldown(symbol);
           })
           .finally(() => {
             this.pendingSymbols.delete(symbol);

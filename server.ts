@@ -254,6 +254,11 @@ async function startServer() {
         maxConcurrentTrades: [1, 50],
         maxConsecutiveLosses: [1, 20],
         dailyLossLimitPct: [0.5, 25],
+        maxPortfolioExposurePct: [10, 1000],
+        minLiquidationBuffer: [1.01, 3.0],
+        maxSinglePositionExposureMult: [1, 50],
+        minStopDistancePct: [0.0005, 0.05],
+        tradeCooldownSeconds: [0, 600],
         maxDrawdownPct: [1, 50],
         autoTradeThreshold: [50, 100],
         scanInterval: [5, 3600],
@@ -347,11 +352,23 @@ async function startServer() {
         activeStrategy: current.activeStrategy,
         accountRiskPct: current.accountRiskPct,
         dailyLossLimitPct: current.dailyLossLimitPct,
+        bypassDailyLossLimit: Boolean(current.bypassDailyLossLimit),
+        currentDailyLossPct: riskManager.getDailyLossPct(),
         maxConcurrentTrades: current.maxConcurrentTrades,
         bypassMaxPositions: Boolean(current.bypassMaxPositions),
-        maxConsecutiveLosses: current.maxConsecutiveLosses || 5,
+        maxConsecutiveLosses: current.maxConsecutiveLosses || 4,
         bypassMaxConsecutiveLosses: Boolean(current.bypassMaxConsecutiveLosses),
         consecutiveLosses: riskManager.getConsecutiveLosses(),
+        maxPortfolioExposurePct: current.maxPortfolioExposurePct ?? 100,
+        bypassExposureLimit: Boolean(current.bypassExposureLimit),
+        minLiquidationBuffer: current.minLiquidationBuffer ?? 1.3,
+        bypassLiquidationBuffer: Boolean(current.bypassLiquidationBuffer),
+        maxSinglePositionExposureMult: current.maxSinglePositionExposureMult ?? 5,
+        minStopDistancePct: current.minStopDistancePct ?? 0.005,
+        tradeCooldownSeconds: current.tradeCooldownSeconds ?? 60,
+        bypassTradeCooldown: Boolean(current.bypassTradeCooldown),
+        allowFractionalContracts: current.allowFractionalContracts !== false,
+        killSwitchActive: riskManager.isKillSwitchActive(),
         leverage: current.leverage
       });
     } catch (e) {
@@ -365,6 +382,29 @@ async function startServer() {
       riskManager.resetConsecutiveLosses();
       console.log('🛡️ [RiskManager] Consecutive losses streak reset to 0 by user request.');
       res.json({ success: true, consecutiveLosses: 0 });
+    } catch (e) {
+      res.status(500).json({ success: false, error: String(e) });
+    }
+  });
+
+  // Risk Manager Reset Daily Loss Stats Endpoint
+  app.post("/api/risk/reset-daily-loss", (req, res) => {
+    try {
+      riskManager.resetDailyLoss();
+      console.log('🛡️ [RiskManager] Daily loss stats reset to 0% by user request.');
+      res.json({ success: true, dailyLossPct: 0 });
+    } catch (e) {
+      res.status(500).json({ success: false, error: String(e) });
+    }
+  });
+
+  // Risk Manager Emergency Kill Switch Toggle Endpoint
+  app.post("/api/risk/toggle-kill-switch", (req, res) => {
+    try {
+      const active = req.body?.active !== undefined ? Boolean(req.body.active) : !riskManager.isKillSwitchActive();
+      riskManager.setKillSwitch(active);
+      console.log(`🛡️ [RiskManager] Kill switch ${active ? 'ENGAGED' : 'DISENGAGED'} by user request.`);
+      res.json({ success: true, killSwitchActive: active });
     } catch (e) {
       res.status(500).json({ success: false, error: String(e) });
     }

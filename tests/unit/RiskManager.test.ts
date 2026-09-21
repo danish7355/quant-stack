@@ -121,4 +121,104 @@ describe('RiskManager', () => {
     expect(riskManager.getConsecutiveLosses()).toBe(0);
     expect(riskManager.checkEntryAllowed(10000, 200, 0).allowed).toBe(true);
   });
+
+  it('blocks entry when daily loss limit is hit, and allows bypass via bypassDailyLossLimit', () => {
+    // Default daily loss limit is -3%
+    riskManager.recordTradeResult(-400, 10000); // -4% daily loss
+    const check1 = riskManager.checkEntryAllowed(10000, 200, 0);
+    expect(check1.allowed).toBe(false);
+    expect(check1.reason).toContain('Daily loss limit reached');
+
+    // Enable bypass
+    riskManager.setBypassDailyLossLimit(true);
+    expect(riskManager.isBypassDailyLossLimit()).toBe(true);
+    expect(riskManager.checkEntryAllowed(10000, 200, 0).allowed).toBe(true);
+
+    // Reset daily loss stats
+    riskManager.setBypassDailyLossLimit(false);
+    riskManager.resetDailyLoss();
+    expect(riskManager.getDailyLossPct()).toBe(0);
+    expect(riskManager.checkEntryAllowed(10000, 200, 0).allowed).toBe(true);
+  });
+
+  it('allows customizing and bypassing total portfolio exposure limit', () => {
+    // Fill up exposure to 100% (10,000)
+    riskManager.updateCurrentExposure(10000);
+    
+    // Additional 500 allocation is blocked (proposed exposure 105%)
+    const checkBlocked = riskManager.checkEntryAllowed(10000, 500, 1);
+    expect(checkBlocked.allowed).toBe(false);
+    expect(checkBlocked.reason).toContain('Exposure limit exceeded');
+
+    // Bypass exposure limit
+    riskManager.setBypassExposureLimit(true);
+    expect(riskManager.isBypassExposureLimit()).toBe(true);
+    expect(riskManager.checkEntryAllowed(10000, 500, 1).allowed).toBe(true);
+
+    // Can also expand max exposure to 200%
+    riskManager.setBypassExposureLimit(false);
+    riskManager.setMaxExposurePct(200);
+    expect(riskManager.getMaxExposurePct()).toBe(2.0);
+    expect(riskManager.checkEntryAllowed(10000, 500, 1).allowed).toBe(true);
+  });
+
+  it('allows user to bypass liquidation safety buffer and fallback to 1x leverage', () => {
+    // Wide stop: Entry 100, Stop 20 (80% stop distance)
+    const strictResult = riskManager.calculateSafePositionSize(
+      10000,
+      100,
+      20, // 80% stop distance
+      'LONG',
+      { maxLeverage: 10, maxAllocation: 1000 },
+      0.02
+    );
+    // Buffer = 0.995 / 0.8 = 1.24 < 1.3 -> rejected under default 1.3
+    expect(strictResult.rejected).toBe(true);
+    expect(strictResult.reason).toContain('Stop distance too wide to leverage safely');
+
+    // Enable bypass liquidation buffer
+    riskManager.setBypassLiquidationBuffer(true);
+    const bypassedResult = riskManager.calculateSafePositionSize(
+      10000,
+      100,
+      20,
+      'LONG',
+      { maxLeverage: 10, maxAllocation: 1000 },
+      0.02
+    );
+    expect(bypassedResult.rejected).toBe(false);
+    expect(bypassedResult.leverage).toBe(1);
+    expect(bypassedResult.contracts).toBeGreaterThan(0);
+  });
+
+  it('allows fractional contracts so high-priced coins are not rejected with rounds to 0 contracts', () => {
+    // High-priced coin: $60,000 entry, $59,000 stop (1.66% stop)
+    // Small account $500, 1% risk ($5) -> desired notional $300 -> 300 / 60000 = 0.005 BTC
+    const result = riskManager.calculateSafePositionSize(
+      500,
+      60000,
+      59000,
+      'LONG',
+      { maxLeverage: 5, maxAllocation: 100, allowFractional: true },
+      0.01
+    );
+    expect(result.rejected).toBe(false);
+    expect(result.contracts).toBe(0.005);
+    expect(result.allocatedBalance).toBeGreaterThan(0);
+  });
+
+  it('allows emergency kill switch to be engaged and disengaged', () => {
+    expect(riskManager.isKillSwitchActive()).toBe(false);
+    expect(riskManager.checkEntryAllowed(10000, 200, 0).allowed).toBe(true);
+
+    riskManager.activateKillSwitch();
+    expect(riskManager.isKillSwitchActive()).toBe(true);
+    const blocked = riskManager.checkEntryAllowed(10000, 200, 0);
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.reason).toContain('Kill switch is active');
+
+    riskManager.deactivateKillSwitch();
+    expect(riskManager.isKillSwitchActive()).toBe(false);
+    expect(riskManager.checkEntryAllowed(10000, 200, 0).allowed).toBe(true);
+  });
 });

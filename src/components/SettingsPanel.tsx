@@ -100,6 +100,41 @@ const InputRow = ({ label, desc, value, onChange, type = "number", className="",
   );
 };
 
+const ToggleRow = ({ label, desc, checked, onChange, activeBadgeText = 'ACTIVE (BYPASSED)', inactiveBadgeText = 'ENFORCED', highRisk = true }: any) => {
+  return (
+    <div className="flex justify-between items-center py-3.5 border-b border-[#30363D]/40 last:border-0">
+      <div className="flex flex-col pr-4">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-bold text-gray-100">{label}</span>
+          <span className={`text-[10px] font-bold px-2 py-0.5 rounded border transition-colors ${
+            checked 
+              ? (highRisk ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40') 
+              : 'bg-gray-800 text-gray-400 border-gray-700'
+          }`}>
+            {checked ? activeBadgeText : inactiveBadgeText}
+          </span>
+        </div>
+        <span className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
+          {desc}
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange(!checked)}
+        className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 cursor-pointer ${
+          checked ? (highRisk ? 'bg-amber-500' : 'bg-indigo-600') : 'bg-gray-700'
+        }`}
+      >
+        <div
+          className={`w-4 h-4 rounded-full bg-white transition-transform ${
+            checked ? 'transform translate-x-6' : ''
+          }`}
+        />
+      </button>
+    </div>
+  );
+};
+
 export default function SettingsPanel({
   settings,
   onUpdateSettings,
@@ -118,6 +153,10 @@ export default function SettingsPanel({
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [isResettingLosses, setIsResettingLosses] = useState(false);
   const [resetLossStatus, setResetLossStatus] = useState<string | null>(null);
+  const [isResettingDailyLoss, setIsResettingDailyLoss] = useState(false);
+  const [resetDailyLossStatus, setResetDailyLossStatus] = useState<string | null>(null);
+  const [isTogglingKillSwitch, setIsTogglingKillSwitch] = useState(false);
+  const [killSwitchStatus, setKillSwitchStatus] = useState<string | null>(null);
 
   // Snapshot of last-saved configuration to detect exact diffs
   const [savedSnapshot, setSavedSnapshot] = useState<AppSettings>(settings);
@@ -304,6 +343,50 @@ export default function SettingsPanel({
       setResetLossStatus(`Network error: ${e.message}`);
     } finally {
       setIsResettingLosses(false);
+    }
+  };
+
+  const handleResetDailyLoss = async () => {
+    setIsResettingDailyLoss(true);
+    setResetDailyLossStatus(null);
+    try {
+      const res = await fetch('/api/risk/reset-daily-loss', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setResetDailyLossStatus('✓ Daily loss reset to 0%');
+        setTimeout(() => setResetDailyLossStatus(null), 3500);
+      } else {
+        setResetDailyLossStatus(`Failed: ${data.error || 'Server error'}`);
+      }
+    } catch (e: any) {
+      setResetDailyLossStatus(`Network error: ${e.message}`);
+    } finally {
+      setIsResettingDailyLoss(false);
+    }
+  };
+
+  const handleToggleKillSwitch = async () => {
+    setIsTogglingKillSwitch(true);
+    setKillSwitchStatus(null);
+    try {
+      const nextActive = !settings.killSwitchActive;
+      const res = await fetch('/api/risk/toggle-kill-switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: nextActive })
+      });
+      const data = await res.json();
+      if (data.success) {
+        handleInputChange('killSwitchActive', data.killSwitchActive);
+        setKillSwitchStatus(data.killSwitchActive ? '⚠️ Kill Switch ENGAGED' : '✓ Kill Switch DISENGAGED');
+        setTimeout(() => setKillSwitchStatus(null), 3500);
+      } else {
+        setKillSwitchStatus(`Failed: ${data.error || 'Server error'}`);
+      }
+    } catch (e: any) {
+      setKillSwitchStatus(`Network error: ${e.message}`);
+    } finally {
+      setIsTogglingKillSwitch(false);
     }
   };
 
@@ -744,170 +827,294 @@ export default function SettingsPanel({
         )}
 
         {activeTab === 'filters' && (
-          <div className="space-y-2">
-            <InputRow label="Minimum 24h Volume (USDT)" desc="Skip coins with volume below this threshold" value={settings.min24hVolume} onChange={(v: any) => handleInputChange('min24hVolume', v)} />
-            <InputRow label="Max Funding Rate %" desc="Skip coins with extreme funding rates" value={settings.maxFundingRate} onChange={(v: any) => handleInputChange('maxFundingRate', v)} />
-            <InputRow label="Max Bid/Ask Spread %" desc="Skip coins with wide spreads" value={settings.maxSpread} onChange={(v: any) => handleInputChange('maxSpread', v)} />
+          <div className="space-y-4">
+            <div className="bg-[#0E1117]/90 rounded-xl border border-[#30363D] p-5 divide-y divide-[#30363D]/40">
+              <ToggleRow
+                label="Global BTC Macro Trend & Volatility Filter"
+                desc="Pauses altcoin trade entries during BTC flash-crashes or extreme macro bear regimes. Disable to trade altcoins completely independently."
+                checked={settings.useGlobalBtcFilter}
+                onChange={(v: boolean) => handleInputChange('useGlobalBtcFilter', v)}
+                activeBadgeText="FILTER ACTIVE"
+                inactiveBadgeText="BYPASSED (OFF)"
+                highRisk={false}
+              />
+              <InputRow label="Minimum 24h Volume (USDT)" desc="Skip coins with 24h volume below this threshold (e.g. $25,000,000)" value={settings.min24hVolume} onChange={(v: any) => handleInputChange('min24hVolume', v)} />
+              <InputRow label="Max Funding Rate %" desc="Skip coins with extreme perpetual funding rates (e.g. 0.15%)" value={settings.maxFundingRate} onChange={(v: any) => handleInputChange('maxFundingRate', v)} />
+              <InputRow label="Max Bid/Ask Spread %" desc="Skip coins with wide bid/ask spreads to avoid high slippage (e.g. 0.3%)" value={settings.maxSpread} onChange={(v: any) => handleInputChange('maxSpread', v)} />
+            </div>
           </div>
         )}
 
         {activeTab === 'risk' && (
-          <div className="space-y-4">
+          <div className="space-y-6">
             {/* Risk Control Notice Banner */}
-            <div className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 transition-all ${
-              settings.bypassMaxPositions || settings.bypassMaxConsecutiveLosses
-                ? 'bg-amber-950/30 border-amber-500/50 shadow-lg shadow-amber-950/20'
-                : 'bg-indigo-950/20 border-indigo-500/30'
-            }`}>
-              <div className="flex items-start space-x-3.5">
-                <div className={`w-3 h-3 rounded-full mt-1 shrink-0 ${
-                  settings.bypassMaxPositions || settings.bypassMaxConsecutiveLosses ? 'bg-amber-400 animate-pulse' : 'bg-indigo-400'
-                }`} />
-                <div className="text-xs text-gray-300 leading-relaxed">
-                  <strong className={settings.bypassMaxPositions || settings.bypassMaxConsecutiveLosses ? 'text-amber-400 font-bold' : 'text-indigo-300 font-bold'}>
-                    {settings.bypassMaxPositions || settings.bypassMaxConsecutiveLosses ? '⚡ Risk Circuit Breakers Bypassed:' : '🛡️ Risk Circuit Breakers Active:'}
-                  </strong>{' '}
-                  {settings.bypassMaxPositions && settings.bypassMaxConsecutiveLosses
-                    ? 'Both maximum positions and consecutive losses limits are currently bypassed.'
-                    : settings.bypassMaxPositions
-                    ? 'Max simultaneous positions limit is bypassed. Max consecutive losses limit is enforced.'
-                    : settings.bypassMaxConsecutiveLosses
-                    ? 'Max consecutive losses limit is bypassed. Max simultaneous positions limit is enforced.'
-                    : `RiskManager enforces maximum ${settings.maxConcurrentTrades || 10} positions and ${settings.maxConsecutiveLosses ?? 5} consecutive losses.`}
+            {(() => {
+              const bypassedList = [
+                settings.bypassMaxPositions && 'Max Positions',
+                settings.bypassMaxConsecutiveLosses && 'Loss Streak',
+                settings.bypassDailyLossLimit && 'Daily Loss',
+                settings.bypassExposureLimit && 'Total Exposure',
+                settings.bypassLiquidationBuffer && 'Liquidation Buffer',
+                settings.bypassTradeCooldown && 'Cooldown Timer',
+              ].filter(Boolean) as string[];
+              const isBypassed = bypassedList.length > 0;
+
+              return (
+                <div className={`p-4 rounded-xl border flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-all ${
+                  settings.killSwitchActive
+                    ? 'bg-rose-950/40 border-rose-500/60 shadow-lg shadow-rose-950/30'
+                    : isBypassed
+                    ? 'bg-amber-950/30 border-amber-500/50 shadow-lg shadow-amber-950/20'
+                    : 'bg-indigo-950/20 border-indigo-500/30'
+                }`}>
+                  <div className="flex items-start space-x-3.5">
+                    <div className={`w-3 h-3 rounded-full mt-1 shrink-0 ${
+                      settings.killSwitchActive
+                        ? 'bg-rose-500 animate-ping'
+                        : isBypassed
+                        ? 'bg-amber-400 animate-pulse'
+                        : 'bg-indigo-400'
+                    }`} />
+                    <div className="text-xs text-gray-300 leading-relaxed">
+                      <strong className={
+                        settings.killSwitchActive
+                          ? 'text-rose-400 font-bold'
+                          : isBypassed
+                          ? 'text-amber-400 font-bold'
+                          : 'text-indigo-300 font-bold'
+                      }>
+                        {settings.killSwitchActive
+                          ? '🚨 EMERGENCY KILL SWITCH ACTIVE:'
+                          : isBypassed
+                          ? `⚡ Circuit Breakers Bypassed (${bypassedList.length}):`
+                          : '🛡️ Risk Circuit Breakers Enforced:'}
+                      </strong>{' '}
+                      {settings.killSwitchActive
+                        ? 'All automated trade entries are strictly halted by the emergency interrupter. Click Disengage below to resume trading.'
+                        : isBypassed
+                        ? `Bypasses active for: ${bypassedList.join(', ')}. Qualified signals will bypass these gating checks directly into order execution.`
+                        : `RiskManager enforces max ${settings.maxConcurrentTrades || 10} positions, max ${settings.maxConsecutiveLosses ?? 4} consecutive losses, and ${settings.dailyLossLimitPct ?? 3}% daily loss limit.`}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 shrink-0 self-end lg:self-center pl-6 lg:pl-0">
+                    {resetLossStatus && (
+                      <span className="text-[11px] font-mono text-emerald-400 font-bold px-2 py-0.5 rounded bg-emerald-950/50 border border-emerald-500/30">
+                        {resetLossStatus}
+                      </span>
+                    )}
+                    {resetDailyLossStatus && (
+                      <span className="text-[11px] font-mono text-emerald-400 font-bold px-2 py-0.5 rounded bg-emerald-950/50 border border-emerald-500/30">
+                        {resetDailyLossStatus}
+                      </span>
+                    )}
+                    {killSwitchStatus && (
+                      <span className="text-[11px] font-mono text-amber-300 font-bold px-2 py-0.5 rounded bg-amber-950/50 border border-amber-500/30">
+                        {killSwitchStatus}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleResetLossStreak}
+                      disabled={isResettingLosses}
+                      className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 transition-colors shadow cursor-pointer"
+                      title="Reset consecutive loss counter back to 0"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isResettingLosses ? 'animate-spin' : ''}`} />
+                      <span>{isResettingLosses ? 'Resetting...' : 'Reset Losses'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleResetDailyLoss}
+                      disabled={isResettingDailyLoss}
+                      className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 transition-colors shadow cursor-pointer"
+                      title="Reset today's recorded loss % back to 0%"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isResettingDailyLoss ? 'animate-spin' : ''}`} />
+                      <span>{isResettingDailyLoss ? 'Resetting...' : 'Reset Daily Loss'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleToggleKillSwitch}
+                      disabled={isTogglingKillSwitch}
+                      className={`px-3 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-colors shadow cursor-pointer text-white ${
+                        settings.killSwitchActive
+                          ? 'bg-rose-600 hover:bg-rose-500 ring-2 ring-rose-400'
+                          : 'bg-gray-800 hover:bg-gray-700 border border-gray-700'
+                      }`}
+                    >
+                      <ShieldAlert className="w-3.5 h-3.5" />
+                      <span>{settings.killSwitchActive ? 'Disengage Kill Switch' : 'Kill Switch'}</span>
+                    </button>
+                  </div>
                 </div>
+              );
+            })()}
+
+            {/* SECTION 1: Circuit Breakers & Execution Bypass Switches */}
+            <div className="bg-[#0E1117]/90 rounded-xl border border-[#30363D] p-5 space-y-4">
+              <div className="border-b border-[#30363D] pb-3">
+                <h3 className="text-sm font-bold text-gray-100 flex items-center gap-2">
+                  <span>⚡ Execution Circuit Breakers & Bypass Switches</span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    UNBLOCK TRADES
+                  </span>
+                </h3>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  Toggle individual risk filters and circuit breakers OFF to allow automated trade entries without being stopped by risk safety rules.
+                </p>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0 self-end sm:self-center pl-6 sm:pl-0">
-                {resetLossStatus && (
-                  <span className="text-[11px] font-mono text-emerald-400 font-bold px-2 py-0.5 rounded bg-emerald-950/50 border border-emerald-500/30">
-                    {resetLossStatus}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={handleResetLossStreak}
-                  disabled={isResettingLosses}
-                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 transition-colors shadow cursor-pointer"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isResettingLosses ? 'animate-spin' : ''}`} />
-                  <span>{isResettingLosses ? 'Resetting...' : 'Reset Loss Streak'}</span>
-                </button>
+              <div className="divide-y divide-[#30363D]/40">
+                <ToggleRow
+                  label="Bypass Max Positions Limit"
+                  desc="Bypasses the 'Max simultaneous positions reached' block in RiskManager. Enables entering new trade signals regardless of how many positions are currently open."
+                  checked={settings.bypassMaxPositions}
+                  onChange={(v: boolean) => handleInputChange('bypassMaxPositions', v)}
+                />
+                <ToggleRow
+                  label="Bypass Max Consecutive Losses"
+                  desc="Bypasses the 'Max consecutive losses reached' block. Enables continuing autonomous entries without pausing after losing streaks."
+                  checked={settings.bypassMaxConsecutiveLosses}
+                  onChange={(v: boolean) => handleInputChange('bypassMaxConsecutiveLosses', v)}
+                />
+                <ToggleRow
+                  label="Bypass Daily Loss Limit"
+                  desc="Bypasses the 'Daily loss limit reached' circuit breaker. Allows new trade entries even if net PnL drops below the daily loss limit threshold."
+                  checked={settings.bypassDailyLossLimit}
+                  onChange={(v: boolean) => handleInputChange('bypassDailyLossLimit', v)}
+                />
+                <ToggleRow
+                  label="Bypass Portfolio Total Exposure Limit"
+                  desc="Bypasses the 'Exposure limit exceeded' / 'Portfolio exposure limit reached' gates. Allows placing new trades regardless of total active margin allocation."
+                  checked={settings.bypassExposureLimit}
+                  onChange={(v: boolean) => handleInputChange('bypassExposureLimit', v)}
+                />
+                <ToggleRow
+                  label="Bypass Liquidation Safety Buffer"
+                  desc="Bypasses strict liquidation distance buffer (1.3x). Automatically scales down to 1x unleveraged entry instead of rejecting wide stop distances."
+                  checked={settings.bypassLiquidationBuffer}
+                  onChange={(v: boolean) => handleInputChange('bypassLiquidationBuffer', v)}
+                />
+                <ToggleRow
+                  label="Bypass Trade Rejection Cooldown"
+                  desc="Bypasses the 60-second cooldown timer on symbols after skipped or rejected signals, allowing instant re-evaluation on every scanning cycle."
+                  checked={settings.bypassTradeCooldown}
+                  onChange={(v: boolean) => handleInputChange('bypassTradeCooldown', v)}
+                />
+                <ToggleRow
+                  label="Allow Fractional Contracts / Micro Sizing"
+                  desc="Allows sub-unit contract quantities (e.g. 0.005 BTC) so trades are not rejected with 'rounds to 0 contracts' on high-priced assets."
+                  checked={settings.allowFractionalContracts !== false}
+                  onChange={(v: boolean) => handleInputChange('allowFractionalContracts', v)}
+                  activeBadgeText="ENABLED"
+                  inactiveBadgeText="INTEGER ONLY"
+                  highRisk={false}
+                />
               </div>
             </div>
 
-            <div className="bg-[#0E1117]/90 rounded-xl border border-[#30363D] p-5 divide-y divide-[#30363D]/40">
-              {/* Bypass Max Positions */}
-              <div className="flex justify-between items-center py-3.5">
-                <div className="flex flex-col pr-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-gray-100">Bypass Max Positions Limit</span>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border transition-colors ${
-                      settings.bypassMaxPositions 
-                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' 
-                        : 'bg-gray-800 text-gray-400 border-gray-700'
-                    }`}>
-                      {settings.bypassMaxPositions ? 'ACTIVE (BYPASSED)' : 'ENFORCED'}
-                    </span>
-                  </div>
-                  <span className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
-                    Bypasses the "Max simultaneous positions reached" block. Enables entering new trade signals regardless of active positions count.
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleInputChange('bypassMaxPositions', !settings.bypassMaxPositions)}
-                  className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
-                    settings.bypassMaxPositions ? 'bg-amber-500' : 'bg-gray-700'
-                  }`}
-                >
-                  <div
-                    className={`w-4 h-4 rounded-full bg-white transition-transform ${
-                      settings.bypassMaxPositions ? 'transform translate-x-6' : ''
-                    }`}
-                  />
-                </button>
+            {/* SECTION 2: Granular Risk Limits & Thresholds */}
+            <div className="bg-[#0E1117]/90 rounded-xl border border-[#30363D] p-5 space-y-4">
+              <div className="border-b border-[#30363D] pb-3">
+                <h3 className="text-sm font-bold text-gray-100 flex items-center gap-2">
+                  <span>⚙️ Risk Limits & Position Sizing Parameters</span>
+                </h3>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  Fine-tune risk ceilings, account allocation percentages, leverage multipliers, and liquidation buffers.
+                </p>
               </div>
 
-              {/* Bypass Max Consecutive Losses */}
-              <div className="flex justify-between items-center py-3.5">
-                <div className="flex flex-col pr-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-gray-100">Bypass Max Consecutive Losses</span>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded border transition-colors ${
-                      settings.bypassMaxConsecutiveLosses 
-                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' 
-                        : 'bg-gray-800 text-gray-400 border-gray-700'
-                    }`}>
-                      {settings.bypassMaxConsecutiveLosses ? 'ACTIVE (BYPASSED)' : 'ENFORCED'}
-                    </span>
-                  </div>
-                  <span className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
-                    Bypasses the "Max consecutive losses reached" block. Enables entering new trade signals without pausing after losing streaks.
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleInputChange('bypassMaxConsecutiveLosses', !settings.bypassMaxConsecutiveLosses)}
-                  className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
-                    settings.bypassMaxConsecutiveLosses ? 'bg-amber-500' : 'bg-gray-700'
-                  }`}
-                >
-                  <div
-                    className={`w-4 h-4 rounded-full bg-white transition-transform ${
-                      settings.bypassMaxConsecutiveLosses ? 'transform translate-x-6' : ''
-                    }`}
-                  />
-                </button>
+              <div className="divide-y divide-[#30363D]/40">
+                <InputRow 
+                  label="Max Open Trades / Positions" 
+                  desc="Ceiling of simultaneous positions enforced by RiskManager (1 - 50). Ignored if Bypass Max Positions is ON." 
+                  value={settings.maxConcurrentTrades} 
+                  onChange={(v: any) => handleInputChange('maxConcurrentTrades', v)} 
+                  min={1} 
+                  max={50} 
+                />
+                <InputRow 
+                  label="Max Consecutive Losses" 
+                  desc="Pause new entries after this many consecutive losing trades (1 - 20, default: 4). Ignored if Bypass Losses is ON." 
+                  value={settings.maxConsecutiveLosses ?? 4} 
+                  onChange={(v: any) => handleInputChange('maxConsecutiveLosses', v)} 
+                  min={1} 
+                  max={20} 
+                />
+                <InputRow 
+                  label="Max Daily Loss %" 
+                  desc="Circuit breaker threshold (0.5% - 25%). Halts new entries for the day if net PnL drops below this. Ignored if Daily Loss Bypass is ON." 
+                  value={settings.dailyLossLimitPct} 
+                  onChange={(v: any) => handleInputChange('dailyLossLimitPct', v)} 
+                  min={0.5} 
+                  max={25} 
+                />
+                <InputRow 
+                  label="Max Portfolio Total Exposure %" 
+                  desc="Maximum aggregate margin exposure across all active positions relative to account equity (10% - 1000%, default: 100%). Ignored if Exposure Bypass is ON." 
+                  value={settings.maxPortfolioExposurePct ?? 100} 
+                  onChange={(v: any) => handleInputChange('maxPortfolioExposurePct', v)} 
+                  min={10} 
+                  max={1000} 
+                />
+                <InputRow 
+                  label="Account Risk Per Trade %" 
+                  desc="% of account equity risked on stop-loss distance (e.g. 1.0% = 0.01)" 
+                  value={settings.accountRiskPct} 
+                  onChange={(v: any) => handleInputChange('accountRiskPct', v)} 
+                  min={0.1} 
+                  max={10} 
+                />
+                <InputRow 
+                  label="Position Margin per Trade %" 
+                  desc="Maximum capital allocation ceiling % of balance per single position" 
+                  value={settings.positionSizePct} 
+                  onChange={(v: any) => handleInputChange('positionSizePct', v)} 
+                  min={0.1} 
+                  max={100} 
+                />
+                <InputRow 
+                  label="Leverage Multiplier" 
+                  desc="Cross margin leverage multiplier (1x - 125x)" 
+                  value={settings.leverage} 
+                  onChange={(v: any) => handleInputChange('leverage', v)} 
+                  min={1} 
+                  max={125} 
+                />
+                <InputRow 
+                  label="Min Liquidation Safety Buffer" 
+                  desc="Minimum required ratio between liquidation distance and stop-loss distance (1.01x - 3.0x, default: 1.30x). Lower values allow tighter leverage." 
+                  value={settings.minLiquidationBuffer ?? 1.3} 
+                  onChange={(v: any) => handleInputChange('minLiquidationBuffer', v)} 
+                  min={1.01} 
+                  max={3.0} 
+                />
+                <InputRow 
+                  label="Max Single Position Exposure Multiplier" 
+                  desc="Maximum notional value of a single position as a multiple of account equity (1x - 50x, default: 5x)" 
+                  value={settings.maxSinglePositionExposureMult ?? 5} 
+                  onChange={(v: any) => handleInputChange('maxSinglePositionExposureMult', v)} 
+                  min={1} 
+                  max={50} 
+                />
+                <InputRow 
+                  label="Min Viable Stop Distance %" 
+                  desc="Minimum viable stop-loss distance used for position sizing math (0.0005 - 0.05, default: 0.005 = 0.5%)" 
+                  value={settings.minStopDistancePct ?? 0.005} 
+                  onChange={(v: any) => handleInputChange('minStopDistancePct', v)} 
+                  min={0.0005} 
+                  max={0.05} 
+                />
+                <InputRow 
+                  label="Trade Rejection Cooldown (Seconds)" 
+                  desc="Cooldown wait duration on a symbol after a trade is rejected or skipped (0 - 600s, default: 60s). Set to 0 or use bypass to eliminate wait." 
+                  value={settings.tradeCooldownSeconds ?? 60} 
+                  onChange={(v: any) => handleInputChange('tradeCooldownSeconds', v)} 
+                  min={0} 
+                  max={600} 
+                />
               </div>
-
-              <InputRow 
-                label="Max Open Trades / Positions" 
-                desc="Ceiling of simultaneous positions enforced by RiskManager (1 - 50). Ignored if Bypass is ON." 
-                value={settings.maxConcurrentTrades} 
-                onChange={(v: any) => handleInputChange('maxConcurrentTrades', v)} 
-                min={1} 
-                max={50} 
-              />
-              <InputRow 
-                label="Max Consecutive Losses" 
-                desc="Pause new entries after this many consecutive losing trades (1 - 20, default: 5). Ignored if Bypass is ON." 
-                value={settings.maxConsecutiveLosses ?? 5} 
-                onChange={(v: any) => handleInputChange('maxConsecutiveLosses', v)} 
-                min={1} 
-                max={20} 
-              />
-              <InputRow 
-                label="Account Risk Per Trade %" 
-                desc="% of account equity risked on stop-loss distance (e.g. 1.0% = 0.01)" 
-                value={settings.accountRiskPct} 
-                onChange={(v: any) => handleInputChange('accountRiskPct', v)} 
-                min={0.1} 
-                max={10} 
-              />
-              <InputRow 
-                label="Position Margin per Trade %" 
-                desc="Maximum capital allocation ceiling % of balance per position" 
-                value={settings.positionSizePct} 
-                onChange={(v: any) => handleInputChange('positionSizePct', v)} 
-                min={0.1} 
-                max={100} 
-              />
-              <InputRow 
-                label="Leverage Multiplier" 
-                desc="Cross margin leverage multiplier (1x - 125x)" 
-                value={settings.leverage} 
-                onChange={(v: any) => handleInputChange('leverage', v)} 
-                min={1} 
-                max={125} 
-              />
-              <InputRow 
-                label="Max Daily Loss %" 
-                desc="Circuit breaker threshold. Halts all new entries for the day if net PnL drops below this" 
-                value={settings.dailyLossLimitPct} 
-                onChange={(v: any) => handleInputChange('dailyLossLimitPct', v)} 
-                min={0.5} 
-                max={25} 
-              />
             </div>
           </div>
         )}

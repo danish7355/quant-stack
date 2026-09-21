@@ -20,7 +20,18 @@ export interface TradingSettings {
   bypassMaxPositions?: boolean;    // Bypass maximum simultaneous positions limit
   maxConsecutiveLosses?: number;   // Max consecutive losses before cooling down (1 - 20)
   bypassMaxConsecutiveLosses?: boolean; // Bypass max consecutive losses limit
-  dailyLossLimitPct: number;       // Max daily loss % before circuit breaker (0.5 - 25)
+  dailyLossLimitPct: number;       // Max daily loss % before circuit breaker (0.5 - 50)
+  bypassDailyLossLimit?: boolean;  // Bypass daily loss limit circuit breaker
+  maxPortfolioExposurePct?: number; // Max total portfolio exposure % (10 - 1000, default 100)
+  bypassExposureLimit?: boolean;   // Bypass total portfolio exposure limit
+  minLiquidationBuffer?: number;   // Minimum ratio between liq distance and stop distance (1.01 - 3.0, default 1.3)
+  bypassLiquidationBuffer?: boolean; // Bypass strict liquidation buffer and fallback to 1x leverage
+  maxSinglePositionExposureMult?: number; // Max single trade notional multiple of account (1 - 50, default 5)
+  minStopDistancePct?: number;     // Minimum stop distance % used for sizing (0.0005 - 0.05, default 0.005)
+  tradeCooldownSeconds?: number;   // Cooldown duration in seconds after skip/rejection (0 - 600, default 60)
+  bypassTradeCooldown?: boolean;   // Bypass cooldown timer after skipped/rejected trades
+  allowFractionalContracts?: boolean; // Allow sub-unit contract sizing for high-value coins
+  killSwitchActive?: boolean;      // Emergency manual kill switch
   maxDrawdownPct: number;          // Max portfolio drawdown % (1 - 50)
   startingBalance: number;         // Starting demo/paper balance
   demoBalance?: number;            // Current virtual balance
@@ -205,6 +216,11 @@ export const NUMERIC_BOUNDS: Record<string, { min: number; max: number; step?: n
   maxConcurrentTrades: { min: 1, max: 50, step: 1, label: 'Max Open Trades' },
   maxConsecutiveLosses: { min: 1, max: 20, step: 1, label: 'Max Consecutive Losses' },
   dailyLossLimitPct: { min: 0.5, max: 25, step: 0.5, label: 'Daily Max Loss (%)', highRisk: true },
+  maxPortfolioExposurePct: { min: 10, max: 1000, step: 10, label: 'Max Portfolio Exposure (%)', highRisk: true },
+  minLiquidationBuffer: { min: 1.01, max: 3.0, step: 0.05, label: 'Min Liquidation Safety Buffer' },
+  maxSinglePositionExposureMult: { min: 1, max: 50, step: 0.5, label: 'Max Single Position Multiplier' },
+  minStopDistancePct: { min: 0.0005, max: 0.05, step: 0.0005, label: 'Min Stop Distance (%)' },
+  tradeCooldownSeconds: { min: 0, max: 600, step: 5, label: 'Trade Rejection Cooldown (s)' },
   maxDrawdownPct: { min: 1, max: 50, step: 1, label: 'Max Drawdown (%)' },
   autoTradeThreshold: { min: 50, max: 100, step: 1, label: 'Min Score Threshold' },
   scanInterval: { min: 5, max: 3600, step: 5, label: 'Scan Interval (s)' },
@@ -285,7 +301,9 @@ export function validateTradingSettings(input: unknown): ValidationResult {
     'crEnabled', 'useMtfAlignment', 'useVpvrFilter', 'useAtrTrailingStop',
     'vcbRequireSweep', 'vcbRequireRetest', 'vcbEnforceKillZone',
     'smcUseKillZone', 'smcStrictHtfRegime', 'tpbRequireVolume',
-    'bypassMaxPositions', 'bypassMaxConsecutiveLosses',
+    'bypassMaxPositions', 'bypassMaxConsecutiveLosses', 'bypassDailyLossLimit',
+    'bypassExposureLimit', 'bypassLiquidationBuffer', 'bypassTradeCooldown',
+    'allowFractionalContracts', 'killSwitchActive',
     'alertOnNewSignal', 'alertOnTradeExecuted', 'alertOnTpHit', 'alertOnSlHit',
     'alertOnTsMoved', 'alertOnDailyLossLimit', 'alertOnRangingDetected',
     'alertSilentMode', 'binanceTestnet', 'scanOnlyWatchlist'
@@ -417,6 +435,17 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   maxConsecutiveLosses: 4,
   bypassMaxConsecutiveLosses: false,
   dailyLossLimitPct: 3,
+  bypassDailyLossLimit: false,
+  maxPortfolioExposurePct: 100,
+  bypassExposureLimit: false,
+  minLiquidationBuffer: 1.3,
+  bypassLiquidationBuffer: false,
+  maxSinglePositionExposureMult: 5,
+  minStopDistancePct: 0.005,
+  tradeCooldownSeconds: 60,
+  bypassTradeCooldown: false,
+  allowFractionalContracts: true,
+  killSwitchActive: false,
   maxDrawdownPct: 10,
 
   tp1AtrMultiple: 2.0,
