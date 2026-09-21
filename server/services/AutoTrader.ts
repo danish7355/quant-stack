@@ -792,7 +792,15 @@ export class AutoTrader {
         
         if (signal) {
            const passes = signal.score >= this.settings.autoTradeThreshold;
-           this.logScanResult(symbol, signal.direction, passes, signal.reason || (passes ? 'Passed' : 'Low Score'), currentPrice, signal.sl, signal.tp1, signal.score);
+           this.logScanResult(symbol, signal.direction, passes, signal.reason || (passes ? 'Passed' : 'Low Score'), currentPrice, signal.sl, signal.tp1, signal.score, {
+             strategy: (signal as any).strategy || this.settings.activeStrategy,
+             marketRegime: (signal as any).marketRegime,
+             macroColor: (signal as any).macroColor,
+             regimeConfidence: (signal as any).regimeConfidence,
+             tradeQuality: (signal as any).tradeQuality,
+             strategyPriority: (signal as any).strategyPriority,
+             structuralRR: (signal as any).structuralRR
+           });
         } else {
            this.logScanResult(symbol, 'NEUTRAL', false, 'Failed Technical Gates (Climax/VCB/Composite)', currentPrice, 0, 0, 0);
         }
@@ -835,7 +843,15 @@ export class AutoTrader {
 
             if (maxAllocation <= 0) {
               console.log(`🛡️ [AutoTrader] Sizing skipped for ${symbol}: Maximum exposure limit reached.`);
-              this.logScanResult(symbol, signal.direction, false, 'Risk Manager: Maximum exposure limit reached', currentPrice, signal.sl, signal.tp1, signal.score);
+              this.logScanResult(symbol, signal.direction, false, 'Risk Manager: Maximum exposure limit reached', currentPrice, signal.sl, signal.tp1, signal.score, {
+                strategy: finalStrat,
+                marketRegime,
+                macroColor: (signal as any).macroColor,
+                regimeConfidence: (signal as any).regimeConfidence,
+                tradeQuality: (signal as any).tradeQuality,
+                strategyPriority: (signal as any).strategyPriority,
+                structuralRR: (signal as any).structuralRR
+              });
               this.tradeCooldowns.set(symbol, Date.now() + 60000);
               this.pendingSymbols.delete(symbol);
               continue;
@@ -852,7 +868,15 @@ export class AutoTrader {
 
             if (sizeResult.rejected || sizeResult.contracts <= 0) {
               console.log(`[AutoTrader] Dynamic risk sizing rejected for ${symbol}: ${sizeResult.reason}`);
-              this.logScanResult(symbol, signal.direction, false, `Risk Manager: ${sizeResult.reason}`, currentPrice, signal.sl, signal.tp1, signal.score);
+              this.logScanResult(symbol, signal.direction, false, `Risk Manager: ${sizeResult.reason}`, currentPrice, signal.sl, signal.tp1, signal.score, {
+                strategy: finalStrat,
+                marketRegime,
+                macroColor: (signal as any).macroColor,
+                regimeConfidence: (signal as any).regimeConfidence,
+                tradeQuality: (signal as any).tradeQuality,
+                strategyPriority: (signal as any).strategyPriority,
+                structuralRR: (signal as any).structuralRR
+              });
               this.tradeCooldowns.set(symbol, Date.now() + 60000);
               this.pendingSymbols.delete(symbol);
               continue;
@@ -868,7 +892,15 @@ export class AutoTrader {
           const riskCheck = riskManager.checkEntryAllowed(dummyBalance, allocatedBalance, activePositionsNow.length);
           if (!riskCheck.allowed) {
             console.log(`🛡️ [RiskManager] Entry blocked for ${symbol}: ${riskCheck.reason}`);
-            this.logScanResult(symbol, signal.direction, false, `Risk Manager: ${riskCheck.reason}`, currentPrice, signal.sl, signal.tp1, signal.score);
+            this.logScanResult(symbol, signal.direction, false, `Risk Manager: ${riskCheck.reason}`, currentPrice, signal.sl, signal.tp1, signal.score, {
+              strategy: finalStrat,
+              marketRegime,
+              macroColor: (signal as any).macroColor,
+              regimeConfidence: (signal as any).regimeConfidence,
+              tradeQuality: (signal as any).tradeQuality,
+              strategyPriority: (signal as any).strategyPriority,
+              structuralRR: (signal as any).structuralRR
+            });
             this.tradeCooldowns.set(symbol, Date.now() + 60000);
             this.pendingSymbols.delete(symbol);
             continue;
@@ -908,6 +940,7 @@ export class AutoTrader {
             if (posId) {
               console.log(`✅ [AutoTrader] Trade filled and active: ${symbol} (${signal.direction}) PosId: ${posId}`);
               this.logScanResult(symbol, signal.direction, true, '', currentPrice, signal.sl, signal.tp1, signal.score, {
+                strategy: finalStrat,
                 macroColor: (signal as any).macroColor,
                 marketRegime: (signal as any).marketRegime,
                 regimeConfidence: (signal as any).regimeConfidence,
@@ -1192,7 +1225,12 @@ export class AutoTrader {
     // Enforce minimum stop distance (e.g., 0.3% to avoid spread/noise stops)
     const minDistance = currentPrice * 0.003;
     if (risk < minDistance) {
-      this.logScanResult(symbol, rawSignal.direction, false, `Gate Failed: SL too tight (Risk: ${(risk/currentPrice*100).toFixed(2)}%, Min: 0.3%)`, currentPrice, rawSignal.sl, rawSignal.tp1, rawSignal.score);
+      this.logScanResult(symbol, rawSignal.direction, false, `Gate Failed: SL too tight (Risk: ${(risk/currentPrice*100).toFixed(2)}%, Min: 0.3%)`, currentPrice, rawSignal.sl, rawSignal.tp1, rawSignal.score, {
+        strategy: rawSignal.strategy,
+        marketRegime: classification.label,
+        macroColor: globalRegime.macroColor,
+        regimeConfidence: classification.confidence
+      });
       return null;
     }
     if (risk <= 0) return null;
@@ -1200,7 +1238,7 @@ export class AutoTrader {
     const reward3 = Math.abs(rawSignal.tp3 - currentPrice);
     const structuralRR = reward3 / risk;
     
-    const minRR = (rawSignal.strategy === 'DELTA_CLIMAX' || classification.regime.startsWith('EXHAUSTION')) ? 2.5 : 3.0;
+    const minRR = (rawSignal.strategy === 'DELTA_CLIMAX' || rawSignal.strategy === 'BINANCE_COMPOSITE' || classification.regime.startsWith('EXHAUSTION') || classification.regime === 'RANGING') ? 2.5 : 3.0;
     if (structuralRR < minRR) {
       return null; // structural target doesn't offer adequate R:R. Stand aside in cash!
     }
@@ -1361,7 +1399,7 @@ export class AutoTrader {
     }
 
     // 7. Ranging Mean-Reversion Strategy
-    if (strat === 'BINANCE_COMPOSITE') {
+    if (strat === 'BINANCE_COMPOSITE' || strat === 'RANGE_MEAN_REVERSION') {
       const compSig = this.evaluateCompositeStrategy(klines, currentPrice);
       if (!compSig) return null;
       return { ...compSig, strategy: 'BINANCE_COMPOSITE', marketRegime: 'Ranging [1:3 R:R Mean-Reversion]' };
@@ -1586,10 +1624,10 @@ export class AutoTrader {
         }
       }
 
-      if (candidate.id === 'BINANCE_COMPOSITE' && currentRegime === 'RANGING') {
+      if ((candidate.id === 'BINANCE_COMPOSITE' || candidate.id === 'RANGE_MEAN_REVERSION') && currentRegime === 'RANGING') {
         const compositeSignal = this.evaluateCompositeStrategy(closedKlines, currentPrice);
         if (compositeSignal) {
-          pendingSignal = { ...compositeSignal };
+          pendingSignal = { ...compositeSignal, strategy: 'BINANCE_COMPOSITE' };
         }
       }
 
@@ -1699,7 +1737,7 @@ export class AutoTrader {
         }
 
         // 5. Structural Risk-to-Reward Gate (>= 3.0 required, or >= 2.5 for DELTA_CLIMAX / Mean Reversion)
-        const minRR = (candidate.id === 'DELTA_CLIMAX' || currentRegime.startsWith('EXHAUSTION')) ? 2.5 : 3.0;
+        const minRR = (candidate.id === 'DELTA_CLIMAX' || candidate.id === 'BINANCE_COMPOSITE' || candidate.id === 'RANGE_MEAN_REVERSION' || currentRegime.startsWith('EXHAUSTION') || currentRegime === 'RANGING') ? 2.5 : 3.0;
         const reward3 = Math.abs(pendingSignal.tp3 - currentPrice);
         const structuralRR = risk > 0 ? (reward3 / risk) : 0;
         if (structuralRR < minRR) {
@@ -1993,7 +2031,8 @@ export class AutoTrader {
     
     const atrSeries = calculateATR(previousCandles, 14);
     const atr = atrSeries[atrSeries.length - 1] || currentPrice * 0.015;
-    const atrAvg = atrSeries.slice(-50).reduce((a, b) => a + b, 0) / 50;
+    const atrRecent = atrSeries.slice(-50);
+    const atrAvg = atrRecent.length > 0 ? atrRecent.reduce((a, b) => a + b, 0) / atrRecent.length : atr;
     
     const settingsObj: any = this.settings; 
     
