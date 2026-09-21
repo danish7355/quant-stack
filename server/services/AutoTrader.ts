@@ -445,7 +445,13 @@ export class AutoTrader {
       telegramService.updateConfig(this.settings.telegramBotToken, this.settings.telegramChatId);
     }
     telegramService.updateSettings(this.settings);
-    riskManager.updateSettings(this.settings.dailyLossLimitPct, undefined);
+    riskManager.updateSettings(
+      this.settings.dailyLossLimitPct, 
+      undefined, 
+      undefined, 
+      this.settings.maxConcurrentTrades, 
+      this.settings.bypassMaxPositions
+    );
     positionMonitor.settings = this.settings;
 
     return this.settings;
@@ -476,7 +482,13 @@ export class AutoTrader {
       telegramService.updateConfig(this.settings.telegramBotToken, this.settings.telegramChatId);
     }
     telegramService.updateSettings(this.settings);
-    riskManager.updateSettings(this.settings.dailyLossLimitPct, undefined);
+    riskManager.updateSettings(
+      this.settings.dailyLossLimitPct, 
+      undefined, 
+      undefined, 
+      this.settings.maxConcurrentTrades, 
+      this.settings.bypassMaxPositions
+    );
     positionMonitor.settings = this.settings;
 
     // Always persist locally
@@ -808,7 +820,10 @@ export class AutoTrader {
         if (signal && signal.score >= this.settings.autoTradeThreshold) {
 
           const currentTotal = positionMonitor.getActivePositions().length + this.pendingSymbols.size;
-          if (currentTotal >= this.settings.maxConcurrentTrades) break;
+          if (!this.settings.bypassMaxPositions && currentTotal >= this.settings.maxConcurrentTrades) {
+            console.log(`⏸️ [AutoTrader] Max concurrent trades reached (${currentTotal}/${this.settings.maxConcurrentTrades}). Waiting for exits.`);
+            break;
+          }
 
           // Correlation filter (Section 8)
           if (activePositions.length > 0) {

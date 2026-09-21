@@ -743,6 +743,125 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({ settings, setSettings, gl
               </div>
             </div>
 
+            {/* SMC High-Probability Strategy Parameters */}
+            <div className="bg-[#161B22] rounded-xl p-6 border border-purple-500/30 space-y-4 shadow-xl shadow-purple-950/10">
+              <div className="flex items-center justify-between border-b border-[#30363D] pb-3">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-purple-400" />
+                    <span>Smart Money Concepts (SMC) Liquidity Sweep Parameters</span>
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">High-probability institutional price-action strategy targeting liquidity sweeps, MSS displacement, and FVG/OB confluence.</p>
+                </div>
+                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                  INSTITUTIONAL
+                </span>
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-gray-800/50 gap-4">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Higher-Timeframe (HTF) Resolution</span>
+                    <span className="text-xs text-gray-500 mt-1">Resolution used to establish institutional HTF market structure & trend direction</span>
+                  </div>
+                  <div className="flex bg-gray-900 rounded p-1 border border-gray-700">
+                    {['15m', '1h', '4h', '1d'].map((res) => (
+                      <button
+                        key={res}
+                        type="button"
+                        onClick={() => handleInputChange('smcHtfResolution', res)}
+                        className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${
+                          (settings.smcHtfResolution || '1h') === res
+                            ? 'bg-purple-600 text-white'
+                            : 'text-gray-400 hover:text-gray-200'
+                        }`}
+                      >
+                        {res}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <InputRow label="Structure Pivot Length (Bars)" desc="Bars on left/right to confirm Swing High/Low pivot" value={settings.smcStructureLen ?? 10} onChange={(v: any) => handleInputChange('smcStructureLen', v)} min={3} max={50} />
+                <InputRow label="Min Sweep Wick/Body Ratio" desc="Minimum ratio of wick extension to candle body size for stop hunt" value={settings.smcWickRatio ?? 0.6} onChange={(v: any) => handleInputChange('smcWickRatio', v)} step={0.1} min={0.2} max={2.0} />
+                <InputRow label="Min Sweep Extension (%)" desc="Percentage beyond swing pivot required (e.g. 0.0015 = 0.15%)" value={settings.smcMinSweepWickPct ?? 0.0015} onChange={(v: any) => handleInputChange('smcMinSweepWickPct', v)} step={0.0005} min={0.0005} max={0.05} />
+                <InputRow label="MSS Displacement ATR Multiplier" desc="Displacement candle body must exceed this multiple of ATR" value={settings.smcDispAtrMult ?? 0.5} onChange={(v: any) => handleInputChange('smcDispAtrMult', v)} step={0.1} min={0.2} max={5.0} />
+                <InputRow label="Sweep-to-MSS Max Bars Window" desc="Max candles allowed between liquidity sweep and displacement MSS" value={settings.smcSweepConfirmWindow ?? 10} onChange={(v: any) => handleInputChange('smcSweepConfirmWindow', v)} min={3} max={50} />
+                <InputRow label="MSS Volume Multiplier" desc="Displacement candle volume vs 20 SMA multiplier" value={settings.smcVolMult ?? 1.5} onChange={(v: any) => handleInputChange('smcVolMult', v)} step={0.1} min={1.0} max={5.0} />
+                <InputRow label="MSS-to-FVG Max Bars Window" desc="Max candles after MSS displacement to find Fair Value Gap" value={settings.smcFvgAfterMssWindow ?? 5} onChange={(v: any) => handleInputChange('smcFvgAfterMssWindow', v)} min={2} max={30} />
+                <InputRow label="Order Block Lookback Bars" desc="Candles searched back from MSS to detect origin Order Block" value={settings.smcObLookback ?? 30} onChange={(v: any) => handleInputChange('smcObLookback', v)} min={10} max={100} />
+                <InputRow label="Stop Loss ATR Multiplier" desc="Protective stop buffer beyond sweep extreme in multiples of ATR" value={settings.smcAtrStopMult ?? 1.5} onChange={(v: any) => handleInputChange('smcAtrStopMult', v)} step={0.1} min={0.5} max={5.0} />
+                <InputRow label="Target Risk:Reward Ratio" desc="Fixed structural take-profit target multiple vs initial risk" value={settings.smcRrRatio ?? 3.0} onChange={(v: any) => handleInputChange('smcRrRatio', v)} step={0.5} min={1.5} max={10.0} />
+
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Session Kill Zone Filter</span>
+                    <span className="text-xs text-gray-500 mt-1">Restrict execution to London (07-10 UTC) and NY (12-15 UTC) hours</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(settings.smcUseKillZone)}
+                    onChange={(e) => handleInputChange('smcUseKillZone', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-purple-600 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Strict HTF Structure Alignment</span>
+                    <span className="text-xs text-gray-500 mt-1">Block Longs in Bearish HTF and Shorts in Bullish HTF</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(settings.smcStrictHtfRegime)}
+                    onChange={(e) => handleInputChange('smcStrictHtfRegime', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-purple-600 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Trend Pullback Strategy Parameters */}
+            <div className="bg-[#161B22] rounded-xl p-6 border border-blue-500/30 space-y-4 shadow-xl shadow-blue-950/10">
+              <div className="flex items-center justify-between border-b border-[#30363D] pb-3">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Target className="w-4 h-4 text-blue-400" />
+                    <span>Trend Pullback (HTF + MTF Retest) Parameters</span>
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Trend-following retest strategy with EMA20/50 alignment, ADX momentum, and volume surge filtering.</p>
+                </div>
+                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                  TREND FOLLOWING
+                </span>
+              </div>
+
+              <div className="space-y-1">
+                <InputRow label="Fast Trend EMA Period" desc="Fast EMA period for dynamic pullback detection (default: 20)" value={settings.tpbEmaFast ?? 20} onChange={(v: any) => handleInputChange('tpbEmaFast', v)} min={5} max={100} />
+                <InputRow label="Slow Baseline EMA Period" desc="Slow baseline EMA period for trend direction (default: 50)" value={settings.tpbEmaSlow ?? 50} onChange={(v: any) => handleInputChange('tpbEmaSlow', v)} min={20} max={200} />
+                <InputRow label="Minimum ADX Momentum" desc="ADX must be above this threshold to confirm trend (default: 18)" value={settings.tpbAdxMin ?? 18} onChange={(v: any) => handleInputChange('tpbAdxMin', v)} min={10} max={50} />
+                <InputRow label="Volume SMA Lookback Period" desc="Lookback period for baseline volume moving average (default: 20)" value={settings.tpbVolumeSmaPeriod ?? 20} onChange={(v: any) => handleInputChange('tpbVolumeSmaPeriod', v)} min={5} max={50} />
+                <InputRow label="Min Volume Surge Ratio" desc="Retest bounce candle volume vs SMA ratio (default: 1.0x)" value={settings.tpbMinVolumeRatio ?? 1.0} onChange={(v: any) => handleInputChange('tpbMinVolumeRatio', v)} step={0.1} min={0.5} max={5.0} />
+                <InputRow label="Max Entry Distance from EMA (x ATR)" desc="Max allowable price extension from Fast EMA (default: 0.25)" value={settings.tpbMaxEntryDistanceAtr ?? 0.25} onChange={(v: any) => handleInputChange('tpbMaxEntryDistanceAtr', v)} step={0.05} min={0.1} max={3.0} />
+                <InputRow label="Minimum Risk-to-Reward Ratio" desc="Required minimum asymmetric target multiple (default: 1.5)" value={settings.tpbMinRrRatio ?? 1.5} onChange={(v: any) => handleInputChange('tpbMinRrRatio', v)} step={0.1} min={1.0} max={5.0} />
+                <InputRow label="Min Confirmation Score" desc="Minimum 5-pillar confirmation score to enter trade (default: 8/10)" value={settings.tpbMinScore ?? 8} onChange={(v: any) => handleInputChange('tpbMinScore', v)} min={5} max={10} />
+                <InputRow label="Stop Loss ATR Buffer" desc="Buffer added beyond recent swing low/high in ATR (default: 0.3)" value={settings.tpbAtrBuffer ?? 0.3} onChange={(v: any) => handleInputChange('tpbAtrBuffer', v)} step={0.1} min={0.1} max={2.0} />
+
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Require Volume Surge</span>
+                    <span className="text-xs text-gray-500 mt-1">Block retest setups that lack confirmed volume expansion</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.tpbRequireVolume !== false}
+                    onChange={(e) => handleInputChange('tpbRequireVolume', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-blue-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* Ranging 1:3 R:R Mean-Reversion Parameters */}
             <div className="bg-[#161B22] rounded-xl p-6 border border-[#30363D] space-y-4">
               <div>

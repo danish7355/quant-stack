@@ -17,6 +17,7 @@ export interface TradingSettings {
   positionSizePct: number;         // % total balance per trade margin (e.g., 10.0)
   leverage: number;                // Max leverage (1 - 125)
   maxConcurrentTrades: number;     // Max open trades (1 - 50)
+  bypassMaxPositions?: boolean;    // Bypass maximum simultaneous positions limit
   dailyLossLimitPct: number;       // Max daily loss % before circuit breaker (0.5 - 25)
   maxDrawdownPct: number;          // Max portfolio drawdown % (1 - 50)
   startingBalance: number;         // Starting demo/paper balance
@@ -280,7 +281,8 @@ export function validateTradingSettings(input: unknown): ValidationResult {
     'autoTradeEnabled', 'useGlobalBtcFilter', 'timeBasedExitEnabled',
     'crEnabled', 'useMtfAlignment', 'useVpvrFilter', 'useAtrTrailingStop',
     'vcbRequireSweep', 'vcbRequireRetest', 'vcbEnforceKillZone',
-    'smcUseKillZone', 'smcStrictHtfRegime',
+    'smcUseKillZone', 'smcStrictHtfRegime', 'tpbRequireVolume',
+    'bypassMaxPositions',
     'alertOnNewSignal', 'alertOnTradeExecuted', 'alertOnTpHit', 'alertOnSlHit',
     'alertOnTsMoved', 'alertOnDailyLossLimit', 'alertOnRangingDetected',
     'alertSilentMode', 'binanceTestnet', 'scanOnlyWatchlist'
@@ -408,6 +410,7 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   accountRiskPct: 1,
   leverage: 1,
   maxConcurrentTrades: 10,
+  bypassMaxPositions: false,
   dailyLossLimitPct: 3,
   maxDrawdownPct: 10,
 

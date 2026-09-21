@@ -1,7 +1,8 @@
 export class RiskManager {
   private maxLeverage = 20;
   private maxExposurePct = 1.0; // Allow up to 80% total exposure across concurrent positions
-  private maxSimultaneousTrades = 5;
+  private maxSimultaneousTrades = 10;
+  private bypassMaxPositions = false;
   private currentExposure = 0;
   private consecutiveLosses = 0;
   private maxConsecutiveLosses = 4;
@@ -10,7 +11,13 @@ export class RiskManager {
   private killSwitchActive = false;
   private lastResetDate = new Date().toISOString().split('T')[0];
 
-  public updateSettings(limitPct?: number, maxLosses?: number, maxExposure?: number) {
+  public updateSettings(
+    limitPct?: number, 
+    maxLosses?: number, 
+    maxExposure?: number, 
+    maxTrades?: number, 
+    bypassMaxPositions?: boolean
+  ) {
     if (limitPct !== undefined && limitPct !== null) {
       this.dailyLossLimitPct = -Math.abs(limitPct); // Ensure it's negative
     }
@@ -19,6 +26,12 @@ export class RiskManager {
     }
     if (maxExposure !== undefined && maxExposure !== null && maxExposure > 0) {
       this.maxExposurePct = maxExposure > 1 ? maxExposure / 100 : maxExposure;
+    }
+    if (maxTrades !== undefined && maxTrades !== null && maxTrades > 0) {
+      this.maxSimultaneousTrades = maxTrades;
+    }
+    if (bypassMaxPositions !== undefined && bypassMaxPositions !== null) {
+      this.bypassMaxPositions = Boolean(bypassMaxPositions);
     }
   }
 
@@ -64,7 +77,7 @@ export class RiskManager {
       return { allowed: false, reason: `Max consecutive losses (${this.maxConsecutiveLosses}) reached.` };
     }
     
-    if (currentPositionsCount >= this.maxSimultaneousTrades) {
+    if (!this.bypassMaxPositions && this.maxSimultaneousTrades > 0 && currentPositionsCount >= this.maxSimultaneousTrades) {
       return { allowed: false, reason: `Max simultaneous positions (${this.maxSimultaneousTrades}) reached.` };
     }
 
@@ -199,6 +212,22 @@ export class RiskManager {
 
   public activateKillSwitch() {
     this.killSwitchActive = true;
+  }
+
+  public getMaxSimultaneousTrades(): number {
+    return this.maxSimultaneousTrades;
+  }
+
+  public setMaxSimultaneousTrades(maxTrades: number) {
+    this.maxSimultaneousTrades = Math.max(1, maxTrades);
+  }
+
+  public isBypassMaxPositions(): boolean {
+    return this.bypassMaxPositions;
+  }
+
+  public setBypassMaxPositions(bypass: boolean) {
+    this.bypassMaxPositions = Boolean(bypass);
   }
 }
 

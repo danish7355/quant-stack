@@ -263,6 +263,29 @@ async function startServer() {
         slAtrMultiple: [0.3, 5],
         minRRRatio: [1, 10],
         trailActivationR: [0.5, 5],
+        smcStructureLen: [3, 50],
+        smcWickRatio: [0.2, 2.0],
+        smcMinSweepWickPct: [0.0005, 0.05],
+        smcDispAtrMult: [0.2, 5.0],
+        smcSweepConfirmWindow: [3, 50],
+        smcVolMult: [1.0, 5.0],
+        smcFvgAfterMssWindow: [2, 30],
+        smcObLookback: [10, 100],
+        smcAtrStopMult: [0.5, 5.0],
+        smcRrRatio: [1.5, 10.0],
+        tpbEmaFast: [5, 100],
+        tpbEmaSlow: [20, 200],
+        tpbAdxMin: [10, 50],
+        tpbMinVolumeRatio: [0.5, 5.0],
+        tpbMaxEntryDistanceAtr: [0.1, 3.0],
+        tpbMinScore: [5, 10],
+        rmrMaxAdx: [10, 40],
+        rmrMaxAtrRatio: [1.0, 2.0],
+        rmrMinScore: [5, 11],
+        rmrOuterRangePct: [0.10, 0.35],
+        rmrMinRrRatio: [1.0, 5.0],
+        vcbChecklistMinScore: [5, 11],
+        vcbMinRrRatio: [1.5, 5.0],
       };
       const validationErrors: string[] = [];
       for (const [field, [min, max]] of Object.entries(numericBounds)) {
@@ -324,6 +347,7 @@ async function startServer() {
         accountRiskPct: current.accountRiskPct,
         dailyLossLimitPct: current.dailyLossLimitPct,
         maxConcurrentTrades: current.maxConcurrentTrades,
+        bypassMaxPositions: Boolean(current.bypassMaxPositions),
         leverage: current.leverage
       });
     } catch (e) {
