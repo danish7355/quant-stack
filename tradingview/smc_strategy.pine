@@ -1,0 +1,256 @@
+//@version=6
+strategy("SMC High-Probability Auto-Trading Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=2, commission_type=strategy.commission.percent, commission_value=0.06)
+
+// =============================================================================
+// 6. PARAMETER INPUTS
+// =============================================================================
+grp_htf   = "1. Higher Timeframe (HTF) Filter"
+htfRes    = input.timeframe("240", "HTF Resolution (e.g. 240, D)", group=grp_htf)
+htfPivot  = input.int(10, "HTF Pivot Length", minval=3, maxval=50, group=grp_htf)
+strictHtf = input.bool(false, "Strict HTF (Reject Trades in Chop)", group=grp_htf)
+
+grp_sweep = "2. Liquidity Sweep Detection"
+structLen = input.int(10, "Structure Pivot Length", minval=3, maxval=50, group=grp_sweep)
+wickRatio = input.float(0.6, "Min Wick-to-Body Ratio", minval=0.2, maxval=2.0, step=0.1, group=grp_sweep)
+minSweepP = input.float(0.15, "Min Sweep Wick Extension (%)", minval=0.05, maxval=2.0, step=0.05, group=grp_sweep) / 100.0
+
+grp_mss   = "3. Market Structure Shift & Displacement"
+dispMult  = input.float(0.5, "Displacement Threshold (x ATR)", minval=0.2, maxval=2.0, step=0.1, group=grp_mss)
+atrLen    = input.int(14, "ATR Length", minval=5, maxval=50, group=grp_mss)
+sweepWin  = input.int(10, "Max Bars between Sweep & MSS", minval=3, maxval=25, group=grp_mss)
+volAvgLen = input.int(20, "Volume Moving Average Length", minval=5, maxval=50, group=grp_mss)
+volMult   = input.float(1.5, "Volume Surge Multiplier", minval=1.0, maxval=3.0, step=0.1, group=grp_mss)
+
+grp_fvg   = "4. FVG & Order Block (OB)"
+fvgWin    = input.int(5, "Max Bars MSS to FVG Formation", minval=1, maxval=15, group=grp_fvg)
+obLook    = input.int(30, "Order Block Search Lookback", minval=5, maxval=60, group=grp_fvg)
+
+grp_kill  = "5. Session & Kill Zone Filter"
+useKill   = input.bool(false, "Enable Session Kill Zone Filter", group=grp_kill)
+killStart = input.string("0700-1000", "London Kill Zone (UTC)", group=grp_kill)
+killNy    = input.string("1200-1500", "New York Kill Zone (UTC)", group=grp_kill)
+
+grp_risk  = "6. Risk & Position Sizing"
+atrStopM  = input.float(1.5, "ATR Stop-Loss Multiplier", minval=0.5, maxval=3.5, step=0.1, group=grp_risk)
+rrRatio   = input.float(3.0, "Risk-to-Reward Ratio (TP)", minval=1.5, maxval=6.0, step=0.5, group=grp_risk)
+
+grp_vis   = "7. Visual Elements"
+showLabel = input.bool(true, "Show MSS & Setup Labels", group=grp_vis)
+showFVG   = input.bool(true, "Show FVG Confluence Zones", group=grp_vis)
+showTable = input.bool(true, "Show HTF Status HUD Table", group=grp_vis)
+
+// =============================================================================
+// INDICATORS & METRICS
+// =============================================================================
+atrVal = ta.atr(atrLen)
+volAvg = ta.sma(volume, volAvgLen)
+
+// Pivot Points (Trading Timeframe)
+ph = ta.pivothigh(high, structLen, structLen)
+pl = ta.pivotlow(low, structLen, structLen)
+
+var float liqHigh = na
+var float liqLow = na
+if not na(ph)
+    liqHigh := high[structLen]
+if not na(pl)
+    liqLow := low[structLen]
+
+// =============================================================================
+// 3.1 HIGHER-TIMEFRAME (HTF) REGIME FILTER
+// =============================================================================
+htfHigh = request.security(syminfo.tickerid, htfRes, high, lookahead = barmerge.lookahead_off)
+htfLow  = request.security(syminfo.tickerid, htfRes, low, lookahead = barmerge.lookahead_off)
+htfClose = request.security(syminfo.tickerid, htfRes, close, lookahead = barmerge.lookahead_off)
+
+htfPh = ta.pivothigh(htfHigh, htfPivot, htfPivot)
+htfPl = ta.pivotlow(htfLow, htfPivot, htfPivot)
+
+var float htfH1 = na
+var float htfH2 = na
+var float htfL1 = na
+var float htfL2 = na
+
+if not na(htfPh)
+    htfH1 := htfH2
+    htfH2 := htfHigh[htfPivot]
+
+if not na(htfPl)
+    htfL1 := htfL2
+    htfL2 := htfLow[htfPivot]
+
+regimeBull = (not na(htfH1) and not na(htfH2) and htfH2 > htfH1) and (not na(htfL1) and not na(htfL2) and htfL2 > htfL1)
+regimeBear = (not na(htfH1) and not na(htfH2) and htfH2 < htfH1) and (not na(htfL1) and not na(htfL2) and htfL2 < htfL1)
+regimeChop = not regimeBull and not regimeBear
+
+longRegimeAllowed = regimeBear == false and (strictHtf ? not regimeChop : true)
+shortRegimeAllowed = regimeBull == false and (strictHtf ? not regimeChop : true)
+
+// =============================================================================
+// 3.2 LIQUIDITY SWEEP DETECTION
+// =============================================================================
+bodySize  = math.abs(close - open)
+upperWick = high - math.max(close, open)
+lowerWick = math.min(close, open) - low
+
+bullSweep = not na(liqLow) and low < liqLow and close > liqLow and (lowerWick >= bodySize * wickRatio) and ((liqLow - low) >= close * minSweepP)
+bearSweep = not na(liqHigh) and high > liqHigh and close < liqHigh and (upperWick >= bodySize * wickRatio) and ((high - liqHigh) >= close * minSweepP)
+
+var int lastBullSweepBar = na
+var float sweepLowPrice  = na
+var int lastBearSweepBar = na
+var float sweepHighPrice = na
+
+if bullSweep
+    lastBullSweepBar := bar_index
+    sweepLowPrice := low
+
+if bearSweep
+    lastBearSweepBar := bar_index
+    sweepHighPrice := high
+
+// =============================================================================
+// 3.3 MARKET STRUCTURE SHIFT (MSS) WITH DISPLACEMENT
+// =============================================================================
+structHigh = ta.highest(high, structLen)
+structLow  = ta.lowest(low, structLen)
+
+volConfirm = volume >= (volAvg * volMult)
+barsSinceBullSweep = not na(lastBullSweepBar) ? (bar_index - lastBullSweepBar) : 999
+barsSinceBearSweep = not na(lastBearSweepBar) ? (bar_index - lastBearSweepBar) : 999
+
+bullMssDisplacement = (close > structHigh[1]) and ((close - structHigh[1]) >= atrVal * dispMult)
+bearMssDisplacement = (close < structLow[1]) and ((structLow[1] - close) >= atrVal * dispMult)
+
+bullSetupMss = bullMssDisplacement and (barsSinceBullSweep <= sweepWin) and longRegimeAllowed and volConfirm
+bearSetupMss = bearMssDisplacement and (barsSinceBearSweep <= sweepWin) and shortRegimeAllowed and volConfirm
+
+var int lastBullMssBar = na
+var int lastBearMssBar = na
+
+if bullSetupMss
+    lastBullMssBar := bar_index
+
+if bearSetupMss
+    lastBearMssBar := bar_index
+
+// =============================================================================
+// 3.4 FAIR VALUE GAP (FVG) DETECTION
+// =============================================================================
+barsSinceBullMss = not na(lastBullMssBar) ? (bar_index - lastBullMssBar) : 999
+barsSinceBearMss = not na(lastBearMssBar) ? (bar_index - lastBearMssBar) : 999
+
+bullFvg = high[2] < low and (barsSinceBullMss <= fvgWin)
+bearFvg = low[2] > high and (barsSinceBearMss <= fvgWin)
+
+var float bullFvgTop = na
+var float bullFvgBottom = na
+var float bearFvgTop = na
+var float bearFvgBottom = na
+
+if bullFvg
+    bullFvgTop := low
+    bullFvgBottom := high[2]
+
+if bearFvg
+    bearFvgTop := low[2]
+    bearFvgBottom := high
+
+// =============================================================================
+// 3.5 ORDER BLOCK (OB) APPROXIMATION
+// =============================================================================
+var float obBullTop = na
+var float obBullBottom = na
+var float obBearTop = na
+var float obBearBottom = na
+
+if bullSetupMss
+    for i = 0 to math.min(obLook, bar_index)
+        if (close[i] - open[i]) > (atrVal * 0.8)
+            obBullTop := math.max(open[i], close[i])
+            obBullBottom := math.min(open[i], close[i])
+            break
+
+if bearSetupMss
+    for i = 0 to math.min(obLook, bar_index)
+        if (open[i] - close[i]) > (atrVal * 0.8)
+            obBearTop := math.max(open[i], close[i])
+            obBearBottom := math.min(open[i], close[i])
+            break
+
+// =============================================================================
+// 3.6 CONFLUENCE: FVG + OB OVERLAP
+// =============================================================================
+bullOverlap = not na(bullFvgTop) and not na(obBullBottom) and (bullFvgTop >= obBullBottom) and (bullFvgBottom <= obBullTop)
+bearOverlap = not na(bearFvgTop) and not na(obBearBottom) and (bearFvgTop >= obBearBottom) and (bearFvgBottom <= obBearTop)
+
+// =============================================================================
+// 3.7 SESSION / KILL ZONE FILTER
+// =============================================================================
+inLondon = not na(time(timeframe.period, killStart, "UTC"))
+inNy     = not na(time(timeframe.period, killNy, "UTC"))
+inKillZone = useKill ? (inLondon or inNy) : true
+
+// =============================================================================
+// 3.8 ENTRY & 3.9 STOP-LOSS / TAKE-PROFIT
+// =============================================================================
+bullConfluence = bullFvg and bullOverlap and inKillZone and longRegimeAllowed
+bearConfluence = bearFvg and bearOverlap and inKillZone and shortRegimeAllowed
+
+entryLongPrice  = not na(bullFvgTop) and not na(bullFvgBottom) ? (bullFvgTop + bullFvgBottom) / 2.0 : close
+entryShortPrice = not na(bearFvgTop) and not na(bearFvgBottom) ? (bearFvgTop + bearFvgBottom) / 2.0 : close
+
+baseLongStop  = entryLongPrice - (atrVal * atrStopM)
+baseShortStop = entryShortPrice + (atrVal * atrStopM)
+
+longStopPrice  = not na(sweepLowPrice) ? math.min(baseLongStop, sweepLowPrice * 0.9995) : baseLongStop
+shortStopPrice = not na(sweepHighPrice) ? math.max(baseShortStop, sweepHighPrice * 1.0005) : baseShortStop
+
+longRisk = entryLongPrice - longStopPrice
+shortRisk = shortStopPrice - entryShortPrice
+
+longTakePrice  = entryLongPrice + (longRisk * rrRatio)
+shortTakePrice = entryShortPrice - (shortRisk * rrRatio)
+
+// JSON Webhook Alert Messages
+alertLongJson  = '{"action":"buy","symbol":"' + syminfo.ticker + '","type":"market","qty_type":"equity_pct","qty_value":2,"comment":"SMC_Long_FVG_OB"}'
+alertShortJson = '{"action":"sell","symbol":"' + syminfo.ticker + '","type":"market","qty_type":"equity_pct","qty_value":2,"comment":"SMC_Short_FVG_OB"}'
+
+if bullConfluence and strategy.position_size == 0
+    strategy.entry("SMC_Long", strategy.long, limit=entryLongPrice, alert_message=alertLongJson)
+    strategy.exit("Exit_Long", "SMC_Long", stop=longStopPrice, limit=longTakePrice)
+    alert(alertLongJson, alert.freq_once_per_bar_close)
+
+if bearConfluence and strategy.position_size == 0
+    strategy.entry("SMC_Short", strategy.short, limit=entryShortPrice, alert_message=alertShortJson)
+    strategy.exit("Exit_Short", "SMC_Short", stop=shortStopPrice, limit=shortTakePrice)
+    alert(alertShortJson, alert.freq_once_per_bar_close)
+
+// =============================================================================
+// 5. VISUALS & DEBUGGING AIDS
+// =============================================================================
+if showLabel and bullSetupMss
+    label.new(bar_index, high, "Bull MSS", color=color.green, textcolor=color.white, style=label.style_label_down, size=size.tiny)
+
+if showLabel and bearSetupMss
+    label.new(bar_index, low, "Bear MSS", color=color.red, textcolor=color.white, style=label.style_label_up, size=size.tiny)
+
+if showLabel and bullConfluence
+    label.new(bar_index, low, "Long FVG+OB\nEntry: " + str.tostring(entryLongPrice, "#.##"), color=color.teal, textcolor=color.white, style=label.style_label_up, size=size.small)
+
+if showLabel and bearConfluence
+    label.new(bar_index, high, "Short FVG+OB\nEntry: " + str.tostring(entryShortPrice, "#.##"), color=color.maroon, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+if showFVG and bullConfluence and not na(bullFvgTop) and not na(bullFvgBottom)
+    box.new(bar_index - 2, bullFvgTop, bar_index + 10, bullFvgBottom, border_color=color.green, bgcolor=color.new(color.green, 85))
+
+if showFVG and bearConfluence and not na(bearFvgTop) and not na(bearFvgBottom)
+    box.new(bar_index - 2, bearFvgTop, bar_index + 10, bearFvgBottom, border_color=color.red, bgcolor=color.new(color.red, 85))
+
+// On-Chart HUD Table
+var table hudTable = table.new(position.top_left, 2, 2, bgcolor=color.new(color.black, 40), border_width=1, border_color=color.gray)
+if showTable and barstate.islast
+    table.cell(hudTable, 0, 0, "HTF Trend", text_color=color.white, text_size=size.small)
+    table.cell(hudTable, 1, 0, regimeBull ? "BULL" : (regimeBear ? "BEAR" : "CHOP"), text_color=regimeBull ? color.green : (regimeBear ? color.red : color.gray), text_size=size.small)
+    table.cell(hudTable, 0, 1, "Kill Zone", text_color=color.white, text_size=size.small)
+    table.cell(hudTable, 1, 1, inKillZone ? "ACTIVE" : "OFF", text_color=inKillZone ? color.green : color.gray, text_size=size.small)

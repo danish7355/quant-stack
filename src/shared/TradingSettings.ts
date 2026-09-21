@@ -170,6 +170,21 @@ export interface TradingSettings {
   tpbMinScore?: number;
   tpbAtrBuffer?: number;
 
+  // SMC High-Probability Strategy Settings
+  smcHtfResolution?: string;
+  smcStructureLen?: number;
+  smcWickRatio?: number;
+  smcMinSweepWickPct?: number;
+  smcDispAtrMult?: number;
+  smcSweepConfirmWindow?: number;
+  smcVolMult?: number;
+  smcFvgAfterMssWindow?: number;
+  smcObLookback?: number;
+  smcUseKillZone?: boolean;
+  smcAtrStopMult?: number;
+  smcRrRatio?: number;
+  smcStrictHtfRegime?: boolean;
+
   binanceApiKey?: string;
   binanceApiSecret?: string;
   binanceTestnet?: boolean;
@@ -212,6 +227,16 @@ export const NUMERIC_BOUNDS: Record<string, { min: number; max: number; step?: n
   rmrMinScore: { min: 5, max: 11, step: 1, label: 'Ranging MR Min Score' },
   rmrOuterRangePct: { min: 0.10, max: 0.35, step: 0.01, label: 'Ranging MR Outer Boundary Zone' },
   rmrMinRrRatio: { min: 1.0, max: 5.0, step: 0.1, label: 'Ranging MR Min Risk/Reward Ratio' },
+  smcStructureLen: { min: 3, max: 50, step: 1, label: 'SMC Structure Pivot Length' },
+  smcWickRatio: { min: 0.2, max: 2.0, step: 0.1, label: 'SMC Min Sweep Wick/Body Ratio' },
+  smcMinSweepWickPct: { min: 0.0005, max: 0.02, step: 0.0005, label: 'SMC Min Sweep Wick Extension (%)' },
+  smcDispAtrMult: { min: 0.2, max: 3.0, step: 0.1, label: 'SMC MSS Displacement ATR Multiplier' },
+  smcSweepConfirmWindow: { min: 3, max: 30, step: 1, label: 'SMC Sweep-to-MSS Max Bars Window' },
+  smcVolMult: { min: 1.0, max: 4.0, step: 0.1, label: 'SMC MSS Volume Confirmation Multiplier' },
+  smcFvgAfterMssWindow: { min: 2, max: 15, step: 1, label: 'SMC MSS-to-FVG Max Bars Window' },
+  smcObLookback: { min: 10, max: 100, step: 5, label: 'SMC Order Block Lookback Bars' },
+  smcAtrStopMult: { min: 0.5, max: 4.0, step: 0.1, label: 'SMC ATR Stop Multiplier' },
+  smcRrRatio: { min: 1.5, max: 10.0, step: 0.5, label: 'SMC Take-Profit Risk:Reward Ratio' },
 };
 
 export interface ValidationResult {
@@ -255,6 +280,7 @@ export function validateTradingSettings(input: unknown): ValidationResult {
     'autoTradeEnabled', 'useGlobalBtcFilter', 'timeBasedExitEnabled',
     'crEnabled', 'useMtfAlignment', 'useVpvrFilter', 'useAtrTrailingStop',
     'vcbRequireSweep', 'vcbRequireRetest', 'vcbEnforceKillZone',
+    'smcUseKillZone', 'smcStrictHtfRegime',
     'alertOnNewSignal', 'alertOnTradeExecuted', 'alertOnTpHit', 'alertOnSlHit',
     'alertOnTsMoved', 'alertOnDailyLossLimit', 'alertOnRangingDetected',
     'alertSilentMode', 'binanceTestnet', 'scanOnlyWatchlist'
@@ -294,7 +320,8 @@ export function validateTradingSettings(input: unknown): ValidationResult {
   const stringKeys = [
     'activeStrategy', 'timeframe', 'theme', 'globalFilterSymbol',
     'telegramBotToken', 'telegramChatId', 'binanceApiKey', 'binanceApiSecret',
-    'githubPat', 'githubRepoUrl', 'customWatchlist', 'alertFormat'
+    'githubPat', 'githubRepoUrl', 'customWatchlist', 'alertFormat',
+    'smcHtfResolution'
   ];
   for (const sKey of stringKeys) {
     if (raw[sKey] !== undefined && typeof raw[sKey] === 'string') {
@@ -466,5 +493,19 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   rmrRsiOversold: 35,
   rmrRsiOverbought: 65,
   rmrMinRrRatio: 1.5,
+
+  smcHtfResolution: '1h',
+  smcStructureLen: 10,
+  smcWickRatio: 0.6,
+  smcMinSweepWickPct: 0.0015,
+  smcDispAtrMult: 0.5,
+  smcSweepConfirmWindow: 10,
+  smcVolMult: 1.5,
+  smcFvgAfterMssWindow: 5,
+  smcObLookback: 30,
+  smcUseKillZone: false,
+  smcAtrStopMult: 1.5,
+  smcRrRatio: 3.0,
+  smcStrictHtfRegime: false,
 };
 

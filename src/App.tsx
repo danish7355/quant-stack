@@ -547,21 +547,33 @@ Status: ARMED — WAIT FOR USER-CONFIGURED ENTRY RULE`;
                   } : undefined,
                 };
               }
-            } else if (settingsRef.current.activeStrategy === 'SMC_LIQUIDITY_SWEEP') {
-              // We pass empty array for htfCandles, evaluateSmc will fallback to current timeframe swings
-              const smcSig = evaluateSmc(candles, [], pair.price);
+            } else if (settingsRef.current.activeStrategy === 'SMC_LIQUIDITY_SWEEP' || settingsRef.current.activeStrategy === 'LIQUIDITY_SWEEP_REVERSAL') {
+              const smcSig = evaluateSmc(candles, [], pair.price, {
+                structureLen: settingsRef.current.smcStructureLen,
+                wickRatio: settingsRef.current.smcWickRatio,
+                minSweepWickPct: settingsRef.current.smcMinSweepWickPct,
+                dispAtrMult: settingsRef.current.smcDispAtrMult,
+                sweepConfirmWindow: settingsRef.current.smcSweepConfirmWindow,
+                volMult: settingsRef.current.smcVolMult,
+                fvgAfterMssWindow: settingsRef.current.smcFvgAfterMssWindow,
+                obLookback: settingsRef.current.smcObLookback,
+                useKillZone: settingsRef.current.smcUseKillZone,
+                atrStopMult: settingsRef.current.smcAtrStopMult,
+                rrRatio: settingsRef.current.smcRrRatio,
+                symbol: pair.symbol
+              });
               if (smcSig) {
                 const inZone = pair.price >= smcSig.entryZoneMin * 0.999 && pair.price <= smcSig.entryZoneMax * 1.001;
                 if (inZone) {
-                  finalScore = 95;
+                  finalScore = smcSig.score;
                   finalDirection = smcSig.direction;
                   finalStatus = 'STRONG_TREND';
                   finalReason = smcSig.reason;
                   finalSl = smcSig.sl;
                   finalTp1 = smcSig.tp1;
-                  const risk = Math.abs(pair.price - finalSl);
-                  finalTp2 = finalDirection === 'LONG' ? pair.price + (risk * 3) : pair.price - (risk * 3);
-                  finalTp3 = finalDirection === 'LONG' ? pair.price + (risk * 5) : pair.price - (risk * 5);
+                  finalTp2 = smcSig.tp2;
+                  const risk = smcSig.risk || Math.abs(pair.price - finalSl);
+                  finalTp3 = smcSig.tp3 || (finalDirection === 'LONG' ? pair.price + (risk * 5) : pair.price - (risk * 5));
 
                   if (!loggedTriggerStatesRef.current.has(pair.symbol)) {
                     loggedTriggerStatesRef.current.add(pair.symbol);
