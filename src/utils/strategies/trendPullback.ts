@@ -177,13 +177,55 @@ export interface TrendPullbackResult {
     breakdown: TrendPullbackScoreBreakdown;
     regimeFilterPassed?: boolean;
     regimeMetrics?: TrendPullbackRegimeMetrics;
+    isBreakRetest?: boolean;
+    retestHeld?: boolean;
+    brokenStructureLevel?: number;
+    volumeSequence?: {
+      impulseVolumeExpanded: boolean;
+      pullbackVolumeContracted: boolean;
+      confirmationVolumeExpanded: boolean;
+      volumeSequenceConfirmed: boolean;
+      pullbackAvgVol?: number;
+      impulseAvgVol?: number;
+      volSma20?: number;
+    };
   };
 }
+
+export type TrendPullbackDecision =
+  | 'TRADE_ALLOWED'
+  | 'WAITING_FOR_CONFIRMATION'
+  | 'NO_TRADE';
+
+export type TrendPullbackOutcomeReason =
+  | 'TRADE_SIGNAL'
+  | 'WAITING_FOR_IMPULSE'
+  | 'WAITING_FOR_PULLBACK'
+  | 'WAITING_FOR_CONFIRMATION'
+  | 'NO_TREND'
+  | 'RANGE_MARKET'
+  | 'PULLBACK_TOO_DEEP'
+  | 'STRUCTURE_BROKEN'
+  | 'VOLUME_NOT_CONFIRMED'
+  | 'FALSE_BREAKOUT_RISK'
+  | 'TIMEFRAME_DISAGREEMENT'
+  | 'STOP_TOO_WIDE'
+  | 'STOP_TOO_TIGHT'
+  | 'REWARD_TOO_SMALL'
+  | 'ENTRY_TOO_LATE'
+  | 'SESSION_DISABLED'
+  | 'DIRECTION_DISABLED'
+  | 'DUPLICATE_SIGNAL'
+  | 'RISK_LIMIT_REACHED'
+  | 'INVALID_MARKET_DATA'
+  | 'CANDLE_NOT_CLOSED';
 
 export interface TrendPullbackEvaluation {
   success: boolean;
   status: TrendPullbackStatus;
   stage: TrendPullbackStage;
+  decision: TrendPullbackDecision;
+  outcomeReason: TrendPullbackOutcomeReason;
   rejectionReason?: TrendPullbackRejection;
   reason: string;
   score: number;
@@ -523,6 +565,9 @@ export function checkPullbackStructure(
   impulseAvgVol: number;
   avgPullbackBody: number;
   avgImpulseBody: number;
+  isBreakRetest?: boolean;
+  retestHeld?: boolean;
+  brokenStructureLevel?: number;
 } {
   const fastP = options.emaFast || 20;
   const slowP = options.emaSlow || 50;
@@ -574,8 +619,14 @@ export function checkPullbackStructure(
       ? Math.min(...priorLows.map(l => l.price))
       : Math.min(...candles.slice(0, Math.max(1, len - 4)).map(c => c.low));
 
-    // Structural swing preservation: did price breach the structural higher low in the pullback wave?
+    // Break-and-retest detection for Long: prior resistance broken and retested
+    const priorHighs = swingHighs.filter(h => h.index < len - 4);
+    const brokenLevel = priorHighs.length > 0 ? priorHighs[priorHighs.length - 1].price : 0;
+    const isBreakRetest = brokenLevel > 0 && Math.max(...impulseSlice.map(c => c.high)) > brokenLevel;
     const minPullbackLow = Math.min(...pullbackSlice.map(c => c.low), candles[len].low);
+    const retestHeld = isBreakRetest && minPullbackLow >= brokenLevel * 0.995;
+
+    // Structural swing preservation: did price breach the structural higher low in the pullback wave?
     if (minPullbackLow < invalidationLevel * 0.998) {
       return {
         valid: false,
@@ -589,7 +640,10 @@ export function checkPullbackStructure(
         pullbackAvgVol,
         impulseAvgVol,
         avgPullbackBody,
-        avgImpulseBody
+        avgImpulseBody,
+        isBreakRetest,
+        retestHeld: false,
+        brokenStructureLevel: brokenLevel
       };
     }
 
@@ -614,7 +668,10 @@ export function checkPullbackStructure(
         pullbackAvgVol,
         impulseAvgVol,
         avgPullbackBody,
-        avgImpulseBody
+        avgImpulseBody,
+        isBreakRetest,
+        retestHeld,
+        brokenStructureLevel: brokenLevel
       };
     }
 
@@ -633,7 +690,10 @@ export function checkPullbackStructure(
         pullbackAvgVol,
         impulseAvgVol,
         avgPullbackBody,
-        avgImpulseBody
+        avgImpulseBody,
+        isBreakRetest,
+        retestHeld: false,
+        brokenStructureLevel: brokenLevel
       };
     }
 
@@ -648,7 +708,10 @@ export function checkPullbackStructure(
       pullbackAvgVol,
       impulseAvgVol,
       avgPullbackBody,
-      avgImpulseBody
+      avgImpulseBody,
+      isBreakRetest,
+      retestHeld,
+      brokenStructureLevel: brokenLevel
     };
   } else {
     // SHORT evaluation
@@ -657,7 +720,13 @@ export function checkPullbackStructure(
       ? Math.max(...priorHighs.map(h => h.price))
       : Math.max(...candles.slice(0, Math.max(1, len - 4)).map(c => c.high));
 
+    // Break-and-retest detection for Short: prior support broken and retested
+    const priorLows = swingLows.filter(l => l.index < len - 4);
+    const brokenLevel = priorLows.length > 0 ? priorLows[priorLows.length - 1].price : 0;
+    const isBreakRetest = brokenLevel > 0 && Math.min(...impulseSlice.map(c => c.low)) < brokenLevel;
     const maxPullbackHigh = Math.max(...pullbackSlice.map(c => c.high), candles[len].high);
+    const retestHeld = isBreakRetest && maxPullbackHigh <= brokenLevel * 1.005;
+
     if (maxPullbackHigh > invalidationLevel * 1.002) {
       return {
         valid: false,
@@ -671,7 +740,10 @@ export function checkPullbackStructure(
         pullbackAvgVol,
         impulseAvgVol,
         avgPullbackBody,
-        avgImpulseBody
+        avgImpulseBody,
+        isBreakRetest,
+        retestHeld: false,
+        brokenStructureLevel: brokenLevel
       };
     }
 
@@ -695,7 +767,10 @@ export function checkPullbackStructure(
         pullbackAvgVol,
         impulseAvgVol,
         avgPullbackBody,
-        avgImpulseBody
+        avgImpulseBody,
+        isBreakRetest,
+        retestHeld,
+        brokenStructureLevel: brokenLevel
       };
     }
 
@@ -714,7 +789,10 @@ export function checkPullbackStructure(
         pullbackAvgVol,
         impulseAvgVol,
         avgPullbackBody,
-        avgImpulseBody
+        avgImpulseBody,
+        isBreakRetest,
+        retestHeld: false,
+        brokenStructureLevel: brokenLevel
       };
     }
 
@@ -729,7 +807,10 @@ export function checkPullbackStructure(
       pullbackAvgVol,
       impulseAvgVol,
       avgPullbackBody,
-      avgImpulseBody
+      avgImpulseBody,
+      isBreakRetest,
+      retestHeld,
+      brokenStructureLevel: brokenLevel
     };
   }
 }
@@ -1152,6 +1233,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'NONE',
+      decision: 'NO_TRADE',
+      outcomeReason: 'INVALID_MARKET_DATA',
       rejectionReason: 'INVALID_MARKET_DATA',
       reason: 'Signal rejected: invalid or insufficient market data (minimum 30 candles required).',
       score: 0,
@@ -1167,6 +1250,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'NONE',
+      decision: 'NO_TRADE',
+      outcomeReason: 'CANDLE_NOT_CLOSED',
       rejectionReason: 'CANDLE_NOT_CLOSED',
       reason: 'Signal rejected: trade candle is not closed yet. Strict closed-candle rule applies.',
       score: 0,
@@ -1182,6 +1267,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'NONE',
+      decision: 'NO_TRADE',
+      outcomeReason: 'TIMEFRAME_DISAGREEMENT',
       rejectionReason: 'TIMEFRAME_MISMATCH',
       reason: `Signal rejected: candle timeframe (${detectedIntervalMin}m) does not match configured tradeTimeframe (${expectedIntervalMin}m).`,
       score: 0,
@@ -1214,6 +1301,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'WAITING_FOR_REGIME_CONFIRMATION',
       stage: 'NONE',
+      decision: 'NO_TRADE',
+      outcomeReason: regimeDetails.isChoppy ? 'RANGE_MARKET' : 'NO_TREND',
       rejectionReason: 'UNFAVORABLE_MARKET_REGIME',
       reason: `Signal rejected: market regime is ${regimeDetails.regime} (${regimeDetails.reason}).`,
       score: 0,
@@ -1231,6 +1320,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'WAITING_FOR_REGIME_CONFIRMATION',
       stage: 'NONE',
+      decision: 'NO_TRADE',
+      outcomeReason: 'NO_TREND',
       rejectionReason: 'UNFAVORABLE_MARKET_REGIME',
       reason: 'Signal rejected: dedicated trend pullback regime filter not satisfied.',
       score: 0,
@@ -1244,6 +1335,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'NONE',
+      decision: 'NO_TRADE',
+      outcomeReason: 'DIRECTION_DISABLED',
       rejectionReason: 'DIRECTION_DISABLED',
       reason: 'Signal rejected: Long trades are disabled in configuration.',
       score: 1,
@@ -1255,6 +1348,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'NONE',
+      decision: 'NO_TRADE',
+      outcomeReason: 'DIRECTION_DISABLED',
       rejectionReason: 'DIRECTION_DISABLED',
       reason: 'Signal rejected: Short trades are disabled in configuration.',
       score: 1,
@@ -1272,6 +1367,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'WAITING_FOR_TREND',
       stage: 'NONE',
+      decision: 'NO_TRADE',
+      outcomeReason: 'TIMEFRAME_DISAGREEMENT',
       rejectionReason: 'HTF_TREND_NOT_CONFIRMED',
       reason: 'Signal rejected: HTF is trending up but execution timeframe is heavily suppressed below EMA50 (MTF conflict).',
       score: 2,
@@ -1284,6 +1381,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'WAITING_FOR_TREND',
       stage: 'NONE',
+      decision: 'NO_TRADE',
+      outcomeReason: 'TIMEFRAME_DISAGREEMENT',
       rejectionReason: 'HTF_TREND_NOT_CONFIRMED',
       reason: 'Signal rejected: HTF is trending down but execution timeframe is heavily elevated above EMA50 (MTF conflict).',
       score: 2,
@@ -1297,6 +1396,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'NONE',
+      decision: 'NO_TRADE',
+      outcomeReason: 'SESSION_DISABLED',
       rejectionReason: 'SESSION_DISABLED',
       reason: `Signal rejected: current session ${session} is not in allowed sessions list (${options.tradingSessions.join(', ')}).`,
       score: 2,
@@ -1317,6 +1418,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'WAITING_FOR_TREND',
       stage: 'NONE',
+      decision: 'WAITING_FOR_CONFIRMATION',
+      outcomeReason: 'WAITING_FOR_IMPULSE',
       rejectionReason: 'INVALID_TREND_STRUCTURE',
       reason: 'Signal rejected: no strong prior impulse displacement (>= 1.0 ATR) detected before pullback.',
       score: 2,
@@ -1330,6 +1433,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'WAITING_FOR_PULLBACK',
       stage: 'NONE',
+      decision: 'WAITING_FOR_CONFIRMATION',
+      outcomeReason: 'WAITING_FOR_PULLBACK',
       rejectionReason: 'NO_VALID_PULLBACK',
       reason: 'Signal rejected: price has not pulled back to dynamic value zone (EMA 20/50).',
       score: 2,
@@ -1343,6 +1448,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'NONE',
+      decision: 'NO_TRADE',
+      outcomeReason: 'STRUCTURE_BROKEN',
       rejectionReason: 'PULLBACK_INVALIDATED',
       reason: 'Signal rejected: pullback broke key trend structure invalidation level.',
       score: 2,
@@ -1355,6 +1462,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'NONE',
+      decision: 'NO_TRADE',
+      outcomeReason: 'PULLBACK_TOO_DEEP',
       rejectionReason: 'PULLBACK_INVALIDATED',
       reason: 'Signal rejected: large violent candle sliced through EMA50, posing reversal risk.',
       score: 2,
@@ -1369,6 +1478,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'WAITING_FOR_PRICE_ACTION',
       stage: 'STAGE_A_SETUP_DETECTED',
+      decision: 'WAITING_FOR_CONFIRMATION',
+      outcomeReason: 'WAITING_FOR_CONFIRMATION',
       rejectionReason: pa.reason || 'PRICE_ACTION_NOT_CONFIRMED',
       reason: `Stage A setup detected, but waiting for closed candle price-action confirmation (${pa.pattern}).`,
       score: 4,
@@ -1390,6 +1501,8 @@ export function evaluateTrendPullbackDetailed(
         success: false,
         status: 'TRADE REJECTED',
         stage: 'STAGE_A_SETUP_DETECTED',
+        decision: 'NO_TRADE',
+        outcomeReason: 'VOLUME_NOT_CONFIRMED',
         rejectionReason: 'MISSING_VOLUME_DATA',
         reason: 'Signal rejected: volume data is missing or zero.',
         score: 6,
@@ -1400,6 +1513,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'WAITING_FOR_VOLUME',
       stage: 'STAGE_A_SETUP_DETECTED',
+      decision: 'WAITING_FOR_CONFIRMATION',
+      outcomeReason: 'VOLUME_NOT_CONFIRMED',
       rejectionReason: 'VOLUME_NOT_CONFIRMED',
       reason: `Stage A setup detected, but volume did not confirm (ratio: ${vol.volumeRatio.toFixed(2)}x, 20-SMA: ${vol.volSma20.toFixed(0)}).`,
       score: 6,
@@ -1414,6 +1529,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'STAGE_A_SETUP_DETECTED',
+      decision: 'NO_TRADE',
+      outcomeReason: 'FALSE_BREAKOUT_RISK',
       rejectionReason: 'FAKE_BREAKOUT',
       reason: `Signal rejected: fake breakout detected (${fb.reason}).`,
       score: 6,
@@ -1431,6 +1548,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'ENTRY_TOO_LATE',
       stage: 'STAGE_A_SETUP_DETECTED',
+      decision: 'NO_TRADE',
+      outcomeReason: 'ENTRY_TOO_LATE',
       rejectionReason: 'ENTRY_TOO_LATE',
       reason: `Signal rejected: late entry distance (${entryDistanceATR.toFixed(2)} ATR) exceeds ${maxEntryDistAtr} ATR limit.`,
       score: 7,
@@ -1456,6 +1575,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'STAGE_A_SETUP_DETECTED',
+      decision: 'NO_TRADE',
+      outcomeReason: 'STOP_TOO_WIDE',
       rejectionReason: 'INVALID_STOP_PLACEMENT',
       reason: 'Signal rejected: stop placement is technically invalid or inverted.',
       score: 7,
@@ -1468,6 +1589,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'STOP_TOO_WIDE',
       stage: 'STAGE_A_SETUP_DETECTED',
+      decision: 'NO_TRADE',
+      outcomeReason: 'STOP_TOO_WIDE',
       rejectionReason: 'STOP_TOO_WIDE_FOR_EXECUTION_TIMEFRAME',
       reason: 'Signal rejected: setup relies on broad structural stop from higher timeframe without local confirmation structure.',
       score: 7,
@@ -1485,6 +1608,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'STOP_TOO_WIDE',
       stage: 'STAGE_A_SETUP_DETECTED',
+      decision: 'NO_TRADE',
+      outcomeReason: 'STOP_TOO_WIDE',
       rejectionReason: 'STOP_TOO_WIDE_FOR_EXECUTION_TIMEFRAME',
       reason: `Signal rejected: stop distance (${stopATRMultiple.toFixed(2)} ATR) exceeds maximum ${maxStopAtr} ATR limit for ${tradeTf} timeframe.`,
       score: 7,
@@ -1498,6 +1623,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'STOP_TOO_TIGHT',
       stage: 'STAGE_A_SETUP_DETECTED',
+      decision: 'NO_TRADE',
+      outcomeReason: 'STOP_TOO_TIGHT',
       rejectionReason: 'STOP_TOO_TIGHT_FOR_MARKET_NOISE',
       reason: `Signal rejected: stop distance (${stopATRMultiple.toFixed(2)} ATR) is below minimum ${minStopAtr} ATR limit and prone to market noise.`,
       score: 7,
@@ -1512,6 +1639,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'STAGE_A_SETUP_DETECTED',
+      decision: 'NO_TRADE',
+      outcomeReason: 'REWARD_TOO_SMALL',
       rejectionReason: 'RISK_REWARD_TOO_LOW',
       reason: `Signal rejected: configured minimum risk-reward ratio (${minRr}) is below acceptable 1.0 threshold.`,
       score: 7,
@@ -1529,6 +1658,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'STAGE_A_SETUP_DETECTED',
+      decision: 'NO_TRADE',
+      outcomeReason: 'REWARD_TOO_SMALL',
       rejectionReason: 'TARGET_ALREADY_REACHED',
       reason: 'Signal rejected: take profit target 1 already reached.',
       score: 7,
@@ -1549,6 +1680,8 @@ export function evaluateTrendPullbackDetailed(
           success: false,
           status: 'TRADE REJECTED',
           stage: 'STAGE_A_SETUP_DETECTED',
+          decision: 'NO_TRADE',
+          outcomeReason: 'REWARD_TOO_SMALL',
           rejectionReason: 'OPPOSING_BARRIER_BLOCKS_RR',
           reason: `Signal rejected: distance to nearest major resistance provides less than ${minRr}R (${rrToResistance.toFixed(2)}R available).`,
           score: 7,
@@ -1565,6 +1698,8 @@ export function evaluateTrendPullbackDetailed(
           success: false,
           status: 'TRADE REJECTED',
           stage: 'STAGE_A_SETUP_DETECTED',
+          decision: 'NO_TRADE',
+          outcomeReason: 'REWARD_TOO_SMALL',
           rejectionReason: 'OPPOSING_BARRIER_BLOCKS_RR',
           reason: `Signal rejected: distance to nearest major support provides less than ${minRr}R (${rrToSupport.toFixed(2)}R available).`,
           score: 7,
@@ -1582,6 +1717,8 @@ export function evaluateTrendPullbackDetailed(
         success: false,
         status: 'TRADE REJECTED',
         stage: 'STAGE_A_SETUP_DETECTED',
+        decision: 'NO_TRADE',
+        outcomeReason: 'REWARD_TOO_SMALL',
         rejectionReason: 'SPREAD_OR_SLIPPAGE_TOO_HIGH',
         reason: `Signal rejected: spread (${options.currentSpread.toFixed(4)}) exceeds maximum allowed ${maxSpreadPrice.toFixed(4)} (${(options.maxSpreadAtr ?? 0.3)} ATR).`,
         score: 7,
@@ -1597,6 +1734,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'STAGE_A_SETUP_DETECTED',
+      decision: 'NO_TRADE',
+      outcomeReason: 'DUPLICATE_SIGNAL',
       rejectionReason: 'DUPLICATE_SIGNAL',
       reason: `Signal rejected: duplicate signal ${signalId} already processed for this candle.`,
       score: 7,
@@ -1610,6 +1749,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'STAGE_A_SETUP_DETECTED',
+      decision: 'NO_TRADE',
+      outcomeReason: 'RISK_LIMIT_REACHED',
       rejectionReason: 'RISK_LIMIT_REACHED',
       reason: 'Signal rejected: account risk limit (daily loss, max positions, or cooldown) reached.',
       score: 7,
@@ -1639,6 +1780,8 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'STAGE_A_SETUP_DETECTED',
+      decision: 'NO_TRADE',
+      outcomeReason: 'WAITING_FOR_CONFIRMATION',
       rejectionReason: 'CONFIRMATION_SCORE_TOO_LOW',
       reason: `Signal rejected: confirmation score ${score}/10 is below required ${requiredScore}/10.`,
       score,
@@ -1688,7 +1831,19 @@ export function evaluateTrendPullbackDetailed(
       confirmationScore: score,
       breakdown,
       regimeFilterPassed: trendAllowed,
-      regimeMetrics: trendMetrics
+      regimeMetrics: trendMetrics,
+      isBreakRetest: pullback.isBreakRetest,
+      retestHeld: pullback.retestHeld,
+      brokenStructureLevel: pullback.brokenStructureLevel,
+      volumeSequence: {
+        impulseVolumeExpanded: pullback.impulseAvgVol >= vol.volSma20,
+        pullbackVolumeContracted: pullback.pullbackAvgVol <= pullback.impulseAvgVol,
+        confirmationVolumeExpanded: vol.confirmed,
+        volumeSequenceConfirmed: pullback.pullbackAvgVol <= pullback.impulseAvgVol && vol.confirmed,
+        pullbackAvgVol: pullback.pullbackAvgVol,
+        impulseAvgVol: pullback.impulseAvgVol,
+        volSma20: vol.volSma20
+      }
     }
   };
 
@@ -1696,6 +1851,8 @@ export function evaluateTrendPullbackDetailed(
     success: true,
     status: 'SIGNAL CONFIRMED',
     stage: 'STAGE_B_TRADE_CONFIRMED',
+    decision: 'TRADE_ALLOWED',
+    outcomeReason: 'TRADE_SIGNAL',
     reason: result.reason,
     score,
     result

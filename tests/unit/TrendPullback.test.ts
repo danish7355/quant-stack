@@ -1064,4 +1064,231 @@ describe('Trend Pullback Strategy - 5-Pillar Architecture & Unit Tests', () => {
       expect(setupB.positionSize * setupB.stopDistance).toBe(riskDollar);
     });
   });
+
+  describe('Institutional Continuation Principles & 3-Way Decision Model', () => {
+    it('returns TRADE_ALLOWED and TRADE_SIGNAL on a fully confirmed continuation trade', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      const evalResult = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        {
+          tradeTimeframe: '15m',
+          symbol: 'BTCUSDT'
+        }
+      );
+
+      expect(evalResult.success).toBe(true);
+      expect(evalResult.decision).toBe('TRADE_ALLOWED');
+      expect(evalResult.outcomeReason).toBe('TRADE_SIGNAL');
+      expect(evalResult.result).not.toBeNull();
+      expect(evalResult.result?.details.volumeSequence).toBeDefined();
+      expect(evalResult.result?.details.volumeSequence?.confirmationVolumeExpanded).toBe(true);
+    });
+
+    it('tracks break-and-retest structure and volume sequence on confirmed trade', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      const evalResult = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        {
+          tradeTimeframe: '15m',
+          symbol: 'ETHUSDT'
+        }
+      );
+
+      expect(evalResult.success).toBe(true);
+      expect(evalResult.result?.details.isBreakRetest).toBeDefined();
+      expect(typeof evalResult.result?.details.isBreakRetest).toBe('boolean');
+      expect(evalResult.result?.details.volumeSequence).toBeDefined();
+      expect(evalResult.result?.details.volumeSequence?.pullbackVolumeContracted).toBe(true);
+    });
+
+    it('returns WAITING_FOR_CONFIRMATION when price action confirmation candle has not formed', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      // Replace last candle with an indecisive doji at the dynamic support zone
+      const last = tradeCandles[tradeCandles.length - 1];
+      tradeCandles[tradeCandles.length - 1] = createCandle(
+        last.time,
+        last.close - 0.1,
+        last.close + 0.2,
+        last.close - 0.2,
+        last.close,
+        1500
+      );
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      const evalResult = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        {
+          tradeTimeframe: '15m',
+          symbol: 'BTCUSDT'
+        }
+      );
+
+      expect(evalResult.success).toBe(false);
+      expect(evalResult.decision).toBe('WAITING_FOR_CONFIRMATION');
+      expect(evalResult.outcomeReason).toBe('WAITING_FOR_CONFIRMATION');
+    });
+
+    it('returns NO_TRADE and CANDLE_NOT_CLOSED if trigger candle is not yet closed', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      tradeCandles[tradeCandles.length - 1].isClosed = false;
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      const evalResult = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        {
+          tradeTimeframe: '15m',
+          symbol: 'BTCUSDT'
+        }
+      );
+
+      expect(evalResult.success).toBe(false);
+      expect(evalResult.decision).toBe('NO_TRADE');
+      expect(evalResult.outcomeReason).toBe('CANDLE_NOT_CLOSED');
+    });
+
+    it('returns NO_TRADE and STRUCTURE_BROKEN when pullback invalidates structural higher low', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      // Slices deeply below prior swing low
+      const last = tradeCandles[tradeCandles.length - 1];
+      tradeCandles[tradeCandles.length - 2] = createCandle(
+        last.time - 900000,
+        125,
+        125.5,
+        95.0, // breached wave 1 low of 100
+        98.0,
+        3000
+      );
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      const evalResult = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        {
+          tradeTimeframe: '15m',
+          symbol: 'BTCUSDT'
+        }
+      );
+
+      expect(evalResult.success).toBe(false);
+      expect(evalResult.decision).toBe('NO_TRADE');
+      expect(evalResult.outcomeReason).toBe('STRUCTURE_BROKEN');
+    });
+
+    it('returns NO_TRADE and FALSE_BREAKOUT_RISK when confirmation candle is an exhaustion climax fakeout', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      const lastIdx = tradeCandles.length - 1;
+      tradeCandles[lastIdx] = createCandle(
+        tradeCandles[lastIdx].time,
+        125.0,
+        138.0, // range of 13.0 (> 8x ATR) - exhaustion climax
+        124.5,
+        137.5,
+        3000,
+        true
+      );
+      const currentPrice = tradeCandles[lastIdx].close;
+
+      const evalResult = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        {
+          tradeTimeframe: '15m',
+          symbol: 'BTCUSDT'
+        }
+      );
+
+      expect(evalResult.success).toBe(false);
+      expect(evalResult.decision).toBe('NO_TRADE');
+      expect(evalResult.outcomeReason).toBe('FALSE_BREAKOUT_RISK');
+    });
+
+    it('returns NO_TRADE and ENTRY_TOO_LATE when entry is extended past 0.25 ATR', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      // Artificially inflate currentPrice far above the triggerPrice
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close + 10;
+
+      const evalResult = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        {
+          tradeTimeframe: '15m',
+          symbol: 'BTCUSDT',
+          maxEntryDistanceAtr: 0.25
+        }
+      );
+
+      expect(evalResult.success).toBe(false);
+      expect(evalResult.decision).toBe('NO_TRADE');
+      expect(evalResult.outcomeReason).toBe('ENTRY_TOO_LATE');
+    });
+
+    it('returns NO_TRADE and TIMEFRAME_DISAGREEMENT on higher-timeframe conflict', () => {
+      // HTF is bearish, but setup tries Long
+      const htfCandles = createHtfBearishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      const evalResult = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        {
+          tradeTimeframe: '15m',
+          symbol: 'BTCUSDT'
+        }
+      );
+
+      expect(evalResult.success).toBe(false);
+      expect(evalResult.decision).toBe('NO_TRADE');
+      expect(evalResult.outcomeReason).toBe('TIMEFRAME_DISAGREEMENT');
+    });
+
+    it('returns NO_TRADE and RANGE_MARKET or NO_TREND when market regime is choppy', () => {
+      // Flat range candles for HTF
+      const stepMs = 60 * 60 * 1000;
+      const flatHtfCandles: Candle[] = [];
+      const baseTime = Date.now() - 50 * stepMs;
+      for (let i = 0; i < 50; i++) {
+        flatHtfCandles.push(createCandle(baseTime + i * stepMs, 100, 100.5, 99.5, 100, 500));
+      }
+      const tradeCandles = createValidBullishSetup(15);
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      const evalResult = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        flatHtfCandles,
+        currentPrice,
+        {
+          tradeTimeframe: '15m',
+          symbol: 'BTCUSDT'
+        }
+      );
+
+      expect(evalResult.success).toBe(false);
+      expect(evalResult.decision).toBe('NO_TRADE');
+      expect(['RANGE_MARKET', 'NO_TREND']).toContain(evalResult.outcomeReason);
+    });
+  });
 });
