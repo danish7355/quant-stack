@@ -1,4 +1,7 @@
 import { AppSettings } from '../../types';
+import { allowVCB, extractVcbRegimeMetrics, type VcbRegimeMetrics } from './strategyRegimeFilters.js';
+export { allowVCB, extractVcbRegimeMetrics };
+export type { VcbRegimeMetrics };
 
 export interface Candle {
   open: number;
@@ -707,6 +710,15 @@ export function evaluateVcbChecklist(
   const direction = breakout.direction || 'LONG';
   const minScoreRequired = settings.vcbChecklistMinScore ?? 8;
   const minRrRatio = settings.vcbMinRrRatio ?? 2.0;
+
+  // Dedicated VCB Regime Filter Gate
+  if ((settings as any).enforceVcbRegimeFilter === true) {
+    const vcbMetrics = extractVcbRegimeMetrics(candles, htfCandles);
+    const vcbRegimeAllowed = allowVCB(vcbMetrics, direction);
+    if (!vcbRegimeAllowed) {
+      failedGates.push('VCB_REGIME_FILTER_REJECTED');
+    }
+  }
 
   // 1. HIGHER-TIMEFRAME BIAS & DRAW ON LIQUIDITY (+1 pt)
   let htfPoints = 0;

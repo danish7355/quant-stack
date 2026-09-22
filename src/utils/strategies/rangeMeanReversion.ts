@@ -4,6 +4,9 @@
  */
 
 import { calculateSMA, calculateEMA, calculateATR, calculateADX, calculateRSI } from '../indicators.js';
+import { allowEMAMeanReversion, extractEmaMeanReversionRegimeMetrics, type EmaMeanReversionRegimeMetrics } from './strategyRegimeFilters.js';
+export { allowEMAMeanReversion, extractEmaMeanReversionRegimeMetrics };
+export type { EmaMeanReversionRegimeMetrics };
 
 export interface BollingerBandsResult {
   middle: number[];
@@ -440,6 +443,7 @@ export interface RangeMeanReversionOptions {
   maxSmaSlope?: number;         // default 0.02
   stopMult?: number;            // default 1.5
   targetRr?: number;            // default 3.0
+  enforceRegimeFilter?: boolean; // default false (requires dedicated allowEMAMeanReversion filter)
 }
 
 /**
@@ -620,6 +624,14 @@ export function evaluateRangeMeanReversion(
 
   if (breakdown.total < minScore) {
     return null;
+  }
+
+  // Dedicated EMA Mean-Reversion Regime Filter Gate
+  if (params.enforceRegimeFilter) {
+    const emaMetrics = extractEmaMeanReversionRegimeMetrics(candles);
+    if (!allowEMAMeanReversion(emaMetrics, direction)) {
+      return null;
+    }
   }
 
   const scaledScore = Math.min(99, Math.round((breakdown.total / 11) * 100));

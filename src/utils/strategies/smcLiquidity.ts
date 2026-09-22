@@ -4,6 +4,9 @@
  */
 
 import { calculateATR } from '../indicators.js';
+import { allowSMCLiquidity, extractSmcRegimeMetrics, type SmcRegimeMetrics } from './strategyRegimeFilters.js';
+export { allowSMCLiquidity, extractSmcRegimeMetrics };
+export type { SmcRegimeMetrics };
 
 export interface Candle {
   time: number;
@@ -108,6 +111,7 @@ export interface SmcOptions {
   atrStopMult?: number;         // ATR multiplier for base stop-loss (default 1.5)
   rrRatio?: number;             // Target Risk:Reward ratio for TP2 (default 3.0)
   strictHtfRegime?: boolean;    // If true, disallow trades during CHOP (default false)
+  enforceRegimeFilter?: boolean; // If true, requires dedicated allowSMCLiquidity regime filter check
   symbol?: string;              // Ticker symbol for webhook generation (default 'BTCUSDT')
 }
 
@@ -716,6 +720,13 @@ export function evaluateSmc(
                     levels.tp2
                   );
 
+                  if (options.enforceRegimeFilter) {
+                    const smcMetrics = extractSmcRegimeMetrics(closedKlines, htfCandles);
+                    if (!allowSMCLiquidity(smcMetrics, 'LONG')) {
+                      continue;
+                    }
+                  }
+
                   return {
                     direction: 'LONG',
                     score: Math.min(100, score),
@@ -801,6 +812,13 @@ export function evaluateSmc(
                     levels.sl,
                     levels.tp2
                   );
+
+                  if (options.enforceRegimeFilter) {
+                    const smcMetrics = extractSmcRegimeMetrics(closedKlines, htfCandles);
+                    if (!allowSMCLiquidity(smcMetrics, 'SHORT')) {
+                      continue;
+                    }
+                  }
 
                   return {
                     direction: 'SHORT',

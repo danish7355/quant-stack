@@ -1,4 +1,7 @@
 import { calculateEMA, calculateATR, calculateADX } from '../indicators.js';
+import { allowTrendPullback, extractTrendPullbackRegimeMetrics, type TrendPullbackRegimeMetrics } from './strategyRegimeFilters.js';
+export { allowTrendPullback, extractTrendPullbackRegimeMetrics };
+export type { TrendPullbackRegimeMetrics };
 
 export type MarketRegimeType =
   | 'TRENDING_UP'
@@ -71,6 +74,7 @@ export interface TrendPullbackOptions {
   isCandleClosed?: boolean;      // strict closed-candle check
   recentSignalIds?: string[] | Set<string>; // deduplication history
   isRiskLimitReached?: boolean;  // circuit breaker / account risk limit flag
+  enforceRegimeFilter?: boolean; // if true, requires dedicated allowTrendPullback regime filter
 }
 
 export type TrendPullbackStatus =
@@ -1216,6 +1220,23 @@ export function evaluateTrendPullbackDetailed(
   }
 
   const direction: 'LONG' | 'SHORT' = regimeDetails.regime === 'TRENDING_UP' ? 'LONG' : 'SHORT';
+
+  // Dedicated Trend Pullback Regime Filter Gate
+  if (options.enforceRegimeFilter) {
+    const trendMetrics = extractTrendPullbackRegimeMetrics(tradeCandles, htfCandles);
+    const trendAllowed = allowTrendPullback(trendMetrics, direction);
+    if (!trendAllowed) {
+      return {
+        success: false,
+        status: 'WAITING_FOR_REGIME_CONFIRMATION',
+        stage: 'NONE',
+        rejectionReason: 'UNFAVORABLE_MARKET_REGIME',
+        reason: 'Signal rejected: dedicated trend pullback regime filter not satisfied.',
+        score: 0,
+        result: null
+      };
+    }
+  }
 
   // Direction toggle check
   if (direction === 'LONG' && options.allowLongs === false) {

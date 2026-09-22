@@ -25,6 +25,18 @@ import { detectMacroRangeBreakout } from '../../src/utils/strategies/macroRange.
 import { evaluateEarlyCoilBreakout } from '../../src/utils/strategies/earlyCoilBreakout.js';
 import { evaluateRangeMeanReversion } from '../../src/utils/strategies/rangeMeanReversion.js';
 import { calculateRSI } from '../../src/utils/indicators.js';
+import {
+  allowVCB,
+  allowSMCLiquidity,
+  allowEMAMeanReversion,
+  allowTrendPullback,
+  extractVcbRegimeMetrics,
+  extractSmcRegimeMetrics,
+  extractEmaMeanReversionRegimeMetrics,
+  extractTrendPullbackRegimeMetrics,
+  evaluateMasterRegimeDecision,
+  strategyRegimeTracker
+} from '../../src/utils/strategies/strategyRegimeFilters.js';
 import { 
   DEFAULT_STRATEGY_BUCKET, 
   classifyBtcMacroRegime,
@@ -1398,7 +1410,8 @@ export class AutoTrader {
           allowLongs: this.settings.tpbAllowLongs !== false,
           allowShorts: this.settings.tpbAllowShorts !== false,
           minRrRatio: this.settings.tpbMinRrRatio || 1.5,
-          minScore: this.settings.tpbMinScore || 8
+          minScore: this.settings.tpbMinScore || 8,
+          enforceRegimeFilter: true
         }
       );
       if (!signal) return null;
@@ -1433,6 +1446,7 @@ export class AutoTrader {
           atrStopMult: this.settings.smcAtrStopMult,
           rrRatio: this.settings.smcRrRatio,
           strictHtfRegime: this.settings.smcStrictHtfRegime,
+          enforceRegimeFilter: true,
           symbol
         });
         if (sig && sig.score >= this.settings.autoTradeThreshold) {
@@ -1616,6 +1630,42 @@ export class AutoTrader {
 
     const currentRegime = regimeCheck.regime;
 
+    // Dedicated 4-Strategy Master Decision Engine & Two-Candle Hysteresis Check
+    const tradeTf = this.settings.timeframe || '15m';
+    const htf = getHigherTimeframe(tradeTf);
+    let htfKlines: any[] | null = null;
+    try {
+      htfKlines = await this.getKlines(symbol, htf);
+    } catch (e) {}
+
+    const masterDecision = evaluateMasterRegimeDecision(
+      closedKlines,
+      htfKlines ? htfKlines.slice(0, -1) : null,
+      {
+        symbol,
+        candleTime: closedCandleTime
+      }
+    );
+
+    // If master decision detects conflict or explicit NO_TRADE, stand aside immediately
+    if (masterDecision.hasConflict) {
+      this.logScanResult(
+        symbol,
+        'NEUTRAL',
+        false,
+        `Master Regime Conflict: ${masterDecision.reason}`,
+        currentPrice,
+        0, 0, 0,
+        {
+          marketRegime: 'NO_TRADE',
+          macroColor: globalRegime.macroColor,
+          strategy: 'AUTO_REGIME',
+          rejectionReasons: [masterDecision.reason]
+        }
+      );
+      return null;
+    }
+
     const bucket: StrategyBucketItem[] = (this.settings.strategyBucket && this.settings.strategyBucket.length > 0)
       ? this.settings.strategyBucket
       : DEFAULT_STRATEGY_BUCKET;
@@ -1688,7 +1738,8 @@ export class AutoTrader {
             allowLongs: this.settings.tpbAllowLongs !== false,
             allowShorts: this.settings.tpbAllowShorts !== false,
             minRrRatio: this.settings.tpbMinRrRatio || 1.5,
-            minScore: this.settings.tpbMinScore || 8
+            minScore: this.settings.tpbMinScore || 8,
+            enforceRegimeFilter: true
           }
         );
         if (pullbackSignal && (!candidate.direction || pullbackSignal.direction === candidate.direction)) {
@@ -1742,6 +1793,7 @@ export class AutoTrader {
             atrStopMult: this.settings.smcAtrStopMult,
             rrRatio: this.settings.smcRrRatio,
             strictHtfRegime: this.settings.smcStrictHtfRegime,
+            enforceRegimeFilter: true,
             symbol
           });
           if (smcSig && (!candidate.direction || smcSig.direction === candidate.direction)) {
@@ -1933,6 +1985,7 @@ export class AutoTrader {
       maxSmaSlope: (this.settings as any).rangeMaxSmaSlope || 0.02,
       stopMult: (this.settings as any).rangeStopMult || 1.5,
       targetRr: (this.settings as any).rangeTargetRr || 3.0,
+      enforceRegimeFilter: true
     });
 
     if (!sig) return null;
@@ -2158,6 +2211,13 @@ export class AutoTrader {
     try {
       htfCandles = await this.getKlines(symbol, htf);
     } catch (e) {}
+
+    // Dedicated VCB Regime Filter Gate
+    const vcbMetrics = extractVcbRegimeMetrics(candles, htfCandles ? htfCandles.slice(0, -1) : null);
+    if (!allowVCB(vcbMetrics, breakout.direction as 'LONG' | 'SHORT')) {
+      console.log(`🛡️ [VCB Regime Filter] ${symbol} blocked: VCB regime criteria not met`);
+      return null;
+    }
 
     // VCB Strategy Final Gate Checklist ("Before Executing a VCB Trade - Quick Checklist")
     const checklist = evaluateVcbChecklist(
