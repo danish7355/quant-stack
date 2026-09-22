@@ -91,6 +91,7 @@ export interface SmcSignal {
     brokenStructureLevel: number;
     displacementAtr: number;
     volumeRatio: number;
+    regimeFilterPassed?: boolean;
   };
 }
 
@@ -720,11 +721,10 @@ export function evaluateSmc(
                     levels.tp2
                   );
 
-                  if (options.enforceRegimeFilter) {
-                    const smcMetrics = extractSmcRegimeMetrics(closedKlines, htfCandles);
-                    if (!allowSMCLiquidity(smcMetrics, 'LONG')) {
-                      continue;
-                    }
+                  const smcMetrics = extractSmcRegimeMetrics(closedKlines, htfCandles);
+                  const smcRegimePassed = allowSMCLiquidity(smcMetrics, 'LONG');
+                  if (options.enforceRegimeFilter && !smcRegimePassed) {
+                    continue;
                   }
 
                   return {
@@ -754,7 +754,8 @@ export function evaluateSmc(
                       sweepPrice: sweepResult.sweepPrice,
                       brokenStructureLevel: mssResult.brokenLevel,
                       displacementAtr: mssResult.displacementAtr,
-                      volumeRatio: mssResult.volumeRatio
+                      volumeRatio: mssResult.volumeRatio,
+                      regimeFilterPassed: smcRegimePassed
                     }
                   };
                 }
@@ -813,11 +814,10 @@ export function evaluateSmc(
                     levels.tp2
                   );
 
-                  if (options.enforceRegimeFilter) {
-                    const smcMetrics = extractSmcRegimeMetrics(closedKlines, htfCandles);
-                    if (!allowSMCLiquidity(smcMetrics, 'SHORT')) {
-                      continue;
-                    }
+                  const smcMetrics = extractSmcRegimeMetrics(closedKlines, htfCandles);
+                  const smcRegimePassed = allowSMCLiquidity(smcMetrics, 'SHORT');
+                  if (options.enforceRegimeFilter && !smcRegimePassed) {
+                    continue;
                   }
 
                   return {
@@ -847,7 +847,8 @@ export function evaluateSmc(
                       sweepPrice: sweepResult.sweepPrice,
                       brokenStructureLevel: mssResult.brokenLevel,
                       displacementAtr: mssResult.displacementAtr,
-                      volumeRatio: mssResult.volumeRatio
+                      volumeRatio: mssResult.volumeRatio,
+                      regimeFilterPassed: smcRegimePassed
                     }
                   };
                 }

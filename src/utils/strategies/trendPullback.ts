@@ -175,6 +175,8 @@ export interface TrendPullbackResult {
     volumeSma: number;
     confirmationScore: number;
     breakdown: TrendPullbackScoreBreakdown;
+    regimeFilterPassed?: boolean;
+    regimeMetrics?: TrendPullbackRegimeMetrics;
   };
 }
 
@@ -1222,20 +1224,18 @@ export function evaluateTrendPullbackDetailed(
   const direction: 'LONG' | 'SHORT' = regimeDetails.regime === 'TRENDING_UP' ? 'LONG' : 'SHORT';
 
   // Dedicated Trend Pullback Regime Filter Gate
-  if (options.enforceRegimeFilter) {
-    const trendMetrics = extractTrendPullbackRegimeMetrics(tradeCandles, htfCandles);
-    const trendAllowed = allowTrendPullback(trendMetrics, direction);
-    if (!trendAllowed) {
-      return {
-        success: false,
-        status: 'WAITING_FOR_REGIME_CONFIRMATION',
-        stage: 'NONE',
-        rejectionReason: 'UNFAVORABLE_MARKET_REGIME',
-        reason: 'Signal rejected: dedicated trend pullback regime filter not satisfied.',
-        score: 0,
-        result: null
-      };
-    }
+  const trendMetrics = extractTrendPullbackRegimeMetrics(tradeCandles, htfCandles);
+  const trendAllowed = allowTrendPullback(trendMetrics, direction);
+  if (options.enforceRegimeFilter && !trendAllowed) {
+    return {
+      success: false,
+      status: 'WAITING_FOR_REGIME_CONFIRMATION',
+      stage: 'NONE',
+      rejectionReason: 'UNFAVORABLE_MARKET_REGIME',
+      reason: 'Signal rejected: dedicated trend pullback regime filter not satisfied.',
+      score: 0,
+      result: null
+    };
   }
 
   // Direction toggle check
@@ -1686,7 +1686,9 @@ export function evaluateTrendPullbackDetailed(
       volumeRatio: vol.volumeRatio,
       volumeSma: vol.volSma20,
       confirmationScore: score,
-      breakdown
+      breakdown,
+      regimeFilterPassed: trendAllowed,
+      regimeMetrics: trendMetrics
     }
   };
 

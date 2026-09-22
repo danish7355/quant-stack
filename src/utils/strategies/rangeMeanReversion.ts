@@ -424,6 +424,7 @@ export interface RangeMeanReversionSignal {
     stopTightPassed: boolean;
     rewardRiskPassed: boolean;
     antiRunawayPassed: boolean;
+    emaRegimeFilterPassed?: boolean;
   };
 }
 
@@ -627,9 +628,10 @@ export function evaluateRangeMeanReversion(
   }
 
   // Dedicated EMA Mean-Reversion Regime Filter Gate
+  const emaMetrics = extractEmaMeanReversionRegimeMetrics(candles);
+  const emaRegimeAllowed = allowEMAMeanReversion(emaMetrics, direction);
   if (params.enforceRegimeFilter) {
-    const emaMetrics = extractEmaMeanReversionRegimeMetrics(candles);
-    if (!allowEMAMeanReversion(emaMetrics, direction)) {
+    if (!emaRegimeAllowed) {
       return null;
     }
   }
@@ -665,7 +667,8 @@ export function evaluateRangeMeanReversion(
       confirmationPassed: true,
       stopTightPassed: stopDistance >= (atr * 0.3),
       rewardRiskPassed: Math.abs(tp2 - close) / stopDistance >= 1.5,
-      antiRunawayPassed: !breakout.hasBreakoutRisk
+      antiRunawayPassed: !breakout.hasBreakoutRisk,
+      emaRegimeFilterPassed: emaRegimeAllowed
     }
   };
 }

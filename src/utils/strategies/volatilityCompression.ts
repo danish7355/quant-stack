@@ -711,14 +711,47 @@ export function evaluateVcbChecklist(
   const minScoreRequired = settings.vcbChecklistMinScore ?? 8;
   const minRrRatio = settings.vcbMinRrRatio ?? 2.0;
 
-  // Dedicated VCB Regime Filter Gate
-  if ((settings as any).enforceVcbRegimeFilter === true) {
-    const vcbMetrics = extractVcbRegimeMetrics(candles, htfCandles);
-    const vcbRegimeAllowed = allowVCB(vcbMetrics, direction);
+  // Dedicated VCB Regime Filter Gate & Checklist Item
+  let vcbRegimeAllowed = true;
+  let vcbMetrics: VcbRegimeMetrics | null = null;
+  if ((settings as any).enforceVcbRegimeFilter !== false) {
+    const lastBar = candles[candles.length - 1];
+    const vcbClose = entryPrice || (lastBar ? lastBar.close : 0);
+    const vcbRangeHigh = compression.windowHigh;
+    const vcbRangeLow = compression.windowLow;
+    vcbMetrics = {
+      wasCompressed: compression.isCompressed || (compression.compressionRatio !== undefined && compression.compressionRatio <= 0.7),
+      volumeRatio: breakout.rvol || breakout.volumeExpansion || 1.5,
+      atr,
+      atrMovingAverage: atr * 0.9,
+      breakoutConfirmed: breakout.direction !== null && !breakout.isWickRejection,
+      extremeVolatility: (breakout.rangeExpansion || 1.0) > 3.0,
+      breakoutIntoMajorLevel: false,
+      close: vcbClose,
+      rangeHigh: vcbRangeHigh,
+      rangeLow: vcbRangeLow,
+      closeLocation: breakout.closeLocationValue !== undefined
+        ? breakout.closeLocationValue
+        : (direction === 'SHORT' ? (1 - (breakout.closeStrength || 0.85)) : (breakout.closeStrength || 0.85)),
+      htfBias: direction === 'LONG' ? 'BULLISH' : 'BEARISH'
+    };
+    vcbRegimeAllowed = allowVCB(vcbMetrics, direction);
     if (!vcbRegimeAllowed) {
       failedGates.push('VCB_REGIME_FILTER_REJECTED');
     }
   }
+
+  items.push({
+    id: 'vcb_regime_filter',
+    name: 'VCB Regime Filter (Compression->Expansion)',
+    points: 0,
+    maxPoints: 0,
+    passed: vcbRegimeAllowed,
+    isMandatoryGate: true,
+    detail: vcbRegimeAllowed
+      ? `VCB Regime confirmed: Vol ratio ${(vcbMetrics?.volumeRatio || 1.5).toFixed(1)}x >= 1.5x, ATR expansion, clean range break`
+      : `VCB Regime rejected: Compression/Volume/ATR expansion criteria not met`
+  });
 
   // 1. HIGHER-TIMEFRAME BIAS & DRAW ON LIQUIDITY (+1 pt)
   let htfPoints = 0;

@@ -226,15 +226,17 @@ export function allowTrendPullback(m: TrendPullbackRegimeMetrics, direction: 'LO
 // 5. METRICS EXTRACTION HELPERS (FROM CANDLES)
 // ==========================================
 
-export function deriveHtfBias(htfCandles?: any[] | null): HtfBias {
-  if (!htfCandles || htfCandles.length < 20) return 'NEUTRAL';
-  const closes = htfCandles.map(c => c.close);
+export function deriveHtfBias(htfCandles?: any[] | null, fallbackCandles?: any[] | null): HtfBias {
+  const target = (htfCandles && htfCandles.length >= 20) ? htfCandles : (fallbackCandles && fallbackCandles.length >= 20 ? fallbackCandles : null);
+  if (!target) return 'NEUTRAL';
+  const closes = target.map(c => c.close);
+  const ema20 = calculateEMA(closes, 20).pop() || closes[closes.length - 1];
   const ema50 = calculateEMA(closes, 50).pop() || closes[closes.length - 1];
   const ema200 = calculateEMA(closes, 200).pop() || ema50;
   const lastClose = closes[closes.length - 1];
 
-  if (lastClose > ema50 && ema50 >= ema200 * 0.998) return 'BULLISH';
-  if (lastClose < ema50 && ema50 <= ema200 * 1.002) return 'BEARISH';
+  if ((lastClose >= ema50 && ema50 >= ema200 * 0.99) || (lastClose >= ema50 && ema20 >= ema50)) return 'BULLISH';
+  if ((lastClose <= ema50 && ema50 <= ema200 * 1.01) || (lastClose <= ema50 && ema20 <= ema50)) return 'BEARISH';
   return 'NEUTRAL';
 }
 
@@ -284,7 +286,7 @@ export function extractVcbRegimeMetrics(candles: any[], htfCandles?: any[] | nul
   const breakoutConfirmed = (lastBar.close > rangeHigh && closeLocation >= 0.7) || (lastBar.close < rangeLow && closeLocation <= 0.3);
   const extremeVolatility = candleRange > currentAtr * 3.0 || currentAtr > atrMovingAverage * 2.5;
 
-  const htfBias = deriveHtfBias(htfCandles);
+  const htfBias = deriveHtfBias(htfCandles, candles);
 
   // Check if breakout is directly into HTF major swing level
   let breakoutIntoMajorLevel = false;
@@ -413,7 +415,7 @@ export function extractSmcRegimeMetrics(candles: any[], htfCandles?: any[] | nul
     }
   }
 
-  const htfBias = deriveHtfBias(htfCandles);
+  const htfBias = deriveHtfBias(htfCandles, candles);
   const extremeVolatility = (lastBar.high - lastBar.low) > atr * 3.0;
 
   // Reward-to-risk approximation
@@ -592,7 +594,7 @@ export function extractTrendPullbackRegimeMetrics(candles: any[], htfCandles?: a
   const higherHighHigherLow = high2 > high1 && low2 > low1;
   const lowerHighLowerLow = high2 < high1 && low2 < low1;
 
-  const htfBias = deriveHtfBias(htfCandles);
+  const htfBias = deriveHtfBias(htfCandles, candles);
   const timeframeConflict = (ema20 > ema50 && htfBias === 'BEARISH') || (ema20 < ema50 && htfBias === 'BULLISH');
   const structureBroken = false;
   const pullbackHeldStructure = (ema20 > ema50 && lastBar.low >= ema50 * 0.995) || (ema20 < ema50 && lastBar.high <= ema50 * 1.005);
