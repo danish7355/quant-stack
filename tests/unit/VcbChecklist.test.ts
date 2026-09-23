@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   evaluateVcbChecklist,
+  evaluateVcbDetailed,
   VcbChecklistResult,
   Candle,
   BreakoutMetrics,
@@ -347,5 +348,64 @@ describe('VCB Strategy Final Gate Checklist ("Before Executing a VCB Trade - Qui
     expect(result.items.find(i => i.id === 'htf_bias_liquidity')?.passed).toBe(true);
     expect(result.items.find(i => i.id === 'location_discount_premium')?.passed).toBe(true);
     expect(result.items.find(i => i.id === 'liquidity_sweep_inducement')?.passed).toBe(true);
+  });
+
+  it('respects user-customized thresholds in checklist gates', () => {
+    const candles = buildExecutionCandles('LONG');
+    const htfCandles = createHtfBullishCandles(50);
+
+    // Baseline breakout has body 0.70 and rvol 2.5
+    // Set custom strict body requirement 0.75 -> should fail Gate 4
+    const strictResult = evaluateVcbChecklist(
+      candles,
+      htfCandles,
+      perfectBreakout,
+      compression,
+      105.3,
+      97.0,
+      122.0,
+      130.0,
+      atr,
+      { vcbBodyDominanceMin: 0.75 }
+    );
+    expect(strictResult.failedGates).toContain('STRUCTURE_DISPLACEMENT');
+    expect(strictResult.passed).toBe(false);
+
+    // Set custom strict volume requirement 3.0x -> should fail Gate 0 VCB Regime Filter (rvol 2.5 < 3.0)
+    const strictVolResult = evaluateVcbChecklist(
+      candles,
+      htfCandles,
+      perfectBreakout,
+      compression,
+      105.3,
+      97.0,
+      122.0,
+      130.0,
+      atr,
+      { vcbBreakoutVolumeMin: 3.0 }
+    );
+    expect(strictVolResult.failedGates).toContain('VCB_REGIME_FILTER_REJECTED');
+    expect(strictVolResult.passed).toBe(false);
+  });
+
+  describe('evaluateVcbDetailed 3-way decision taxonomy', () => {
+    it('returns NO_TRADE when candle count is insufficient', () => {
+      const detailed = evaluateVcbDetailed([]);
+      expect(detailed.decision).toBe('NO_TRADE');
+      expect(detailed.direction).toBeNull();
+      expect(detailed.outcomeReason).toContain('Insufficient candle data');
+    });
+
+    it('returns NO_TRADE when market is not compressed', () => {
+      // Build 40 wide oscillating candles that exceed compression thresholds
+      const wideCandles: Candle[] = [];
+      const baseTime = 1700000000000;
+      for (let i = 0; i < 40; i++) {
+        wideCandles.push(createCandle(baseTime + i * 900000, 100 + i * 2, 115 + i * 2, 90 + i * 2, 105 + i * 2, 1000));
+      }
+      const detailed = evaluateVcbDetailed(wideCandles);
+      expect(detailed.decision).toBe('NO_TRADE');
+      expect(detailed.outcomeReason).toContain('not in compression');
+    });
   });
 });

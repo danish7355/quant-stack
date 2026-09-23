@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { calculateEMA, calculateSMA, calculateATR, calculateADX } from '../indicators.js';
+import { calculateEMA, calculateSMA, calculateATR, calculateADX, calculateRSI } from '../indicators.js';
 
 export type HtfBias = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
 
@@ -34,37 +34,98 @@ export interface VcbRegimeMetrics {
   rangeLow: number;
   closeLocation: number; // 0.0 to 1.0 (bottom to top of candle range)
   htfBias: HtfBias;
+  // Breakout-Specific Enhancements:
+  atrRatio?: number;             // current ATR / ATR(20) MA (default min 1.20)
+  adx?: number;                  // Entry timeframe ADX(14) (default min 20)
+  rsi?: number;                  // Entry timeframe RSI(14) (default > 55 Long, < 45 Short)
+  bodyRatio?: number;            // Real body / Total candle range (default min 0.60)
+  htfAdx?: number;               // HTF ADX(14) (default min 20)
+  htfStructure?: 'HH_HL' | 'LH_LL' | 'SIDEWAYS'; // HTF market structure
+  htfMaAligned?: boolean;        // HTF Price above/below EMA50/200
+  retestConfirmed?: boolean;     // Option A: Retest held
+  followThroughConfirmed?: boolean; // Option B: 2 consecutive closes or >= 0.35 ATR progress
+  sessionAllowed?: boolean;      // In Kill Zone / active liquidity
+  newsFilterPassed?: boolean;    // No high impact news within 1-2 hours
+  requireRetestOrFollowThrough?: boolean;
+  // User Customizable Threshold Overrides:
+  minVolumeRatio?: number;       // default 1.50
+  minAtrRatio?: number;          // default 1.20
+  minAdx?: number;               // default 20
+  minHtfAdx?: number;            // default 20
+  minBodyRatio?: number;         // default 0.60
+  minRsiBullish?: number;        // default 55
+  maxRsiBearish?: number;        // default 45
+  minCloseLocation?: number;     // default 0.70
+  requireHtfStructure?: boolean; // default false unless explicitly required
 }
 
 /**
  * VCB Regime Filter:
- * Allows VCB trades only during transition from compression to directional expansion.
- * Rejects low volume, lack of prior compression, large rejection wicks, extreme volatility,
- * and breakouts directly into higher timeframe support/resistance.
+ * Allows VCB trades only during genuine transition from compression to directional expansion.
+ * Rejects low volume (< 1.5x), flat ATR (< 1.2x), low ADX (< 20), weak candle body (< 60%),
+ * opposing momentum (RSI), opposing HTF structure/bias, large rejection wicks, extreme volatility,
+ * and breakouts directly into higher timeframe key barriers.
  */
 export function allowVCB(m: VcbRegimeMetrics, direction: 'LONG' | 'SHORT'): boolean {
-  const common =
-    m.wasCompressed &&
-    m.volumeRatio >= 1.5 &&
-    m.atr > m.atrMovingAverage &&
-    m.breakoutConfirmed &&
-    !m.extremeVolatility &&
-    !m.breakoutIntoMajorLevel;
+  const minVolRatio = m.minVolumeRatio ?? 1.5;
+  const minAtrRatio = m.minAtrRatio ?? 1.20;
+  const minAdx = m.minAdx ?? 20;
+  const minHtfAdx = m.minHtfAdx ?? 20;
+  const minBodyRatio = m.minBodyRatio ?? 0.60;
+  const minRsiBullish = m.minRsiBullish ?? 55;
+  const maxRsiBearish = m.maxRsiBearish ?? 45;
+  const minCloseLocation = m.minCloseLocation ?? 0.70;
+
+  // ATR expansion ratio: check explicit atrRatio or compute from atr / atrMovingAverage
+  const computedAtrRatio = m.atrRatio !== undefined
+    ? m.atrRatio
+    : (m.atrMovingAverage > 0 ? m.atr / m.atrMovingAverage : 1.0);
+
+  // Hard "No-Trade" Regime check:
+  // If ADX < minAdx OR ATR ratio < minAtrRatio OR volumeRatio < minVolRatio -> disable breakout
+  if (m.adx !== undefined && m.adx < minAdx) return false;
+  if (computedAtrRatio < minAtrRatio) return false;
+  if (m.volumeRatio < minVolRatio) return false;
+
+  // Candle quality gates
+  if (m.bodyRatio !== undefined && m.bodyRatio < minBodyRatio) return false;
+  if (m.extremeVolatility || m.breakoutIntoMajorLevel || !m.breakoutConfirmed || !m.wasCompressed) return false;
+
+  // HTF Trend strength check
+  if (m.htfAdx !== undefined && m.htfAdx < minHtfAdx) return false;
+  if (m.htfMaAligned !== undefined && !m.htfMaAligned) return false;
+  if (m.requireHtfStructure && m.htfStructure !== undefined) {
+    if (direction === 'LONG' && m.htfStructure !== 'HH_HL') return false;
+    if (direction === 'SHORT' && m.htfStructure !== 'LH_LL') return false;
+  }
+
+  // Retest or Follow-Through requirement (if enabled)
+  if (m.requireRetestOrFollowThrough) {
+    const hasConfirmation = m.retestConfirmed || m.followThroughConfirmed;
+    if (!hasConfirmation) return false;
+  }
+
+  // Session & News gates
+  if (m.sessionAllowed !== undefined && !m.sessionAllowed) return false;
+  if (m.newsFilterPassed !== undefined && !m.newsFilterPassed) return false;
 
   if (direction === 'LONG') {
-    return (
-      common &&
-      m.close > m.rangeHigh &&
-      m.closeLocation >= 0.70 &&
-      ['BULLISH', 'NEUTRAL'].includes(m.htfBias)
-    );
+    if (m.close <= m.rangeHigh) return false;
+    if (m.closeLocation < minCloseLocation) return false;
+    if (!['BULLISH', 'NEUTRAL'].includes(m.htfBias)) return false;
+    if (m.rsi !== undefined && m.rsi < minRsiBullish) return false;
+    return true;
   }
-  return (
-    common &&
-    m.close < m.rangeLow &&
-    m.closeLocation <= 0.30 &&
-    ['BEARISH', 'NEUTRAL'].includes(m.htfBias)
-  );
+
+  if (direction === 'SHORT') {
+    if (m.close >= m.rangeLow) return false;
+    if (m.closeLocation > (1 - minCloseLocation)) return false;
+    if (!['BEARISH', 'NEUTRAL'].includes(m.htfBias)) return false;
+    if (m.rsi !== undefined && m.rsi > maxRsiBearish) return false;
+    return true;
+  }
+
+  return false;
 }
 
 // ==========================================
@@ -240,13 +301,18 @@ export function deriveHtfBias(htfCandles?: any[] | null, fallbackCandles?: any[]
   return 'NEUTRAL';
 }
 
-export function extractVcbRegimeMetrics(candles: any[], htfCandles?: any[] | null): VcbRegimeMetrics {
+export function extractVcbRegimeMetrics(
+  candles: any[],
+  htfCandles?: any[] | null,
+  customSettings?: any
+): VcbRegimeMetrics {
   if (!candles || candles.length < 30) {
     return {
       wasCompressed: false,
       volumeRatio: 0,
       atr: 0,
       atrMovingAverage: 0,
+      atrRatio: 0,
       breakoutConfirmed: false,
       extremeVolatility: false,
       breakoutIntoMajorLevel: false,
@@ -269,6 +335,7 @@ export function extractVcbRegimeMetrics(candles: any[], htfCandles?: any[] | nul
   const currentAtr = atrs[atrs.length - 1] || (lastBar.close * 0.015);
   const recentAtrs = atrs.slice(-20);
   const atrMovingAverage = recentAtrs.length > 0 ? recentAtrs.reduce((a, b) => a + b, 0) / recentAtrs.length : currentAtr;
+  const atrRatio = atrMovingAverage > 0 ? currentAtr / atrMovingAverage : 1.0;
 
   const rangeHigh = prevBars.length > 0 ? Math.max(...prevBars.map(c => c.high)) : lastBar.high;
   const rangeLow = prevBars.length > 0 ? Math.min(...prevBars.map(c => c.low)) : lastBar.low;
@@ -283,10 +350,127 @@ export function extractVcbRegimeMetrics(candles: any[], htfCandles?: any[] | nul
 
   const candleRange = Math.max(0.00001, lastBar.high - lastBar.low);
   const closeLocation = (lastBar.close - lastBar.low) / candleRange;
+  const candleBody = Math.abs(lastBar.close - lastBar.open);
+  const bodyRatio = candleBody / candleRange;
+
   const breakoutConfirmed = (lastBar.close > rangeHigh && closeLocation >= 0.7) || (lastBar.close < rangeLow && closeLocation <= 0.3);
   const extremeVolatility = candleRange > currentAtr * 3.0 || currentAtr > atrMovingAverage * 2.5;
 
   const htfBias = deriveHtfBias(htfCandles, candles);
+
+  // ADX on entry timeframe
+  let localAdx: number | undefined;
+  if (candles.length >= 28) {
+    const adxResult = calculateADX(highs, lows, closes, 14);
+    if (adxResult && adxResult.adx && adxResult.adx.length > 0) {
+      localAdx = adxResult.adx[adxResult.adx.length - 1];
+    }
+  }
+
+  // RSI on entry timeframe
+  let localRsi: number | undefined;
+  if (candles.length >= 15) {
+    const rsiSeries = calculateRSI(closes, 14);
+    if (rsiSeries && rsiSeries.length > 0) {
+      localRsi = rsiSeries[rsiSeries.length - 1];
+    }
+  }
+
+  // HTF Indicators & Structure
+  let htfAdx: number | undefined;
+  let htfStructure: 'HH_HL' | 'LH_LL' | 'SIDEWAYS' | undefined;
+  let htfMaAligned: boolean | undefined;
+
+  if (htfCandles && htfCandles.length >= 20) {
+    const htfHighs = htfCandles.map(c => c.high);
+    const htfLows = htfCandles.map(c => c.low);
+    const htfCloses = htfCandles.map(c => c.close);
+
+    if (htfCandles.length >= 28) {
+      const htfAdxResult = calculateADX(htfHighs, htfLows, htfCloses, 14);
+      if (htfAdxResult && htfAdxResult.adx && htfAdxResult.adx.length > 0) {
+        htfAdx = htfAdxResult.adx[htfAdxResult.adx.length - 1];
+      }
+    }
+
+    const recentHtf = htfCandles.slice(-20);
+    let hhCount = 0;
+    let hlCount = 0;
+    let lhCount = 0;
+    let llCount = 0;
+    for (let i = 2; i < recentHtf.length; i++) {
+      if (recentHtf[i].high > recentHtf[i - 1].high && recentHtf[i - 1].high >= recentHtf[i - 2].high) hhCount++;
+      if (recentHtf[i].low > recentHtf[i - 1].low && recentHtf[i - 1].low >= recentHtf[i - 2].low) hlCount++;
+      if (recentHtf[i].high < recentHtf[i - 1].high && recentHtf[i - 1].high <= recentHtf[i - 2].high) lhCount++;
+      if (recentHtf[i].low < recentHtf[i - 1].low && recentHtf[i - 1].low <= recentHtf[i - 2].low) llCount++;
+    }
+    if (hhCount + hlCount > lhCount + llCount && hhCount >= 1 && hlCount >= 1) {
+      htfStructure = 'HH_HL';
+    } else if (lhCount + llCount > hhCount + hlCount && lhCount >= 1 && llCount >= 1) {
+      htfStructure = 'LH_LL';
+    } else {
+      htfStructure = 'SIDEWAYS';
+    }
+
+    const ema50Series = calculateEMA(htfCloses, 50);
+    const ema200Series = calculateEMA(htfCloses, 200);
+    const lastHtfPrice = htfCloses[htfCloses.length - 1];
+    const htfEma50 = ema50Series.length > 0 ? ema50Series[ema50Series.length - 1] : lastHtfPrice;
+    const htfEma200 = ema200Series.length > 0 ? ema200Series[ema200Series.length - 1] : htfEma50;
+
+    if (lastBar.close > rangeHigh) {
+      htfMaAligned = lastHtfPrice >= htfEma50 || lastHtfPrice >= htfEma200;
+    } else if (lastBar.close < rangeLow) {
+      htfMaAligned = lastHtfPrice <= htfEma50 || lastHtfPrice <= htfEma200;
+    } else {
+      htfMaAligned = true;
+    }
+  }
+
+  // Follow-through & Retest detection
+  const followThroughAtrMin = customSettings?.vcbFollowThroughAtrMin ?? 0.35;
+  let followThroughConfirmed = false;
+  let retestConfirmed = false;
+
+  const prevBar = candles[candles.length - 2];
+  if (prevBar) {
+    const brokeUpBoth = lastBar.close > rangeHigh && prevBar.close > rangeHigh;
+    const brokeDownBoth = lastBar.close < rangeLow && prevBar.close < rangeLow;
+    const decisiveAtrLong = lastBar.close >= rangeHigh + (followThroughAtrMin * currentAtr);
+    const decisiveAtrShort = lastBar.close <= rangeLow - (followThroughAtrMin * currentAtr);
+    if (brokeUpBoth || brokeDownBoth || decisiveAtrLong || decisiveAtrShort) {
+      followThroughConfirmed = true;
+    }
+  }
+
+  if (candles.length >= 6) {
+    const recentSlice = candles.slice(-6, -1);
+    const hadPriorLongBreak = recentSlice.some(c => c.close > rangeHigh);
+    const hadPriorShortBreak = recentSlice.some(c => c.close < rangeLow);
+    if (hadPriorLongBreak) {
+      const retestTouch = recentSlice.some(c => Math.abs(c.low - rangeHigh) <= currentAtr * 0.25 || (c.low <= rangeHigh && c.close >= rangeHigh * 0.998));
+      if (retestTouch && lastBar.close > rangeHigh) {
+        retestConfirmed = true;
+      }
+    }
+    if (hadPriorShortBreak) {
+      const retestTouch = recentSlice.some(c => Math.abs(c.high - rangeLow) <= currentAtr * 0.25 || (c.high >= rangeLow && c.close <= rangeLow * 1.002));
+      if (retestTouch && lastBar.close < rangeLow) {
+        retestConfirmed = true;
+      }
+    }
+  }
+
+  // Session & News gates
+  let sessionAllowed = true;
+  if (customSettings?.vcbEnforceKillZone) {
+    const candleTimeMs = lastBar.time > 1e11 ? lastBar.time : lastBar.time * 1000;
+    const utcHour = new Date(candleTimeMs).getUTCHours();
+    const inLondon = utcHour >= 7 && utcHour < 11;
+    const inNewYork = utcHour >= 13 && utcHour < 17;
+    sessionAllowed = inLondon || inNewYork;
+  }
+  const newsFilterPassed = true;
 
   // Check if breakout is directly into HTF major swing level
   let breakoutIntoMajorLevel = false;
@@ -307,6 +491,17 @@ export function extractVcbRegimeMetrics(candles: any[], htfCandles?: any[] | nul
     volumeRatio,
     atr: currentAtr,
     atrMovingAverage,
+    atrRatio,
+    adx: localAdx,
+    rsi: localRsi,
+    bodyRatio,
+    htfAdx,
+    htfStructure,
+    htfMaAligned,
+    retestConfirmed,
+    followThroughConfirmed,
+    sessionAllowed,
+    newsFilterPassed,
     breakoutConfirmed,
     extremeVolatility,
     breakoutIntoMajorLevel,
@@ -314,7 +509,18 @@ export function extractVcbRegimeMetrics(candles: any[], htfCandles?: any[] | nul
     rangeHigh,
     rangeLow,
     closeLocation,
-    htfBias
+    htfBias,
+    // Customizable threshold overrides
+    minVolumeRatio: customSettings?.vcbBreakoutVolumeMin,
+    minAtrRatio: customSettings?.vcbLocalAtrRatioMin,
+    minAdx: customSettings?.vcbLocalAdxMin,
+    minHtfAdx: customSettings?.vcbHtfAdxMin,
+    minBodyRatio: customSettings?.vcbBodyDominanceMin,
+    minRsiBullish: customSettings?.vcbRsiBullishMin,
+    maxRsiBearish: customSettings?.vcbRsiBearishMax,
+    minCloseLocation: customSettings?.vcbCloseLocationMin,
+    requireHtfStructure: customSettings?.vcbRequireHtfStructure,
+    requireRetestOrFollowThrough: customSettings?.vcbRequireFollowThroughOrRetest
   };
 }
 

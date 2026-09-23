@@ -1436,6 +1436,16 @@ export default function SettingsPanel({
                 <InputRow label="Checklist Minimum Score" desc="Minimum required 11-point gate checklist score to trigger breakout entry (default: 8)" value={settings.vcbChecklistMinScore ?? 8} onChange={(v: any) => handleInputChange('vcbChecklistMinScore', v)} min={5} max={11} />
                 <InputRow label="Minimum Risk-to-Reward Ratio" desc="Required asymmetric target multiple for breakout (default: 2.0)" value={settings.vcbMinRrRatio ?? 2.0} onChange={(v: any) => handleInputChange('vcbMinRrRatio', v)} min={1.5} max={5.0} />
                 
+                {/* 5 Institutional Breakout Pillars Controls */}
+                <InputRow label="Local ATR Expansion Ratio (Min)" desc="Minimum current ATR / 20-period ATR MA expansion ratio to confirm market expansion (default: 1.20)" value={settings.vcbLocalAtrRatioMin ?? 1.20} onChange={(v: any) => handleInputChange('vcbLocalAtrRatioMin', v)} min={1.0} max={2.5} />
+                <InputRow label="Entry Timeframe Minimum ADX" desc="Minimum ADX on entry timeframe ensuring trend momentum over range chop (default: 20)" value={settings.vcbLocalAdxMin ?? 20} onChange={(v: any) => handleInputChange('vcbLocalAdxMin', v)} min={10} max={40} />
+                <InputRow label="Breakout Volume Multiplier (RVOL)" desc="Minimum breakout volume relative to 20-period volume SMA (default: 1.50x)" value={settings.vcbBreakoutVolumeMin ?? 1.50} onChange={(v: any) => handleInputChange('vcbBreakoutVolumeMin', v)} min={1.1} max={3.5} />
+                <InputRow label="Candle Body Dominance Ratio" desc="Minimum real body / total candle range to reject indecision wicks (default: 0.60 = 60%)" value={settings.vcbBodyDominanceMin ?? 0.60} onChange={(v: any) => handleInputChange('vcbBodyDominanceMin', v)} min={0.40} max={0.90} />
+                <InputRow label="Close Location Value" desc="Minimum close location within candle range in breakout direction (default: 0.70 = top/bottom 30%)" value={settings.vcbCloseLocationMin ?? 0.70} onChange={(v: any) => handleInputChange('vcbCloseLocationMin', v)} min={0.50} max={0.95} />
+                <InputRow label="HTF Minimum ADX" desc="Minimum ADX on Higher Timeframe to ensure institutional directional bias (default: 20)" value={settings.vcbHtfAdxMin ?? 20} onChange={(v: any) => handleInputChange('vcbHtfAdxMin', v)} min={10} max={40} />
+                <InputRow label="Bullish RSI Minimum" desc="Minimum RSI on entry timeframe for Long breakouts (default: 55)" value={settings.vcbRsiBullishMin ?? 55} onChange={(v: any) => handleInputChange('vcbRsiBullishMin', v)} min={50} max={70} />
+                <InputRow label="Bearish RSI Maximum" desc="Maximum RSI on entry timeframe for Short breakdowns (default: 45)" value={settings.vcbRsiBearishMax ?? 45} onChange={(v: any) => handleInputChange('vcbRsiBearishMax', v)} min={30} max={50} />
+
                 <div className="flex justify-between items-center py-3">
                   <div className="flex flex-col">
                     <span className="text-sm font-bold text-gray-200">Require Liquidity Sweep Before Breakout</span>
@@ -1465,6 +1475,54 @@ export default function SettingsPanel({
                     }`}
                   >
                     <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.vcbRequireRetest !== false ? 'transform translate-x-6' : ''}`} />
+                  </button>
+                </div>
+
+                <div className="flex justify-between items-center py-3">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold text-gray-200">Require HTF Structure Alignment</span>
+                    <span className="text-[11px] text-gray-500">Require Higher-High/Higher-Low for Longs, Lower-High/Lower-Low for Shorts on HTF.</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleInputChange('vcbRequireHtfStructure', settings.vcbRequireHtfStructure !== false ? false : true)}
+                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
+                      settings.vcbRequireHtfStructure !== false ? 'bg-emerald-600' : 'bg-gray-700'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.vcbRequireHtfStructure !== false ? 'transform translate-x-6' : ''}`} />
+                  </button>
+                </div>
+
+                <div className="flex justify-between items-center py-3">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold text-gray-200">Require Retest or Follow-Through Confirmation</span>
+                    <span className="text-[11px] text-gray-500">Only execute after broken level retest holds OR decisive follow-through candle confirmed.</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleInputChange('vcbRequireFollowThroughOrRetest', settings.vcbRequireFollowThroughOrRetest !== false ? false : true)}
+                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
+                      settings.vcbRequireFollowThroughOrRetest !== false ? 'bg-emerald-600' : 'bg-gray-700'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.vcbRequireFollowThroughOrRetest !== false ? 'transform translate-x-6' : ''}`} />
+                  </button>
+                </div>
+
+                <div className="flex justify-between items-center py-3">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold text-gray-200">Enforce London & NY Kill Zones</span>
+                    <span className="text-[11px] text-gray-500">Only execute breakouts during London (07:00-11:00 UTC) and NY (13:00-17:00 UTC) sessions.</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleInputChange('vcbEnforceKillZone', !settings.vcbEnforceKillZone)}
+                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
+                      settings.vcbEnforceKillZone ? 'bg-emerald-600' : 'bg-gray-700'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.vcbEnforceKillZone ? 'transform translate-x-6' : ''}`} />
                   </button>
                 </div>
               </div>

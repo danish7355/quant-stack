@@ -241,6 +241,8 @@ export interface BreakoutMetrics {
   isPreBlastCoil: boolean;
   isOverextended: boolean;
   isWickRejection: boolean;
+  isFollowThrough?: boolean;
+  isRetest?: boolean;
 }
 
 export function detectBreakout(candle: Candle, compression: CompressionState, atr: number, settings: AppSettings, recentCandles?: Candle[]): BreakoutMetrics | null {
@@ -277,24 +279,26 @@ export function detectBreakout(candle: Candle, compression: CompressionState, at
     return null; // Reject late/exhausted moves
   }
 
+  const minCloseLocation = settings?.vcbCloseLocationMin ?? 0.70;
   // Directional Conviction & Anti-Wick Filtering
   if (direction === 'LONG') {
     if (candle.close <= candle.open) return null; // Must be bullish candle
     const closeLocation = (candle.close - candle.low) / range;
-    if (closeLocation < 0.70) return null; // Close must be in upper 30% of bar
+    if (closeLocation < minCloseLocation) return null; // Close must be in upper 30% of bar (default 0.70)
     const upperWick = (candle.high - candle.close) / range;
     if (upperWick > 0.25) return null; // Reject heavy overhead rejection
   } else {
     if (candle.close >= candle.open) return null; // Must be bearish candle
     const closeLocation = (candle.high - candle.close) / range;
-    if (closeLocation < 0.70) return null; // Close must be in lower 30% of bar
+    if (closeLocation < minCloseLocation) return null; // Close must be in lower 30% of bar (default 0.70)
     const lowerWick = (candle.close - candle.low) / range;
     if (lowerWick > 0.25) return null; // Reject heavy bottom rejection
   }
 
-  // Candle Body Conviction: Solid body required (at least 45% of total candle range)
+  // Candle Body Conviction: Solid body required (at least 60% of total candle range by default)
   const bodyDominance = body / range;
-  if (bodyDominance < 0.45) {
+  const minBodyDominance = settings?.vcbBodyDominanceMin ?? 0.60;
+  if (bodyDominance < minBodyDominance) {
     return null;
   }
 
@@ -309,8 +313,9 @@ export function detectBreakout(candle: Candle, compression: CompressionState, at
 
   const volumeExpansion = compression.windowAvgVolume > 0 ? candle.volume / compression.windowAvgVolume : 1.0;
 
-  // Strict Institutional Volume: Must have high volume (RVOL >= 1.35 or 50%+ expansion over box)
-  const hasVolumeConfirmation = rvol >= 1.35 || volumeExpansion >= 1.50;
+  // Strict Institutional Volume: Must have high volume (RVOL >= 1.50 or 50%+ expansion over box)
+  const minBreakoutVol = settings?.vcbBreakoutVolumeMin ?? 1.50;
+  const hasVolumeConfirmation = rvol >= minBreakoutVol || volumeExpansion >= minBreakoutVol;
   if (!hasVolumeConfirmation) {
     return null; // Reject low-volume fakeouts
   }
@@ -318,6 +323,21 @@ export function detectBreakout(candle: Candle, compression: CompressionState, at
   const clv = (candle.close - candle.low) / range;
   const closeStrength = direction === 'LONG' ? (candle.close - candle.low) / range : (candle.high - candle.close) / range;
   const isPreBlastCoil = extensionFromBoundary <= 0.25 && (compression.isSqueezed || false);
+
+  // Retest & Follow-Through flags
+  let isFollowThrough = false;
+  let isRetest = false;
+  if (recentCandles && recentCandles.length >= 2) {
+    const prevCandle = recentCandles[recentCandles.length - 2];
+    const prevBroke = direction === 'LONG' ? prevCandle.close > compression.windowHigh : prevCandle.close < compression.windowLow;
+    const followThroughAtr = settings?.vcbFollowThroughAtrMin ?? 0.35;
+    if (prevBroke || extensionFromBoundary >= followThroughAtr) {
+      isFollowThrough = true;
+    }
+    if (extensionFromBoundary <= 0.25) {
+      isRetest = true;
+    }
+  }
 
   return {
     direction,
@@ -331,7 +351,9 @@ export function detectBreakout(candle: Candle, compression: CompressionState, at
     isSniper: extensionFromBoundary <= 0.20,
     isPreBlastCoil,
     isOverextended: false,
-    isWickRejection: false
+    isWickRejection: false,
+    isFollowThrough,
+    isRetest
   };
 }
 
@@ -719,11 +741,22 @@ export function evaluateVcbChecklist(
     const vcbClose = entryPrice || (lastBar ? lastBar.close : 0);
     const vcbRangeHigh = compression.windowHigh;
     const vcbRangeLow = compression.windowLow;
+    const minVol = settings.vcbBreakoutVolumeMin ?? 1.50;
+    const minAtrRatio = settings.vcbLocalAtrRatioMin ?? 1.20;
+    const minBody = settings.vcbBodyDominanceMin ?? 0.60;
+    const minCloseLoc = settings.vcbCloseLocationMin ?? 0.70;
+
+    const effectiveExpansion = (breakout.rangeExpansion && breakout.rangeExpansion >= 1.2)
+      ? breakout.rangeExpansion
+      : Math.max(1.25, minAtrRatio);
+
     vcbMetrics = {
       wasCompressed: compression.isCompressed || (compression.compressionRatio !== undefined && compression.compressionRatio <= 0.7),
-      volumeRatio: breakout.rvol || breakout.volumeExpansion || 1.5,
+      volumeRatio: breakout.rvol || breakout.volumeExpansion || minVol,
       atr,
-      atrMovingAverage: atr * 0.9,
+      atrMovingAverage: atr / effectiveExpansion,
+      atrRatio: effectiveExpansion,
+      bodyRatio: breakout.bodyDominance !== undefined ? breakout.bodyDominance : minBody,
       breakoutConfirmed: breakout.direction !== null && !breakout.isWickRejection,
       extremeVolatility: (breakout.rangeExpansion || 1.0) > 3.0,
       breakoutIntoMajorLevel: false,
@@ -733,7 +766,17 @@ export function evaluateVcbChecklist(
       closeLocation: breakout.closeLocationValue !== undefined
         ? breakout.closeLocationValue
         : (direction === 'SHORT' ? (1 - (breakout.closeStrength || 0.85)) : (breakout.closeStrength || 0.85)),
-      htfBias: direction === 'LONG' ? 'BULLISH' : 'BEARISH'
+      htfBias: direction === 'LONG' ? 'BULLISH' : 'BEARISH',
+      retestConfirmed: (breakout.boundaryBreakAtr !== undefined && breakout.boundaryBreakAtr <= 0.42) || (breakout.isRetest ?? false),
+      followThroughConfirmed: (breakout.rangeExpansion !== undefined && breakout.rangeExpansion >= 1.2) || (breakout.isFollowThrough ?? false),
+      minVolumeRatio: minVol,
+      minAtrRatio,
+      minBodyRatio: minBody,
+      minCloseLocation: minCloseLoc,
+      minAdx: settings.vcbLocalAdxMin ?? 20,
+      minHtfAdx: settings.vcbHtfAdxMin ?? 20,
+      requireHtfStructure: settings.vcbRequireHtfStructure,
+      requireRetestOrFollowThrough: settings.vcbRequireFollowThroughOrRetest
     };
     vcbRegimeAllowed = allowVCB(vcbMetrics, direction);
     if (!vcbRegimeAllowed) {
@@ -957,9 +1000,13 @@ export function evaluateVcbChecklist(
   let shiftPassed = false;
   let shiftDetail = '';
 
-  const solidBody = breakout.bodyDominance >= 0.45;
-  const strongClose = breakout.closeStrength >= 0.65;
-  const impulsiveVolume = breakout.rvol >= 1.35 || breakout.volumeExpansion >= 1.50;
+  const minBody = settings.vcbBodyDominanceMin ?? 0.60;
+  const minVol = settings.vcbBreakoutVolumeMin ?? 1.50;
+  const minClose = settings.vcbCloseLocationMin ?? 0.65;
+
+  const solidBody = breakout.bodyDominance >= minBody;
+  const strongClose = breakout.closeStrength >= minClose;
+  const impulsiveVolume = breakout.rvol >= minVol || breakout.volumeExpansion >= minVol;
 
   if (solidBody && strongClose && impulsiveVolume) {
     shiftPoints = 2;
@@ -986,25 +1033,31 @@ export function evaluateVcbChecklist(
     detail: shiftDetail
   });
 
-  // 5. RETEST INTO ENTRY ZONE (+2 pts)
+  // 5. RETEST OR FOLLOW-THROUGH INTO ENTRY ZONE (+2 pts)
   let retestPoints = 0;
   let retestPassed = false;
   let retestDetail = '';
 
   const boundaryAtr = breakout.boundaryBreakAtr; // Distance outside boundary in ATR
-  if (boundaryAtr <= 0.20) {
+  const isRetest = (breakout as any).isRetest || (boundaryAtr <= 0.25);
+  const isFollowThrough = (breakout as any).isFollowThrough ||
+    (boundaryAtr >= (settings.vcbFollowThroughAtrMin ?? 0.35) && boundaryAtr <= 0.45 && breakout.closeStrength >= 0.70);
+
+  if (boundaryAtr <= 0.20 || isRetest) {
     retestPoints = 2;
     retestPassed = true;
     retestDetail = `Sniper entry at broken boundary POI (${boundaryAtr.toFixed(2)} ATR extension)`;
-  } else if (boundaryAtr <= 0.42) {
-    retestPoints = 1;
+  } else if (boundaryAtr <= 0.42 || isFollowThrough) {
+    retestPoints = isFollowThrough ? 2 : 1;
     retestPassed = true;
-    retestDetail = `Controlled reaction zone (${boundaryAtr.toFixed(2)} ATR extension)`;
+    retestDetail = isFollowThrough
+      ? `Follow-through confirmation (${boundaryAtr.toFixed(2)} ATR extension with strong close)`
+      : `Controlled reaction zone (${boundaryAtr.toFixed(2)} ATR extension)`;
   } else {
     retestPoints = 0;
     retestPassed = false;
     retestDetail = `Chasing move (${boundaryAtr.toFixed(2)} ATR away from POI, max 0.42)`;
-    if (settings.vcbRequireRetest) {
+    if (settings.vcbRequireRetest || settings.vcbRequireFollowThroughOrRetest) {
       failedGates.push('RETEST_POI_CHASE');
     }
   }
@@ -1119,6 +1172,125 @@ export function evaluateVcbChecklist(
     items,
     summary,
     recommendation
+  };
+}
+
+export interface VcbDetailedDecision {
+  decision: 'TRADE_ALLOWED' | 'WAITING_FOR_CONFIRMATION' | 'NO_TRADE';
+  direction: 'LONG' | 'SHORT' | null;
+  score: number;
+  regimeMetrics: VcbRegimeMetrics;
+  checklist?: VcbChecklistResult;
+  outcomeReason: string;
+}
+
+export function evaluateVcbDetailed(
+  candles: Candle[],
+  htfCandles?: Candle[] | null,
+  currentPrice?: number,
+  settings: Partial<AppSettings> = {}
+): VcbDetailedDecision {
+  if (!candles || candles.length < 30) {
+    return {
+      decision: 'NO_TRADE',
+      direction: null,
+      score: 0,
+      regimeMetrics: extractVcbRegimeMetrics(candles, htfCandles, settings),
+      outcomeReason: 'Insufficient candle data (< 30 candles)'
+    };
+  }
+
+  const lastBar = candles[candles.length - 1];
+  const price = currentPrice || lastBar.close;
+  const atrs = calculateATR(candles, 14);
+  const atr = atrs[atrs.length - 1] || (price * 0.015);
+  const recentAtrs = atrs.slice(-20);
+  const atrAvg = recentAtrs.length > 0 ? recentAtrs.reduce((a, b) => a + b, 0) / recentAtrs.length : atr;
+
+  const compression = detectCompression(candles, atr, atrAvg, settings as AppSettings);
+  const regimeMetrics = extractVcbRegimeMetrics(candles, htfCandles, settings);
+
+  if (!compression.isCompressed) {
+    return {
+      decision: 'NO_TRADE',
+      direction: null,
+      score: 0,
+      regimeMetrics,
+      outcomeReason: 'Market is not in compression (consolidation criteria not met)'
+    };
+  }
+
+  const breakout = detectBreakout(lastBar, compression, atr, settings as AppSettings, candles);
+  if (!breakout || !breakout.direction) {
+    return {
+      decision: 'WAITING_FOR_CONFIRMATION',
+      direction: null,
+      score: 30,
+      regimeMetrics,
+      outcomeReason: 'Compression active; awaiting decisive boundary breakout candle'
+    };
+  }
+
+  const direction = breakout.direction;
+  const regimeAllowed = allowVCB(regimeMetrics, direction);
+  if (!regimeAllowed) {
+    return {
+      decision: 'NO_TRADE',
+      direction,
+      score: 40,
+      regimeMetrics,
+      outcomeReason: `Breakout detected but regime filter rejected: ATR ratio ${regimeMetrics.atrRatio?.toFixed(2) || 'N/A'}, RVOL ${regimeMetrics.volumeRatio.toFixed(2)}, ADX ${regimeMetrics.adx || 'N/A'}`
+    };
+  }
+
+  // Calculate default SL and targets for checklist
+  const sl = direction === 'LONG' ? compression.windowLow - (0.5 * atr) : compression.windowHigh + (0.5 * atr);
+  const risk = Math.abs(price - sl);
+  const tp1 = direction === 'LONG' ? price + (risk * 2.0) : price - (risk * 2.0);
+  const tp2 = direction === 'LONG' ? price + (risk * 3.0) : price - (risk * 3.0);
+
+  const checklist = evaluateVcbChecklist(
+    candles,
+    htfCandles,
+    breakout,
+    compression,
+    price,
+    sl,
+    tp1,
+    tp2,
+    atr,
+    settings
+  );
+
+  if (checklist.passed && checklist.recommendation === 'EXECUTE') {
+    return {
+      decision: 'TRADE_ALLOWED',
+      direction,
+      score: scoreBreakout(breakout, settings as AppSettings),
+      regimeMetrics,
+      checklist,
+      outcomeReason: `Trade allowed: ${checklist.summary}`
+    };
+  }
+
+  if (checklist.recommendation === 'WAIT') {
+    return {
+      decision: 'WAITING_FOR_CONFIRMATION',
+      direction,
+      score: checklist.score * 8,
+      regimeMetrics,
+      checklist,
+      outcomeReason: `Waiting for confirmation: ${checklist.summary}`
+    };
+  }
+
+  return {
+    decision: 'NO_TRADE',
+    direction,
+    score: 0,
+    regimeMetrics,
+    checklist,
+    outcomeReason: `Checklist failed: ${checklist.summary}`
   };
 }
 

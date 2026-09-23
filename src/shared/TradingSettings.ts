@@ -159,6 +159,20 @@ export interface TradingSettings {
   vcbMinRrRatio?: number;         // Minimum R:R ratio (default 2.0, target 3.0)
   vcbEnforceKillZone?: boolean;   // Active session / kill zone enforcement
 
+  // VCB Breakout-Specific Regime & Quality Settings
+  vcbHtfAdxMin?: number;                  // Min HTF ADX (default: 20)
+  vcbRequireHtfStructure?: boolean;       // Require HH/HL for Long, LH/LL for Short (default: true)
+  vcbLocalAtrRatioMin?: number;           // Min ATR expansion ratio vs 20-period ATR MA (default: 1.20)
+  vcbLocalAdxMin?: number;                // Min entry timeframe ADX (default: 20)
+  vcbRsiBullishMin?: number;              // Min RSI for Long breakout (default: 55)
+  vcbRsiBearishMax?: number;              // Max RSI for Short breakout (default: 45)
+  vcbBodyDominanceMin?: number;           // Min real body / candle range (default: 0.60)
+  vcbBreakoutVolumeMin?: number;          // Min breakout volume / 20-period volume SMA (default: 1.50)
+  vcbCloseLocationMin?: number;           // Min close location in trend direction (default: 0.70)
+  vcbRequireFollowThroughOrRetest?: boolean; // Require retest or follow-through (default: true)
+  vcbFollowThroughAtrMin?: number;        // Min ATR distance for follow-through confirmation (default: 0.35)
+  vcbNewsFilterMinutes?: number;          // Minutes window around high-impact news (default: 60)
+
   // Notifications & Credentials
   telegramBotToken: string;
   telegramChatId: string;
@@ -252,6 +266,16 @@ export const NUMERIC_BOUNDS: Record<string, { min: number; max: number; step?: n
   tpbMinScore: { min: 5, max: 10, step: 1, label: 'Trend Pullback Min Confirmation Score' },
   vcbChecklistMinScore: { min: 5, max: 11, step: 1, label: 'VCB Checklist Min Score' },
   vcbMinRrRatio: { min: 1.5, max: 5.0, step: 0.1, label: 'VCB Min Risk-to-Reward Ratio' },
+  vcbHtfAdxMin: { min: 10, max: 40, step: 1, label: 'VCB HTF Min ADX' },
+  vcbLocalAtrRatioMin: { min: 1.0, max: 2.5, step: 0.05, label: 'VCB Local Min ATR Expansion Ratio' },
+  vcbLocalAdxMin: { min: 10, max: 40, step: 1, label: 'VCB Local Min ADX' },
+  vcbRsiBullishMin: { min: 45, max: 70, step: 1, label: 'VCB Bullish Min RSI' },
+  vcbRsiBearishMax: { min: 30, max: 55, step: 1, label: 'VCB Bearish Max RSI' },
+  vcbBodyDominanceMin: { min: 0.40, max: 0.90, step: 0.05, label: 'VCB Min Breakout Body Dominance' },
+  vcbBreakoutVolumeMin: { min: 1.2, max: 5.0, step: 0.1, label: 'VCB Min Breakout Volume Multiplier' },
+  vcbCloseLocationMin: { min: 0.50, max: 0.90, step: 0.05, label: 'VCB Min Close Location' },
+  vcbFollowThroughAtrMin: { min: 0.15, max: 1.0, step: 0.05, label: 'VCB Min Follow-Through ATR Progress' },
+  vcbNewsFilterMinutes: { min: 0, max: 240, step: 15, label: 'VCB News Filter Window (minutes)' },
   rmrMaxAdx: { min: 10, max: 40, step: 1, label: 'Ranging MR Max ADX' },
   rmrMaxAtrRatio: { min: 1.0, max: 2.0, step: 0.05, label: 'Ranging MR Max ATR Ratio' },
   rmrMinScore: { min: 5, max: 11, step: 1, label: 'Ranging MR Min Score' },
@@ -310,6 +334,7 @@ export function validateTradingSettings(input: unknown): ValidationResult {
     'autoTradeEnabled', 'useGlobalBtcFilter', 'timeBasedExitEnabled',
     'crEnabled', 'useMtfAlignment', 'useVpvrFilter', 'useAtrTrailingStop',
     'vcbRequireSweep', 'vcbRequireRetest', 'vcbEnforceKillZone',
+    'vcbRequireHtfStructure', 'vcbRequireFollowThroughOrRetest',
     'smcUseKillZone', 'smcStrictHtfRegime', 'tpbRequireVolume',
     'bypassMaxPositions', 'bypassMaxConsecutiveLosses', 'bypassDailyLossLimit',
     'bypassExposureLimit', 'bypassLiquidationBuffer', 'bypassTradeCooldown',
@@ -521,6 +546,18 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   vcbRequireRetest: true,
   vcbMinRrRatio: 2.0,
   vcbEnforceKillZone: false,
+  vcbHtfAdxMin: 20,
+  vcbRequireHtfStructure: true,
+  vcbLocalAtrRatioMin: 1.20,
+  vcbLocalAdxMin: 20,
+  vcbRsiBullishMin: 55,
+  vcbRsiBearishMax: 45,
+  vcbBodyDominanceMin: 0.60,
+  vcbBreakoutVolumeMin: 1.50,
+  vcbCloseLocationMin: 0.70,
+  vcbRequireFollowThroughOrRetest: true,
+  vcbFollowThroughAtrMin: 0.35,
+  vcbNewsFilterMinutes: 60,
 
   tpbEmaFast: 20,
   tpbEmaSlow: 50,

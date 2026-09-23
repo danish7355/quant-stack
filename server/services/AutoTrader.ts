@@ -2213,9 +2213,9 @@ export class AutoTrader {
     } catch (e) {}
 
     // Dedicated VCB Regime Filter Gate
-    const vcbMetrics = extractVcbRegimeMetrics(candles, htfCandles ? htfCandles.slice(0, -1) : null);
+    const vcbMetrics = extractVcbRegimeMetrics(candles, htfCandles ? htfCandles.slice(0, -1) : null, this.settings);
     if (!allowVCB(vcbMetrics, breakout.direction as 'LONG' | 'SHORT')) {
-      console.log(`🛡️ [VCB Regime Filter] ${symbol} blocked: VCB regime criteria not met`);
+      console.log(`🛡️ [VCB Regime Filter] ${symbol} blocked: VCB regime criteria not met (ATR ratio ${vcbMetrics.atrRatio?.toFixed(2) ?? 'N/A'}, RVOL ${vcbMetrics.volumeRatio.toFixed(2)}, ADX ${vcbMetrics.adx ?? 'N/A'})`);
       return null;
     }
 

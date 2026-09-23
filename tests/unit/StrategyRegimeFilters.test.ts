@@ -109,6 +109,61 @@ describe('Strategy Dedicated Regime Filters & Master Decision Engine', () => {
     it('allows VCB Long when HTF bias is neutral', () => {
       expect(allowVCB({ ...validVcbLong, htfBias: 'NEUTRAL' }, 'LONG')).toBe(true);
     });
+
+    it('rejects VCB Long if entry timeframe ADX is below threshold (< 20)', () => {
+      expect(allowVCB({ ...validVcbLong, adx: 17 }, 'LONG')).toBe(false);
+      expect(allowVCB({ ...validVcbLong, adx: 25 }, 'LONG')).toBe(true);
+    });
+
+    it('rejects VCB if candle real body is less than 60% of candle range', () => {
+      expect(allowVCB({ ...validVcbLong, bodyRatio: 0.45 }, 'LONG')).toBe(false);
+      expect(allowVCB({ ...validVcbLong, bodyRatio: 0.72 }, 'LONG')).toBe(true);
+    });
+
+    it('rejects VCB Long if RSI momentum is not sufficiently bullish (< 55)', () => {
+      expect(allowVCB({ ...validVcbLong, rsi: 48 }, 'LONG')).toBe(false);
+      expect(allowVCB({ ...validVcbLong, rsi: 62 }, 'LONG')).toBe(true);
+    });
+
+    it('rejects VCB Short if RSI momentum is not sufficiently bearish (> 45)', () => {
+      expect(allowVCB({ ...validVcbShort, rsi: 52 }, 'SHORT')).toBe(false);
+      expect(allowVCB({ ...validVcbShort, rsi: 38 }, 'SHORT')).toBe(true);
+    });
+
+    it('rejects VCB if HTF ADX indicates non-trending chop (< 20)', () => {
+      expect(allowVCB({ ...validVcbLong, htfAdx: 14 }, 'LONG')).toBe(false);
+      expect(allowVCB({ ...validVcbLong, htfAdx: 28 }, 'LONG')).toBe(true);
+    });
+
+    it('enforces HTF structure when requireHtfStructure is enabled', () => {
+      expect(allowVCB({ ...validVcbLong, requireHtfStructure: true, htfStructure: 'LH_LL' }, 'LONG')).toBe(false);
+      expect(allowVCB({ ...validVcbLong, requireHtfStructure: true, htfStructure: 'HH_HL' }, 'LONG')).toBe(true);
+      expect(allowVCB({ ...validVcbShort, requireHtfStructure: true, htfStructure: 'HH_HL' }, 'SHORT')).toBe(false);
+      expect(allowVCB({ ...validVcbShort, requireHtfStructure: true, htfStructure: 'LH_LL' }, 'SHORT')).toBe(true);
+    });
+
+    it('enforces retest or follow-through requirement when enabled', () => {
+      const baseWithReq = { ...validVcbLong, requireRetestOrFollowThrough: true };
+      expect(allowVCB({ ...baseWithReq, retestConfirmed: false, followThroughConfirmed: false }, 'LONG')).toBe(false);
+      expect(allowVCB({ ...baseWithReq, retestConfirmed: true, followThroughConfirmed: false }, 'LONG')).toBe(true);
+      expect(allowVCB({ ...baseWithReq, retestConfirmed: false, followThroughConfirmed: true }, 'LONG')).toBe(true);
+    });
+
+    it('rejects trade outside active session kill zones when sessionAllowed is false', () => {
+      expect(allowVCB({ ...validVcbLong, sessionAllowed: false }, 'LONG')).toBe(false);
+      expect(allowVCB({ ...validVcbLong, sessionAllowed: true }, 'LONG')).toBe(true);
+    });
+
+    it('respects user-customized threshold overrides', () => {
+      // With custom lower threshold, 1.3x volume passes
+      expect(allowVCB({ ...validVcbLong, volumeRatio: 1.3, minVolumeRatio: 1.25 }, 'LONG')).toBe(true);
+      // With custom higher threshold, 1.6x volume is rejected
+      expect(allowVCB({ ...validVcbLong, volumeRatio: 1.6, minVolumeRatio: 1.8 }, 'LONG')).toBe(false);
+      // Custom body dominance
+      expect(allowVCB({ ...validVcbLong, bodyRatio: 0.50, minBodyRatio: 0.45 }, 'LONG')).toBe(true);
+      // Custom ATR ratio
+      expect(allowVCB({ ...validVcbLong, atrRatio: 1.15, minAtrRatio: 1.10 }, 'LONG')).toBe(true);
+    });
   });
 
   // =========================================================================
