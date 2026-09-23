@@ -1291,4 +1291,193 @@ describe('Trend Pullback Strategy - 5-Pillar Architecture & Unit Tests', () => {
       expect(['RANGE_MARKET', 'NO_TREND']).toContain(evalResult.outcomeReason);
     });
   });
+
+  describe('Institutional Trend-Continuation Retest Architecture & State Machine Tests', () => {
+    it('executes valid bullish trend continuation with break-and-retest confirmation and volume sequence', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      const evalResult = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        { tradeTimeframe: '15m', symbol: 'BTCUSDT' }
+      );
+
+      expect(evalResult.success).toBe(true);
+      expect(evalResult.decision).toBe('TRADE_ALLOWED');
+      expect(evalResult.outcomeReason).toBe('TRADE_SIGNAL');
+      expect(evalResult.result).not.toBeNull();
+      expect(evalResult.result?.entryMode).toBe('RETEST_CONTINUATION');
+      expect(evalResult.result?.state).toBe('CONTINUATION_CONFIRMED');
+      expect(evalResult.result?.marketRegime).toBe('TRENDING_MOMENTUM');
+      expect(evalResult.result?.details.brokenLevel).toBeDefined();
+      expect(evalResult.result?.details.brokenLevel?.direction).toBe('LONG');
+      expect(evalResult.result?.details.brokenLevel?.type).toBe('RESISTANCE_TO_SUPPORT');
+      expect(evalResult.result?.details.retestHeld).toBe(true);
+      expect(evalResult.result?.details.continuationConfirmed).toBe(true);
+      expect(evalResult.result?.details.volumeSequence?.volumeSequenceConfirmed).toBe(true);
+    });
+
+    it('executes valid bearish trend continuation with break-and-retest confirmation and volume sequence', () => {
+      const htfCandles = createHtfBearishCandles(50);
+      const tradeCandles = createValidBearishSetup(15);
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      const evalResult = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        { tradeTimeframe: '15m', symbol: 'ETHUSDT' }
+      );
+
+      expect(evalResult.success).toBe(true);
+      expect(evalResult.decision).toBe('TRADE_ALLOWED');
+      expect(evalResult.outcomeReason).toBe('TRADE_SIGNAL');
+      expect(evalResult.result?.direction).toBe('SHORT');
+      expect(evalResult.result?.entryMode).toBe('RETEST_CONTINUATION');
+      expect(evalResult.result?.details.brokenLevel?.direction).toBe('SHORT');
+      expect(evalResult.result?.details.brokenLevel?.type).toBe('SUPPORT_TO_RESISTANCE');
+    });
+
+    it('strictly prohibits direct breakout entry: returns WAITING_FOR_RETEST on breakout candle', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      // Cut candles right at the breakout candle (index 33 where price breaks above 125)
+      const fullCandles = createValidBullishSetup(15);
+      const breakoutCandles = fullCandles.slice(0, 34);
+      const currentPrice = breakoutCandles[breakoutCandles.length - 1].close;
+
+      const evalResult = evaluateTrendPullbackDetailed(
+        breakoutCandles,
+        htfCandles,
+        currentPrice,
+        { tradeTimeframe: '15m', symbol: 'BTCUSDT' }
+      );
+
+      expect(evalResult.success).toBe(false);
+      expect(evalResult.decision).toBe('WAITING_FOR_CONFIRMATION');
+      expect(evalResult.outcomeReason).toBe('WAITING_FOR_RETEST');
+      expect(evalResult.status).toBe('WAITING_FOR_RETEST');
+    });
+
+    it('waits for continuation candle when retest touch is detected but momentum resumption is missing', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      // Replace last confirmation candle with a touch candle resting on the level
+      const lastIdx = tradeCandles.length - 1;
+      const prevC = tradeCandles[lastIdx - 1];
+      tradeCandles[lastIdx] = createCandle(
+        tradeCandles[lastIdx].time,
+        prevC.close,
+        prevC.close + 0.3,
+        prevC.close - 0.4,
+        prevC.close - 0.1, // hovering at retest level without bullish engulfing/continuation
+        400,
+        true
+      );
+      const currentPrice = tradeCandles[lastIdx].close;
+
+      const evalResult = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        { tradeTimeframe: '15m', symbol: 'BTCUSDT' }
+      );
+
+      expect(evalResult.success).toBe(false);
+      expect(evalResult.decision).toBe('WAITING_FOR_CONFIRMATION');
+      expect(['WAITING_FOR_CONFIRMATION', 'WAITING_FOR_CONTINUATION']).toContain(evalResult.outcomeReason);
+    });
+
+    it('rejects with RETEST_FAILED when price fails retest and closes decisively back below broken level', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      // Replace pullback and confirmation with a decisive collapse through 125 and EMA50 down to 118
+      const lastIdx = tradeCandles.length - 1;
+      for (let i = lastIdx - 2; i <= lastIdx; i++) {
+        tradeCandles[i] = createCandle(
+          tradeCandles[i].time,
+          122 - (i - (lastIdx - 2)) * 2,
+          122 - (i - (lastIdx - 2)) * 2 + 0.5,
+          118 - (i - (lastIdx - 2)) * 2,
+          118 - (i - (lastIdx - 2)) * 2,
+          1500,
+          true
+        );
+      }
+      const currentPrice = tradeCandles[lastIdx].close;
+
+      const evalResult = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        { tradeTimeframe: '15m', symbol: 'BTCUSDT' }
+      );
+
+      expect(evalResult.success).toBe(false);
+      expect(evalResult.decision).toBe('NO_TRADE');
+      expect(['RETEST_FAILED', 'PULLBACK_TOO_DEEP', 'STRUCTURE_BROKEN']).toContain(evalResult.outcomeReason);
+    });
+
+    it('rejects with RETEST_EXPIRED when retest exceeds maxRetestBars', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      // Restrict maxRetestBars to 3 (actual retest occurred ~9 bars after impulse)
+      const evalResult = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        { tradeTimeframe: '15m', symbol: 'BTCUSDT', maxRetestBars: 3 }
+      );
+
+      expect(evalResult.success).toBe(false);
+      expect(evalResult.decision).toBe('NO_TRADE');
+      expect(evalResult.outcomeReason).toBe('RETEST_EXPIRED');
+      expect(evalResult.rejectionReason).toBe('RETEST_EXPIRED');
+    });
+
+    it('rejects with VOLUME_NOT_CONFIRMED when pullback volume fails contraction (heavy counter-trend selling)', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      // Inflate pullback volume to 2500 (> impulse volume of 1200)
+      for (let i = 39; i <= 42; i++) {
+        tradeCandles[i].volume = 2500;
+      }
+      tradeCandles[tradeCandles.length - 1].volume = 3000; // Confirmation candle volume expands, but pullback volume failed contraction
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      const evalResult = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        { tradeTimeframe: '15m', symbol: 'BTCUSDT' }
+      );
+
+      expect(evalResult.success).toBe(false);
+      expect(evalResult.decision).toBe('NO_TRADE');
+      expect(evalResult.outcomeReason).toBe('VOLUME_NOT_CONFIRMED');
+      expect(evalResult.rejectionReason).toBe('VOLUME_NOT_CONFIRMED');
+    });
+
+    it('rejects unclosed trigger candle with CANDLE_NOT_CLOSED', () => {
+      const htfCandles = createHtfBullishCandles(50);
+      const tradeCandles = createValidBullishSetup(15);
+      tradeCandles[tradeCandles.length - 1].isClosed = false;
+      const currentPrice = tradeCandles[tradeCandles.length - 1].close;
+
+      const evalResult = evaluateTrendPullbackDetailed(
+        tradeCandles,
+        htfCandles,
+        currentPrice,
+        { tradeTimeframe: '15m', symbol: 'BTCUSDT', isCandleClosed: false }
+      );
+
+      expect(evalResult.success).toBe(false);
+      expect(evalResult.decision).toBe('NO_TRADE');
+      expect(evalResult.outcomeReason).toBe('CANDLE_NOT_CLOSED');
+    });
+  });
 });

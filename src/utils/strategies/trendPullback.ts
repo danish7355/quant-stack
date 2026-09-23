@@ -1,17 +1,50 @@
-import { calculateEMA, calculateATR, calculateADX } from '../indicators.js';
+import { calculateEMA, calculateATR, calculateADX, calculateSMA } from '../indicators.js';
 import { allowTrendPullback, extractTrendPullbackRegimeMetrics, type TrendPullbackRegimeMetrics } from './strategyRegimeFilters.js';
 export { allowTrendPullback, extractTrendPullbackRegimeMetrics };
 export type { TrendPullbackRegimeMetrics };
 
 export type MarketRegimeType =
+  | 'TRENDING_MOMENTUM'
   | 'TRENDING_UP'
   | 'TRENDING_DOWN'
   | 'RANGING'
+  | 'CHOPPY'
   | 'TRANSITION'
+  | 'WEAK_TREND'
+  | 'LOW_MOMENTUM'
+  | 'UNCLEAR'
   | 'HIGH_VOLATILITY'
   | 'LOW_LIQUIDITY'
   | 'UNKNOWN'
   | 'RANGE_OR_TRANSITION';
+
+export type TrendPullbackRegime =
+  | 'TRENDING_MOMENTUM'
+  | 'RANGING'
+  | 'CHOPPY'
+  | 'TRANSITION'
+  | 'WEAK_TREND'
+  | 'LOW_MOMENTUM'
+  | 'UNCLEAR';
+
+export interface BrokenLevel {
+  direction: 'LONG' | 'SHORT';
+  price: number;
+  candleIndex: number;
+  timestamp: number;
+  type: 'RESISTANCE_TO_SUPPORT' | 'SUPPORT_TO_RESISTANCE';
+}
+
+export type TrendPullbackState =
+  | 'NO_SETUP'
+  | 'TREND_CONFIRMED'
+  | 'IMPULSE_CONFIRMED'
+  | 'WAITING_FOR_RETEST'
+  | 'RETEST_DETECTED'
+  | 'RETEST_HELD'
+  | 'CONTINUATION_CONFIRMED'
+  | 'SIGNAL_EXPIRED'
+  | 'SETUP_INVALIDATED';
 
 export type StopPlacementType =
   | 'LOCAL_EXECUTION_STOP'
@@ -20,6 +53,7 @@ export type StopPlacementType =
 
 export interface MarketRegimeDetails {
   regime: MarketRegimeType;
+  strategyRegime?: TrendPullbackRegime;
   isTrending: boolean;
   direction: 'LONG' | 'SHORT' | 'NONE';
   emaSlope: number;             // EMA50 slope normalized by ATR
@@ -75,6 +109,12 @@ export interface TrendPullbackOptions {
   recentSignalIds?: string[] | Set<string>; // deduplication history
   isRiskLimitReached?: boolean;  // circuit breaker / account risk limit flag
   enforceRegimeFilter?: boolean; // if true, requires dedicated allowTrendPullback regime filter
+  retestToleranceATR?: number;   // default 0.35 (ATR multiplier for retest zone tolerance)
+  maxRetestBars?: number;        // default 15 (max execution bars before retest expires)
+  impulseVolumeRatio?: number;   // default 1.0 (impulse vol vs volSma20)
+  retestContractionRatio?: number; // default 0.85 (retest vol vs impulse vol)
+  continuationVolumeRatio?: number; // default 1.0 (continuation vol vs volSma20)
+  entryMode?: 'RETEST_CONTINUATION'; // default 'RETEST_CONTINUATION'
 }
 
 export type TrendPullbackStatus =
@@ -91,6 +131,9 @@ export type TrendPullbackStatus =
   | 'WAITING_FOR_PRICE_ACTION'
   | 'WAITING_FOR_VOLUME'
   | 'WAITING_FOR_REGIME_CONFIRMATION'
+  | 'WAITING_FOR_RETEST'
+  | 'WAITING_FOR_RETEST_HOLD'
+  | 'WAITING_FOR_CONTINUATION'
   | 'STOP_TOO_WIDE'
   | 'STOP_TOO_TIGHT'
   | 'ENTRY_TOO_LATE';
@@ -126,7 +169,11 @@ export type TrendPullbackRejection =
   | 'CHOPPY_MARKET'
   | 'CONFIRMATION_SCORE_TOO_LOW'
   | 'SESSION_DISABLED'
-  | 'DIRECTION_DISABLED';
+  | 'DIRECTION_DISABLED'
+  | 'RETEST_FAILED'
+  | 'RETEST_EXPIRED'
+  | 'CONTINUATION_NOT_CONFIRMED'
+  | 'WEAK_TREND';
 
 export interface TrendPullbackScoreBreakdown {
   htfTrend: number;          // max 2 points
@@ -144,6 +191,8 @@ export interface TrendPullbackResult {
   score: number;                 // 0 - 100 scaled
   rawScore: number;              // 0 - 10
   stage: TrendPullbackStage;
+  state?: TrendPullbackState;
+  entryMode?: 'RETEST_CONTINUATION';
   atr: number;
   entryPrice: number;
   sl: number;
@@ -177,8 +226,16 @@ export interface TrendPullbackResult {
     breakdown: TrendPullbackScoreBreakdown;
     regimeFilterPassed?: boolean;
     regimeMetrics?: TrendPullbackRegimeMetrics;
-    isBreakRetest?: boolean;
+    state?: TrendPullbackState;
+    entryMode?: 'RETEST_CONTINUATION';
+    brokenLevel?: BrokenLevel | null;
+    retestTolerance?: number;
+    retestDetected?: boolean;
     retestHeld?: boolean;
+    retestPrice?: number;
+    continuationPrice?: number;
+    continuationConfirmed?: boolean;
+    isBreakRetest?: boolean;
     brokenStructureLevel?: number;
     volumeSequence?: {
       impulseVolumeExpanded: boolean;
@@ -199,15 +256,22 @@ export type TrendPullbackDecision =
 
 export type TrendPullbackOutcomeReason =
   | 'TRADE_SIGNAL'
+  | 'WAITING_FOR_TREND'
   | 'WAITING_FOR_IMPULSE'
-  | 'WAITING_FOR_PULLBACK'
+  | 'WAITING_FOR_RETEST'
+  | 'WAITING_FOR_RETEST_HOLD'
+  | 'WAITING_FOR_CONTINUATION'
   | 'WAITING_FOR_CONFIRMATION'
   | 'NO_TREND'
   | 'RANGE_MARKET'
+  | 'WEAK_TREND'
   | 'PULLBACK_TOO_DEEP'
   | 'STRUCTURE_BROKEN'
   | 'VOLUME_NOT_CONFIRMED'
   | 'FALSE_BREAKOUT_RISK'
+  | 'RETEST_FAILED'
+  | 'RETEST_EXPIRED'
+  | 'CONTINUATION_NOT_CONFIRMED'
   | 'TIMEFRAME_DISAGREEMENT'
   | 'STOP_TOO_WIDE'
   | 'STOP_TOO_TIGHT'
@@ -224,6 +288,7 @@ export interface TrendPullbackEvaluation {
   success: boolean;
   status: TrendPullbackStatus;
   stage: TrendPullbackStage;
+  state?: TrendPullbackState;
   decision: TrendPullbackDecision;
   outcomeReason: TrendPullbackOutcomeReason;
   rejectionReason?: TrendPullbackRejection;
@@ -448,6 +513,7 @@ export function detectMarketRegime(
     if (currentPrice > eSlow && eFast > eSlow && emaSlope > 0.015 && (higherHighs || higherLows)) {
       return {
         regime: 'TRENDING_UP',
+        strategyRegime: 'TRENDING_MOMENTUM',
         isTrending: true,
         direction: 'LONG',
         emaSlope,
@@ -469,6 +535,7 @@ export function detectMarketRegime(
     if (currentPrice < eSlow && eFast < eSlow && emaSlope < -0.015 && (lowerHighs || lowerLows)) {
       return {
         regime: 'TRENDING_DOWN',
+        strategyRegime: 'TRENDING_MOMENTUM',
         isTrending: true,
         direction: 'SHORT',
         emaSlope,
@@ -487,6 +554,14 @@ export function detectMarketRegime(
   }
 
   // Fallback to RANGE_OR_TRANSITION
+  const strategyRegime: TrendPullbackRegime = isChoppy
+    ? 'CHOPPY'
+    : overlapRatio >= 0.65
+    ? 'RANGING'
+    : adx < adxMin
+    ? 'LOW_MOMENTUM'
+    : 'TRANSITION';
+
   const failureReason = isChoppy
     ? `Market is choppy/ranging (Overlap: ${(overlapRatio * 100).toFixed(0)}%, ADX: ${adx.toFixed(1)} < ${adxMin} or flat EMA)`
     : isOverextended
@@ -497,6 +572,7 @@ export function detectMarketRegime(
 
   return {
     regime: 'RANGE_OR_TRANSITION',
+    strategyRegime,
     isTrending: false,
     direction: 'NONE',
     emaSlope,
@@ -510,6 +586,41 @@ export function detectMarketRegime(
     isChoppy,
     overlapRatio,
     reason: failureReason
+  };
+}
+
+/**
+ * Strict Trend Momentum Regime Detector.
+ * Only 'TRENDING_MOMENTUM' is allowed; all other regimes are rejected.
+ */
+export function detectTrendMomentumRegime(
+  tradeCandles: Candle[],
+  htfCandles?: Candle[] | null,
+  options: { emaFast?: number; emaSlow?: number; adxMin?: number } = {}
+): {
+  regime: TrendPullbackRegime;
+  isAllowed: boolean;
+  direction: 'LONG' | 'SHORT' | 'NONE';
+  reason: string;
+  adx: number;
+} {
+  const effectiveHtf = htfCandles && htfCandles.length >= 25 ? htfCandles : tradeCandles;
+  const m = detectMarketRegime(effectiveHtf, options);
+  if (m.isTrending && (m.regime === 'TRENDING_UP' || m.regime === 'TRENDING_DOWN' || m.regime === 'TRENDING_MOMENTUM')) {
+    return {
+      regime: 'TRENDING_MOMENTUM',
+      isAllowed: true,
+      direction: m.direction,
+      reason: m.reason,
+      adx: m.adx
+    };
+  }
+  return {
+    regime: m.strategyRegime || 'RANGING',
+    isAllowed: false,
+    direction: 'NONE',
+    reason: m.reason,
+    adx: m.adx
   };
 }
 
@@ -551,9 +662,20 @@ export function checkPullbackStructure(
   candles: Candle[],
   direction: 'LONG' | 'SHORT',
   currentPrice: number,
-  options: { emaFast?: number; emaSlow?: number; atr?: number } = {}
+  options: {
+    emaFast?: number;
+    emaSlow?: number;
+    atr?: number;
+    retestToleranceATR?: number;
+    maxRetestBars?: number;
+    impulseVolumeRatio?: number;
+    retestContractionRatio?: number;
+    continuationVolumeRatio?: number;
+    volSmaPeriod?: number;
+  } = {}
 ): {
   valid: boolean;
+  state: TrendPullbackState;
   brokeStructure: boolean;
   reversalRisk: boolean;
   touchedValue: boolean;
@@ -565,40 +687,69 @@ export function checkPullbackStructure(
   impulseAvgVol: number;
   avgPullbackBody: number;
   avgImpulseBody: number;
-  isBreakRetest?: boolean;
-  retestHeld?: boolean;
-  brokenStructureLevel?: number;
+  brokenLevel: BrokenLevel | null;
+  retestDetected: boolean;
+  retestHeld: boolean;
+  retestFailed: boolean;
+  retestExpired: boolean;
+  continuationConfirmed: boolean;
+  continuationPattern?: string;
+  isBreakRetest: boolean;
+  brokenStructureLevel: number;
+  isCurrentCandleBreakout: boolean;
+  volumeSequenceConfirmed: boolean;
+  impulseExpansion: boolean;
+  retestContraction: boolean;
+  continuationExpansion: boolean;
 } {
   const fastP = options.emaFast || 20;
   const slowP = options.emaSlow || 50;
+  const retestTolMult = options.retestToleranceATR !== undefined ? options.retestToleranceATR : 0.35;
+  const maxRetestBars = options.maxRetestBars !== undefined ? options.maxRetestBars : 15;
+  const impulseVolRatio = options.impulseVolumeRatio !== undefined ? options.impulseVolumeRatio : 1.0;
+  const retestContractRatio = options.retestContractionRatio !== undefined ? options.retestContractionRatio : 0.85;
+  const contVolRatio = options.continuationVolumeRatio !== undefined ? options.continuationVolumeRatio : 1.0;
+  const volPeriod = options.volSmaPeriod || 20;
 
   const len = candles.length - 1;
   const closes = candles.map(c => c.close);
   const highs = candles.map(c => c.high);
   const lows = candles.map(c => c.low);
+  const volumes = candles.map(c => c.volume || 0);
+
   const emaFast = calculateEMA(closes, fastP);
   const emaSlow = calculateEMA(closes, slowP);
   const atrSeries = calculateATR(highs, lows, closes, 14);
   const atr = options.atr || atrSeries[len] || (currentPrice * 0.015);
+  const retestTolerance = atr * retestTolMult;
+
+  const volSma = calculateSMA(volumes, volPeriod);
+  const volSma20 = volSma[len] || 1000;
 
   const eFast = emaFast[len] || currentPrice;
   const eSlow = emaSlow[len] || currentPrice;
 
   const { highs: swingHighs, lows: swingLows } = detectSwingPoints(candles, 2);
 
-  // Define slices: pullback (last 4-5 candles) vs impulse (preceding 8-10 candles)
+  // Slices: pullback (last 4-5 candles) vs impulse (preceding 8-10 candles)
   const pullbackSlice = candles.slice(Math.max(0, len - 4), len);
   const impulseSlice = candles.slice(Math.max(0, len - 14), Math.max(0, len - 4));
 
-  const pullbackAvgVol = pullbackSlice.reduce((s, c) => s + (c.volume || 0), 0) / (pullbackSlice.length || 1);
-  const impulseAvgVol = impulseSlice.reduce((s, c) => s + (c.volume || 0), 0) / (impulseSlice.length || 1);
+  const pullbackAvgVol = pullbackSlice.length > 0
+    ? pullbackSlice.reduce((s, c) => s + (c.volume || 0), 0) / pullbackSlice.length
+    : 1;
+  const impulseAvgVol = impulseSlice.length > 0
+    ? impulseSlice.reduce((s, c) => s + (c.volume || 0), 0) / impulseSlice.length
+    : pullbackAvgVol * 1.2;
 
-  // 3. Momentum loss: average candle body size comparison
-  const avgPullbackBody = pullbackSlice.reduce((s, c) => s + Math.abs(c.close - c.open), 0) / (pullbackSlice.length || 1);
-  const avgImpulseBody = impulseSlice.reduce((s, c) => s + Math.abs(c.close - c.open), 0) / (impulseSlice.length || 1);
+  const avgPullbackBody = pullbackSlice.length > 0
+    ? pullbackSlice.reduce((s, c) => s + Math.abs(c.close - c.open), 0) / pullbackSlice.length
+    : 0;
+  const avgImpulseBody = impulseSlice.length > 0
+    ? impulseSlice.reduce((s, c) => s + Math.abs(c.close - c.open), 0) / impulseSlice.length
+    : 0;
   const momentumLost = avgPullbackBody <= (avgImpulseBody * 1.15);
 
-  // 1. Impulse displacement check
   let impulseDisplacementValid = true;
   if (impulseSlice.length >= 4) {
     const impulseMax = Math.max(...impulseSlice.map(c => c.high));
@@ -607,47 +758,17 @@ export function checkPullbackStructure(
     impulseDisplacementValid = displacement >= (1.0 * atr);
   }
 
-  // Check for large reversal candle slicing violently through EMA 50
   const c0 = candles[len];
   const c1 = candles[len - 1];
   const body0 = Math.abs(c0.close - c0.open);
 
   if (direction === 'LONG') {
-    // Invalidation level = lowest structural swing low prior to the pullback
     const priorLows = swingLows.filter(l => l.index < len - 4);
     const invalidationLevel = priorLows.length > 0
       ? Math.min(...priorLows.map(l => l.price))
       : Math.min(...candles.slice(0, Math.max(1, len - 4)).map(c => c.low));
 
-    // Break-and-retest detection for Long: prior resistance broken and retested
-    const priorHighs = swingHighs.filter(h => h.index < len - 4);
-    const brokenLevel = priorHighs.length > 0 ? priorHighs[priorHighs.length - 1].price : 0;
-    const isBreakRetest = brokenLevel > 0 && Math.max(...impulseSlice.map(c => c.high)) > brokenLevel;
-    const minPullbackLow = Math.min(...pullbackSlice.map(c => c.low), candles[len].low);
-    const retestHeld = isBreakRetest && minPullbackLow >= brokenLevel * 0.995;
-
-    // Structural swing preservation: did price breach the structural higher low in the pullback wave?
-    if (minPullbackLow < invalidationLevel * 0.998) {
-      return {
-        valid: false,
-        brokeStructure: true,
-        reversalRisk: false,
-        touchedValue: true,
-        momentumLost,
-        impulseDisplacementValid,
-        reason: 'PULLBACK_BROKE_STRUCTURE',
-        invalidationLevel,
-        pullbackAvgVol,
-        impulseAvgVol,
-        avgPullbackBody,
-        avgImpulseBody,
-        isBreakRetest,
-        retestHeld: false,
-        brokenStructureLevel: brokenLevel
-      };
-    }
-
-    // Dynamic value zone check: price pulled back to near EMA20 or EMA50 across the pullback window
+    // Dynamic value zone check (EMA20/50 touch)
     const pullbackWindow = candles.slice(Math.max(0, len - 4), len + 1);
     const touchedValue = pullbackWindow.some((c, offset) => {
       const idx = Math.max(0, len - 4) + offset;
@@ -655,63 +776,165 @@ export function checkPullbackStructure(
       const sEma = emaSlow[idx] || eSlow;
       return (c.low <= fEma * 1.01) || (c.low <= sEma * 1.015);
     });
-    if (!touchedValue) {
-      return {
-        valid: false,
-        brokeStructure: false,
-        reversalRisk: false,
-        touchedValue: false,
-        momentumLost,
-        impulseDisplacementValid,
-        reason: 'NO_VALID_PULLBACK',
-        invalidationLevel,
-        pullbackAvgVol,
-        impulseAvgVol,
-        avgPullbackBody,
-        avgImpulseBody,
-        isBreakRetest,
-        retestHeld,
-        brokenStructureLevel: brokenLevel
-      };
+
+    // Find the impulse peak high preceding the pullback
+    let peakIdx = -1;
+    let peakHigh = -Infinity;
+    const peakSearchStart = Math.max(0, len - 15);
+    const peakSearchEnd = Math.max(1, len - 1);
+    for (let i = peakSearchStart; i <= peakSearchEnd; i++) {
+      if (candles[i].high > peakHigh) {
+        peakHigh = candles[i].high;
+        peakIdx = i;
+      }
+    }
+    if (peakIdx === -1) peakIdx = Math.max(0, len - 4);
+
+    // 1. Check if current candle or immediate prior candle is breaking out of the lookback peak
+    const isClimaxCandle = (c0.high - c0.low) > 3.0 * atr;
+    let isCurrentCandleBreakout = false;
+    let brokenResistance = 0;
+    let impulseIdx = -1;
+
+    if (!isClimaxCandle && (c0.close > peakHigh || (c1 && c1.close > peakHigh))) {
+      brokenResistance = peakHigh;
+      impulseIdx = (c1 && c1.close > peakHigh) ? len - 1 : len;
+      isCurrentCandleBreakout = true;
+    } else {
+      // Identify prior resistance level from swing highs before the impulse peak
+      const highsBeforePeak = swingHighs.filter(h => h.index < peakIdx && h.price < peakHigh);
+      if (highsBeforePeak.length > 0) {
+        brokenResistance = highsBeforePeak[highsBeforePeak.length - 1].price;
+      } else {
+        const preImpulseCandles = candles.slice(Math.max(0, peakIdx - 12), Math.max(1, peakIdx - 1));
+        if (preImpulseCandles.length > 0) {
+          const preMax = Math.max(...preImpulseCandles.map(c => c.high));
+          brokenResistance = preMax < peakHigh ? preMax : (emaFast[peakIdx] || eFast);
+        } else {
+          brokenResistance = emaFast[peakIdx] || eFast;
+        }
+      }
+
+      // Identify the impulse candle that broke and closed above prior resistance
+      for (let i = Math.max(0, peakIdx - 15); i <= peakIdx; i++) {
+        const c = candles[i];
+        if (c.close > brokenResistance && (c.close - c.open) >= (c.high - c.low) * 0.2) {
+          impulseIdx = i;
+          break;
+        }
+      }
+      if (impulseIdx === -1) {
+        impulseIdx = peakIdx;
+      }
     }
 
-    // Reversal risk check: large full-bodied bearish candle slicing through EMA50
-    const isViolentBearishKnife = c0.close < c0.open && c0.close < eSlow && body0 > (1.2 * atr);
-    if (isViolentBearishKnife) {
-      return {
-        valid: false,
-        brokeStructure: false,
-        reversalRisk: true,
-        touchedValue: true,
-        momentumLost: false,
-        impulseDisplacementValid,
-        reason: 'PULLBACK_REVERSAL_RISK',
-        invalidationLevel,
-        pullbackAvgVol,
-        impulseAvgVol,
-        avgPullbackBody,
-        avgImpulseBody,
-        isBreakRetest,
-        retestHeld: false,
-        brokenStructureLevel: brokenLevel
-      };
+    const brokenLevel: BrokenLevel = {
+      direction: 'LONG',
+      price: brokenResistance,
+      candleIndex: impulseIdx,
+      timestamp: candles[impulseIdx]?.time || candles[len].time,
+      type: 'RESISTANCE_TO_SUPPORT'
+    };
+
+    // 4. Retest window & expiry
+    const barsSinceImpulse = len - impulseIdx;
+    const retestExpired = !isCurrentCandleBreakout && barsSinceImpulse > maxRetestBars;
+
+    // Check if price pulled back into retest zone or value zone
+    const retestSlice = isCurrentCandleBreakout ? [] : candles.slice(peakIdx, len);
+    const retestDetected = retestSlice.some(c =>
+      (c.low <= brokenResistance + retestTolerance && c.high >= brokenResistance - retestTolerance) ||
+      (c.low <= eFast * 1.01) ||
+      (c.low <= eSlow * 1.015)
+    );
+
+    // 3. Check if current closed candle IS the breakout candle
+    if (!isCurrentCandleBreakout) {
+      isCurrentCandleBreakout = !retestDetected && (barsSinceImpulse <= 2 || impulseIdx === len);
     }
+
+    // Structural swing preservation
+    const minPullbackLow = Math.min(...pullbackSlice.map(c => c.low), c0.low);
+    const brokeStructure = minPullbackLow < invalidationLevel * 0.998;
+
+    // Retest failure: closed decisively back below broken resistance AND below eSlow, or broke structure
+    const minPullbackClose = Math.min(...pullbackSlice.map(c => c.close), c0.close);
+    const retestFailed = (minPullbackClose < brokenResistance - (retestTolerance * 1.5) && minPullbackClose < eSlow * 0.99) || brokeStructure;
+
+    // Retest held
+    const retestHeld = retestDetected && !retestFailed && !brokeStructure;
+
+    // Reversal risk check
+    const isViolentBearishKnife = c0.close < c0.open && c0.close < eSlow && body0 > (1.2 * atr);
+
+    // Continuation check: current candle closes bullishly away from level
+    const continuationConfirmed = c0.close > c0.open && (
+      c0.close > c1.high ||
+      c0.close >= brokenResistance + 0.2 * atr ||
+      (c0.close > c1.close && c1.close <= c1.open)
+    );
+
+    // Volume sequence
+    const impulseVol = candles[impulseIdx]?.volume || impulseAvgVol;
+    const retestVol = pullbackAvgVol;
+    const contVol = c0.volume || 0;
+    const impulseExpansion = impulseVol >= volSma20 * impulseVolRatio;
+    const retestContraction = retestVol <= impulseVol * retestContractRatio;
+    const continuationExpansion = contVol > retestVol && contVol >= volSma20 * contVolRatio;
+    const volumeSequenceConfirmed = impulseExpansion && retestContraction && continuationExpansion;
+
+    // Determine state
+    let state: TrendPullbackState = 'NO_SETUP';
+    if (isCurrentCandleBreakout) {
+      state = 'WAITING_FOR_RETEST';
+    } else if (retestExpired) {
+      state = 'SIGNAL_EXPIRED';
+    } else if (retestFailed || brokeStructure || isViolentBearishKnife) {
+      state = 'SETUP_INVALIDATED';
+    } else if (retestHeld && continuationConfirmed && volumeSequenceConfirmed) {
+      state = 'CONTINUATION_CONFIRMED';
+    } else if (retestHeld && continuationConfirmed) {
+      state = 'CONTINUATION_CONFIRMED';
+    } else if (retestHeld) {
+      state = 'RETEST_HELD';
+    } else if (retestDetected) {
+      state = 'RETEST_DETECTED';
+    } else if (impulseDisplacementValid) {
+      state = 'IMPULSE_CONFIRMED';
+    } else {
+      state = 'TREND_CONFIRMED';
+    }
+
+    const valid = !brokeStructure && !isViolentBearishKnife && (touchedValue || retestDetected) && !retestFailed;
 
     return {
-      valid: true,
-      brokeStructure: false,
-      reversalRisk: false,
-      touchedValue: true,
+      valid,
+      state,
+      brokeStructure,
+      reversalRisk: isViolentBearishKnife,
+      touchedValue,
       momentumLost,
       impulseDisplacementValid,
+      reason: brokeStructure ? 'PULLBACK_BROKE_STRUCTURE' : (isViolentBearishKnife ? 'PULLBACK_REVERSAL_RISK' : (!touchedValue && !retestDetected ? 'NO_VALID_PULLBACK' : undefined)),
       invalidationLevel,
       pullbackAvgVol,
       impulseAvgVol,
       avgPullbackBody,
       avgImpulseBody,
-      isBreakRetest,
+      brokenLevel,
+      retestDetected,
       retestHeld,
-      brokenStructureLevel: brokenLevel
+      retestFailed,
+      retestExpired,
+      continuationConfirmed,
+      continuationPattern: continuationConfirmed ? 'Bullish Continuation' : undefined,
+      isBreakRetest: true,
+      brokenStructureLevel: brokenResistance,
+      isCurrentCandleBreakout,
+      volumeSequenceConfirmed,
+      impulseExpansion,
+      retestContraction,
+      continuationExpansion
     };
   } else {
     // SHORT evaluation
@@ -720,33 +943,7 @@ export function checkPullbackStructure(
       ? Math.max(...priorHighs.map(h => h.price))
       : Math.max(...candles.slice(0, Math.max(1, len - 4)).map(c => c.high));
 
-    // Break-and-retest detection for Short: prior support broken and retested
-    const priorLows = swingLows.filter(l => l.index < len - 4);
-    const brokenLevel = priorLows.length > 0 ? priorLows[priorLows.length - 1].price : 0;
-    const isBreakRetest = brokenLevel > 0 && Math.min(...impulseSlice.map(c => c.low)) < brokenLevel;
-    const maxPullbackHigh = Math.max(...pullbackSlice.map(c => c.high), candles[len].high);
-    const retestHeld = isBreakRetest && maxPullbackHigh <= brokenLevel * 1.005;
-
-    if (maxPullbackHigh > invalidationLevel * 1.002) {
-      return {
-        valid: false,
-        brokeStructure: true,
-        reversalRisk: false,
-        touchedValue: true,
-        momentumLost,
-        impulseDisplacementValid,
-        reason: 'PULLBACK_BROKE_STRUCTURE',
-        invalidationLevel,
-        pullbackAvgVol,
-        impulseAvgVol,
-        avgPullbackBody,
-        avgImpulseBody,
-        isBreakRetest,
-        retestHeld: false,
-        brokenStructureLevel: brokenLevel
-      };
-    }
-
+    // Dynamic value zone check (EMA20/50 touch)
     const pullbackWindow = candles.slice(Math.max(0, len - 4), len + 1);
     const touchedValue = pullbackWindow.some((c, offset) => {
       const idx = Math.max(0, len - 4) + offset;
@@ -754,63 +951,157 @@ export function checkPullbackStructure(
       const sEma = emaSlow[idx] || eSlow;
       return (c.high >= fEma * 0.99) || (c.high >= sEma * 0.985);
     });
-    if (!touchedValue) {
-      return {
-        valid: false,
-        brokeStructure: false,
-        reversalRisk: false,
-        touchedValue: false,
-        momentumLost,
-        impulseDisplacementValid,
-        reason: 'NO_VALID_PULLBACK',
-        invalidationLevel,
-        pullbackAvgVol,
-        impulseAvgVol,
-        avgPullbackBody,
-        avgImpulseBody,
-        isBreakRetest,
-        retestHeld,
-        brokenStructureLevel: brokenLevel
-      };
+
+    // Find the impulse trough low preceding the pullback
+    let troughIdx = -1;
+    let troughLow = Infinity;
+    const troughSearchStart = Math.max(0, len - 15);
+    const troughSearchEnd = Math.max(1, len - 1);
+    for (let i = troughSearchStart; i <= troughSearchEnd; i++) {
+      if (candles[i].low < troughLow) {
+        troughLow = candles[i].low;
+        troughIdx = i;
+      }
+    }
+    if (troughIdx === -1) troughIdx = Math.max(0, len - 4);
+
+    // 1. Check if current candle or immediate prior candle is breaking out below the lookback trough
+    const isClimaxCandleShort = (c0.high - c0.low) > 3.0 * atr;
+    let isCurrentCandleBreakout = false;
+    let brokenSupport = 0;
+    let impulseIdx = -1;
+
+    if (!isClimaxCandleShort && (c0.close < troughLow || (c1 && c1.close < troughLow))) {
+      brokenSupport = troughLow;
+      impulseIdx = (c1 && c1.close < troughLow) ? len - 1 : len;
+      isCurrentCandleBreakout = true;
+    } else {
+      // Identify prior support level from swing lows before the impulse trough
+      const lowsBeforeTrough = swingLows.filter(l => l.index < troughIdx && l.price > troughLow);
+      if (lowsBeforeTrough.length > 0) {
+        brokenSupport = lowsBeforeTrough[lowsBeforeTrough.length - 1].price;
+      } else {
+        const preImpulseCandles = candles.slice(Math.max(0, troughIdx - 12), Math.max(1, troughIdx - 1));
+        if (preImpulseCandles.length > 0) {
+          const preMin = Math.min(...preImpulseCandles.map(c => c.low));
+          brokenSupport = preMin > troughLow ? preMin : (emaFast[troughIdx] || eFast);
+        } else {
+          brokenSupport = emaFast[troughIdx] || eFast;
+        }
+      }
+
+      // Identify the impulse candle that broke and closed below prior support
+      for (let i = Math.max(0, troughIdx - 15); i <= troughIdx; i++) {
+        const c = candles[i];
+        if (c.close < brokenSupport && (c.open - c.close) >= (c.high - c.low) * 0.2) {
+          impulseIdx = i;
+          break;
+        }
+      }
+      if (impulseIdx === -1) {
+        impulseIdx = troughIdx;
+      }
     }
 
-    // Reversal risk check: large full-bodied bullish candle slicing through EMA50
-    const isViolentBullishSpike = c0.close > c0.open && c0.close > eSlow && body0 > (1.2 * atr);
-    if (isViolentBullishSpike) {
-      return {
-        valid: false,
-        brokeStructure: false,
-        reversalRisk: true,
-        touchedValue: true,
-        momentumLost: false,
-        impulseDisplacementValid,
-        reason: 'PULLBACK_REVERSAL_RISK',
-        invalidationLevel,
-        pullbackAvgVol,
-        impulseAvgVol,
-        avgPullbackBody,
-        avgImpulseBody,
-        isBreakRetest,
-        retestHeld: false,
-        brokenStructureLevel: brokenLevel
-      };
+    const brokenLevel: BrokenLevel = {
+      direction: 'SHORT',
+      price: brokenSupport,
+      candleIndex: impulseIdx,
+      timestamp: candles[impulseIdx]?.time || candles[len].time,
+      type: 'SUPPORT_TO_RESISTANCE'
+    };
+
+    const barsSinceImpulse = len - impulseIdx;
+    const retestExpired = !isCurrentCandleBreakout && barsSinceImpulse > maxRetestBars;
+
+    // Check if price pulled back into retest zone or value zone
+    const retestSlice = isCurrentCandleBreakout ? [] : candles.slice(troughIdx, len);
+    const retestDetected = retestSlice.some(c =>
+      (c.high >= brokenSupport - retestTolerance && c.low <= brokenSupport + retestTolerance) ||
+      (c.high >= eFast * 0.99) ||
+      (c.high >= eSlow * 0.985)
+    );
+
+    if (!isCurrentCandleBreakout) {
+      isCurrentCandleBreakout = !retestDetected && (barsSinceImpulse <= 2 || impulseIdx === len);
     }
+
+    const maxPullbackHigh = Math.max(...pullbackSlice.map(c => c.high), c0.high);
+    const brokeStructure = maxPullbackHigh > invalidationLevel * 1.002;
+
+    // Retest failure: closed decisively back above broken support AND above eSlow, or broke structure
+    const maxPullbackClose = Math.max(...pullbackSlice.map(c => c.close), c0.close);
+    const retestFailed = (maxPullbackClose > brokenSupport + (retestTolerance * 1.5) && maxPullbackClose > eSlow * 1.01) || brokeStructure;
+
+    const retestHeld = retestDetected && !retestFailed && !brokeStructure;
+
+    const isViolentBullishKnife = c0.close > c0.open && c0.close > eSlow && body0 > (1.2 * atr);
+
+    const continuationConfirmed = c0.close < c0.open && (
+      c0.close < c1.low ||
+      c0.close <= brokenSupport - 0.2 * atr ||
+      (c0.close < c1.close && c1.close >= c1.open)
+    );
+
+    const impulseVol = candles[impulseIdx]?.volume || impulseAvgVol;
+    const retestVol = pullbackAvgVol;
+    const contVol = c0.volume || 0;
+    const impulseExpansion = impulseVol >= volSma20 * impulseVolRatio;
+    const retestContraction = retestVol <= impulseVol * retestContractRatio;
+    const continuationExpansion = contVol > retestVol && contVol >= volSma20 * contVolRatio;
+    const volumeSequenceConfirmed = impulseExpansion && retestContraction && continuationExpansion;
+
+    let state: TrendPullbackState = 'NO_SETUP';
+    if (isCurrentCandleBreakout) {
+      state = 'WAITING_FOR_RETEST';
+    } else if (retestExpired) {
+      state = 'SIGNAL_EXPIRED';
+    } else if (retestFailed || brokeStructure || isViolentBullishKnife) {
+      state = 'SETUP_INVALIDATED';
+    } else if (retestHeld && continuationConfirmed && volumeSequenceConfirmed) {
+      state = 'CONTINUATION_CONFIRMED';
+    } else if (retestHeld && continuationConfirmed) {
+      state = 'CONTINUATION_CONFIRMED';
+    } else if (retestHeld) {
+      state = 'RETEST_HELD';
+    } else if (retestDetected) {
+      state = 'RETEST_DETECTED';
+    } else if (impulseDisplacementValid) {
+      state = 'IMPULSE_CONFIRMED';
+    } else {
+      state = 'TREND_CONFIRMED';
+    }
+
+    const valid = !brokeStructure && !isViolentBullishKnife && (touchedValue || retestDetected) && !retestFailed;
 
     return {
-      valid: true,
-      brokeStructure: false,
-      reversalRisk: false,
-      touchedValue: true,
+      valid,
+      state,
+      brokeStructure,
+      reversalRisk: isViolentBullishKnife,
+      touchedValue,
       momentumLost,
       impulseDisplacementValid,
+      reason: brokeStructure ? 'PULLBACK_BROKE_STRUCTURE' : (isViolentBullishKnife ? 'PULLBACK_REVERSAL_RISK' : (!touchedValue ? 'NO_VALID_PULLBACK' : undefined)),
       invalidationLevel,
       pullbackAvgVol,
       impulseAvgVol,
       avgPullbackBody,
       avgImpulseBody,
-      isBreakRetest,
+      brokenLevel,
+      retestDetected,
       retestHeld,
-      brokenStructureLevel: brokenLevel
+      retestFailed,
+      retestExpired,
+      continuationConfirmed,
+      continuationPattern: continuationConfirmed ? 'Bearish Continuation' : undefined,
+      isBreakRetest: true,
+      brokenStructureLevel: brokenSupport,
+      isCurrentCandleBreakout,
+      volumeSequenceConfirmed,
+      impulseExpansion,
+      retestContraction,
+      continuationExpansion
     };
   }
 }
@@ -1409,15 +1700,38 @@ export function evaluateTrendPullbackDetailed(
   const pullback = checkPullbackStructure(tradeCandles, direction, currentPrice, {
     emaFast: options.emaFast,
     emaSlow: options.emaSlow,
-    atr
+    atr,
+    retestToleranceATR: options.retestToleranceATR,
+    maxRetestBars: options.maxRetestBars,
+    impulseVolumeRatio: options.impulseVolumeRatio,
+    retestContractionRatio: options.retestContractionRatio,
+    continuationVolumeRatio: options.continuationVolumeRatio,
+    volSmaPeriod: options.volSmaPeriod
   });
 
-  // 5. if (!trendStructureValid) reject("INVALID_TREND_STRUCTURE")
+  // 1. Do not enter on the breakout candle
+  if (pullback.isCurrentCandleBreakout) {
+    return {
+      success: false,
+      status: 'WAITING_FOR_RETEST',
+      stage: 'STAGE_A_SETUP_DETECTED',
+      state: 'WAITING_FOR_RETEST',
+      decision: 'WAITING_FOR_CONFIRMATION',
+      outcomeReason: 'WAITING_FOR_RETEST',
+      rejectionReason: 'NO_VALID_PULLBACK',
+      reason: 'Signal waiting: impulse breakout confirmed, but direct breakout entry is prohibited. Waiting for retest.',
+      score: 3,
+      result: null
+    };
+  }
+
+  // 2. if (!trendStructureValid) reject("INVALID_TREND_STRUCTURE")
   if (!pullback.impulseDisplacementValid) {
     return {
       success: false,
       status: 'WAITING_FOR_TREND',
       stage: 'NONE',
+      state: 'TREND_CONFIRMED',
       decision: 'WAITING_FOR_CONFIRMATION',
       outcomeReason: 'WAITING_FOR_IMPULSE',
       rejectionReason: 'INVALID_TREND_STRUCTURE',
@@ -1427,31 +1741,35 @@ export function evaluateTrendPullbackDetailed(
     };
   }
 
-  // 6. if (!validPullback) reject("NO_VALID_PULLBACK")
-  if (!pullback.valid && !pullback.brokeStructure && !pullback.reversalRisk) {
+  // 3. if (retestExpired) reject("RETEST_EXPIRED")
+  if (pullback.retestExpired) {
     return {
       success: false,
-      status: 'WAITING_FOR_PULLBACK',
+      status: 'TRADE REJECTED',
       stage: 'NONE',
-      decision: 'WAITING_FOR_CONFIRMATION',
-      outcomeReason: 'WAITING_FOR_PULLBACK',
-      rejectionReason: 'NO_VALID_PULLBACK',
-      reason: 'Signal rejected: price has not pulled back to dynamic value zone (EMA 20/50).',
+      state: 'SIGNAL_EXPIRED',
+      decision: 'NO_TRADE',
+      outcomeReason: 'RETEST_EXPIRED',
+      rejectionReason: 'RETEST_EXPIRED',
+      reason: `Signal rejected: retest did not occur within ${options.maxRetestBars || 15} execution bars (retest expired).`,
       score: 2,
       result: null
     };
   }
 
-  // 7. if (pullbackInvalidated) reject("PULLBACK_INVALIDATED")
-  if (pullback.brokeStructure) {
+  // 4. if (pullbackInvalidated) reject("PULLBACK_INVALIDATED" / "RETEST_FAILED")
+  if (pullback.retestFailed || pullback.brokeStructure) {
     return {
       success: false,
       status: 'TRADE REJECTED',
       stage: 'NONE',
+      state: 'SETUP_INVALIDATED',
       decision: 'NO_TRADE',
-      outcomeReason: 'STRUCTURE_BROKEN',
-      rejectionReason: 'PULLBACK_INVALIDATED',
-      reason: 'Signal rejected: pullback broke key trend structure invalidation level.',
+      outcomeReason: pullback.brokeStructure ? 'STRUCTURE_BROKEN' : 'RETEST_FAILED',
+      rejectionReason: pullback.brokeStructure ? 'PULLBACK_INVALIDATED' : 'RETEST_FAILED',
+      reason: pullback.brokeStructure
+        ? 'Signal rejected: pullback broke key trend structure invalidation level.'
+        : 'Signal rejected: price failed retest and closed decisively back through the broken level.',
       score: 2,
       result: null
     };
@@ -1462,6 +1780,7 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'TRADE REJECTED',
       stage: 'NONE',
+      state: 'SETUP_INVALIDATED',
       decision: 'NO_TRADE',
       outcomeReason: 'PULLBACK_TOO_DEEP',
       rejectionReason: 'PULLBACK_INVALIDATED',
@@ -1471,18 +1790,67 @@ export function evaluateTrendPullbackDetailed(
     };
   }
 
-  // 8. if (!priceActionConfirmed) reject("PRICE_ACTION_NOT_CONFIRMED")
+  // 5. if (!retestDetected && !touchedValue) reject("NO_VALID_PULLBACK")
+  if (!pullback.retestDetected && !pullback.touchedValue) {
+    return {
+      success: false,
+      status: 'WAITING_FOR_PULLBACK',
+      stage: 'NONE',
+      state: 'WAITING_FOR_RETEST',
+      decision: 'WAITING_FOR_CONFIRMATION',
+      outcomeReason: 'WAITING_FOR_RETEST',
+      rejectionReason: 'NO_VALID_PULLBACK',
+      reason: 'Signal rejected: price has not pulled back to retest the broken level / value zone (EMA 20/50).',
+      score: 2,
+      result: null
+    };
+  }
+
+  // 6. if (retestDetected && !retestHeld) waiting("WAITING_FOR_RETEST_HOLD")
+  if (pullback.retestDetected && !pullback.retestHeld) {
+    return {
+      success: false,
+      status: 'WAITING_FOR_RETEST_HOLD',
+      stage: 'STAGE_A_SETUP_DETECTED',
+      state: 'RETEST_DETECTED',
+      decision: 'WAITING_FOR_CONFIRMATION',
+      outcomeReason: 'WAITING_FOR_RETEST_HOLD',
+      rejectionReason: 'NO_VALID_PULLBACK',
+      reason: 'Signal waiting: retest detected at broken level, but retest-hold confirmation is pending.',
+      score: 4,
+      result: null
+    };
+  }
+
+  // 7. if (!priceActionConfirmed) reject("PRICE_ACTION_NOT_CONFIRMED")
   const pa = checkPriceActionConfirmation(tradeCandles, direction, emaFast);
   if (!pa.confirmed) {
     return {
       success: false,
       status: 'WAITING_FOR_PRICE_ACTION',
       stage: 'STAGE_A_SETUP_DETECTED',
+      state: 'RETEST_HELD',
       decision: 'WAITING_FOR_CONFIRMATION',
       outcomeReason: 'WAITING_FOR_CONFIRMATION',
       rejectionReason: pa.reason || 'PRICE_ACTION_NOT_CONFIRMED',
-      reason: `Stage A setup detected, but waiting for closed candle price-action confirmation (${pa.pattern}).`,
+      reason: `Stage A setup detected and retest held, but waiting for closed candle price-action confirmation (${pa.pattern}).`,
       score: 4,
+      result: null
+    };
+  }
+
+  // 8. if (!continuationConfirmed) waiting("WAITING_FOR_CONTINUATION")
+  if (!pullback.continuationConfirmed) {
+    return {
+      success: false,
+      status: 'WAITING_FOR_CONTINUATION',
+      stage: 'STAGE_A_SETUP_DETECTED',
+      state: 'RETEST_HELD',
+      decision: 'WAITING_FOR_CONFIRMATION',
+      outcomeReason: 'WAITING_FOR_CONTINUATION',
+      rejectionReason: 'CONTINUATION_NOT_CONFIRMED',
+      reason: 'Signal waiting: retest held, waiting for closed continuation candle.',
+      score: 5,
       result: null
     };
   }
@@ -1501,6 +1869,7 @@ export function evaluateTrendPullbackDetailed(
         success: false,
         status: 'TRADE REJECTED',
         stage: 'STAGE_A_SETUP_DETECTED',
+        state: 'RETEST_HELD',
         decision: 'NO_TRADE',
         outcomeReason: 'VOLUME_NOT_CONFIRMED',
         rejectionReason: 'MISSING_VOLUME_DATA',
@@ -1513,10 +1882,27 @@ export function evaluateTrendPullbackDetailed(
       success: false,
       status: 'WAITING_FOR_VOLUME',
       stage: 'STAGE_A_SETUP_DETECTED',
+      state: 'RETEST_HELD',
       decision: 'WAITING_FOR_CONFIRMATION',
       outcomeReason: 'VOLUME_NOT_CONFIRMED',
       rejectionReason: 'VOLUME_NOT_CONFIRMED',
       reason: `Stage A setup detected, but volume did not confirm (ratio: ${vol.volumeRatio.toFixed(2)}x, 20-SMA: ${vol.volSma20.toFixed(0)}).`,
+      score: 6,
+      result: null
+    };
+  }
+
+  // 10. Volume sequence verification
+  if (!pullback.volumeSequenceConfirmed && !vol.isUnconfirmedVolume) {
+    return {
+      success: false,
+      status: 'TRADE REJECTED',
+      stage: 'STAGE_A_SETUP_DETECTED',
+      state: 'RETEST_HELD',
+      decision: 'NO_TRADE',
+      outcomeReason: 'VOLUME_NOT_CONFIRMED',
+      rejectionReason: 'VOLUME_NOT_CONFIRMED',
+      reason: 'Signal rejected: 3-phase volume sequence (impulse expansion -> retest contraction -> continuation expansion) not confirmed.',
       score: 6,
       result: null
     };
@@ -1800,6 +2186,8 @@ export function evaluateTrendPullbackDetailed(
     score: scaledScore,
     rawScore: score,
     stage: 'STAGE_B_TRADE_CONFIRMED',
+    state: 'CONTINUATION_CONFIRMED',
+    entryMode: 'RETEST_CONTINUATION',
     atr,
     entryPrice: currentPrice,
     sl: stopPrice,
@@ -1810,9 +2198,9 @@ export function evaluateTrendPullbackDetailed(
     htfTimeframe: htf,
     signalTime,
     signalId,
-    reason: `Trend Pullback [${tradeTf}/${htf}]: ${pa.pattern} + Vol (${vol.volumeRatio.toFixed(1)}x) [Score: ${score}/10] [Stop: ${stopType} @ ${(stopATRMultiple).toFixed(2)} ATR]`,
+    reason: `Trend Continuation Retest [${tradeTf}/${htf}]: ${pa.pattern} + Vol (${vol.volumeRatio.toFixed(1)}x) [Score: ${score}/10] [Stop: ${stopType} @ ${(stopATRMultiple).toFixed(2)} ATR]`,
     status: 'SIGNAL CONFIRMED',
-    marketRegime: regimeDetails.regime,
+    marketRegime: 'TRENDING_MOMENTUM',
     stopType,
     stopDistance,
     stopATRMultiple,
@@ -1822,7 +2210,7 @@ export function evaluateTrendPullbackDetailed(
     confidence,
     session,
     details: {
-      htfTrendStatus: regimeDetails.regime === 'TRENDING_UP' ? 'BULLISH' : 'BEARISH',
+      htfTrendStatus: direction === 'LONG' ? 'BULLISH' : 'BEARISH',
       regimeDetails,
       pullbackStatus: 'VALID_PULLBACK',
       priceActionPattern: pa.pattern,
@@ -1832,14 +2220,22 @@ export function evaluateTrendPullbackDetailed(
       breakdown,
       regimeFilterPassed: trendAllowed,
       regimeMetrics: trendMetrics,
-      isBreakRetest: pullback.isBreakRetest,
+      state: 'CONTINUATION_CONFIRMED',
+      entryMode: 'RETEST_CONTINUATION',
+      brokenLevel: pullback.brokenLevel,
+      retestTolerance: (options.retestToleranceATR ?? 0.35) * atr,
+      retestDetected: pullback.retestDetected,
       retestHeld: pullback.retestHeld,
+      retestPrice: pullback.brokenLevel?.price,
+      continuationPrice: currentPrice,
+      continuationConfirmed: pullback.continuationConfirmed,
+      isBreakRetest: true,
       brokenStructureLevel: pullback.brokenStructureLevel,
       volumeSequence: {
-        impulseVolumeExpanded: pullback.impulseAvgVol >= vol.volSma20,
-        pullbackVolumeContracted: pullback.pullbackAvgVol <= pullback.impulseAvgVol,
-        confirmationVolumeExpanded: vol.confirmed,
-        volumeSequenceConfirmed: pullback.pullbackAvgVol <= pullback.impulseAvgVol && vol.confirmed,
+        impulseVolumeExpanded: pullback.impulseExpansion,
+        pullbackVolumeContracted: pullback.retestContraction,
+        confirmationVolumeExpanded: pullback.continuationExpansion,
+        volumeSequenceConfirmed: pullback.volumeSequenceConfirmed,
         pullbackAvgVol: pullback.pullbackAvgVol,
         impulseAvgVol: pullback.impulseAvgVol,
         volSma20: vol.volSma20
@@ -1851,6 +2247,7 @@ export function evaluateTrendPullbackDetailed(
     success: true,
     status: 'SIGNAL CONFIRMED',
     stage: 'STAGE_B_TRADE_CONFIRMED',
+    state: 'CONTINUATION_CONFIRMED',
     decision: 'TRADE_ALLOWED',
     outcomeReason: 'TRADE_SIGNAL',
     reason: result.reason,
@@ -1973,8 +2370,29 @@ function calculateSubgroup(trades: StrategyTradeRecord[]): ExpectancySubgroup {
  * Formula: E = (Win Rate * Avg Win) - (Loss Rate * Avg Loss)
  */
 export function calculateStrategyExpectancy(trades: StrategyTradeRecord[]): ExpectancyMetrics {
+  const ALL_REGIMES: MarketRegimeType[] = [
+    'TRENDING_MOMENTUM',
+    'TRENDING_UP',
+    'TRENDING_DOWN',
+    'RANGING',
+    'CHOPPY',
+    'TRANSITION',
+    'WEAK_TREND',
+    'LOW_MOMENTUM',
+    'UNCLEAR',
+    'HIGH_VOLATILITY',
+    'LOW_LIQUIDITY',
+    'UNKNOWN',
+    'RANGE_OR_TRANSITION'
+  ];
+
   const totalTrades = trades.length;
   if (totalTrades === 0) {
+    const emptyByRegime = ALL_REGIMES.reduce((acc, regime) => {
+      acc[regime] = calculateSubgroup([]);
+      return acc;
+    }, {} as Record<MarketRegimeType, ExpectancySubgroup>);
+
     return {
       totalTrades: 0,
       winCount: 0,
@@ -1986,16 +2404,7 @@ export function calculateStrategyExpectancy(trades: StrategyTradeRecord[]): Expe
       profitFactor: 0,
       expectancyR: 0,
       expectedValuePerDollar: 0,
-      byRegime: {
-        TRENDING_UP: calculateSubgroup([]),
-        TRENDING_DOWN: calculateSubgroup([]),
-        RANGING: calculateSubgroup([]),
-        TRANSITION: calculateSubgroup([]),
-        HIGH_VOLATILITY: calculateSubgroup([]),
-        LOW_LIQUIDITY: calculateSubgroup([]),
-        UNKNOWN: calculateSubgroup([]),
-        RANGE_OR_TRANSITION: calculateSubgroup([])
-      },
+      byRegime: emptyByRegime,
       bySymbol: {},
       byTimeframePair: {},
       bySession: {}
@@ -2018,16 +2427,10 @@ export function calculateStrategyExpectancy(trades: StrategyTradeRecord[]): Expe
   const expectedValuePerDollar = avgLossR > 0 ? (expectancyR / avgLossR) : expectancyR;
 
   // Breakdown by regime
-  const byRegime: Record<MarketRegimeType, ExpectancySubgroup> = {
-    TRENDING_UP: calculateSubgroup(trades.filter(t => t.marketRegime === 'TRENDING_UP')),
-    TRENDING_DOWN: calculateSubgroup(trades.filter(t => t.marketRegime === 'TRENDING_DOWN')),
-    RANGING: calculateSubgroup(trades.filter(t => t.marketRegime === 'RANGING')),
-    TRANSITION: calculateSubgroup(trades.filter(t => t.marketRegime === 'TRANSITION')),
-    HIGH_VOLATILITY: calculateSubgroup(trades.filter(t => t.marketRegime === 'HIGH_VOLATILITY')),
-    LOW_LIQUIDITY: calculateSubgroup(trades.filter(t => t.marketRegime === 'LOW_LIQUIDITY')),
-    UNKNOWN: calculateSubgroup(trades.filter(t => t.marketRegime === 'UNKNOWN')),
-    RANGE_OR_TRANSITION: calculateSubgroup(trades.filter(t => t.marketRegime === 'RANGE_OR_TRANSITION'))
-  };
+  const byRegime = ALL_REGIMES.reduce((acc, regime) => {
+    acc[regime] = calculateSubgroup(trades.filter(t => t.marketRegime === regime));
+    return acc;
+  }, {} as Record<MarketRegimeType, ExpectancySubgroup>);
 
   // Breakdown by symbol
   const bySymbol: Record<string, ExpectancySubgroup> = {};
