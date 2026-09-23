@@ -29,6 +29,7 @@ import { SystemHealthPage } from './components/SystemHealth';
 import { TopNavigationBar } from './components/TopNavigationBar';
 import { SignalsPage } from './components/SignalsPage';
 import { RiskCenter } from './components/RiskCenter';
+import { TradeEngineBanner } from './components/TradeEngineBanner';
 import { SystemHealth, SignalView, TradingMode, CANONICAL_DEFAULT_SETTINGS } from './types';
 
 // Default initial settings derived from the canonical shared settings model
@@ -993,6 +994,41 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
     });
   };
 
+  const handleDisableKillSwitch = async () => {
+    const updated = { ...settings, killSwitchActive: false };
+    setSettings(updated);
+    try {
+      await fetch('/api/bot/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ killSwitchActive: false })
+      });
+      addToast('info', 'Kill Switch Disengaged', 'Emergency kill switch deactivated.');
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleRefreshFeed = () => {
+    fetch('/api/binance/proxy?path=/fapi/v1/ticker/price')
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setIsStale(false);
+          setConnectionStatus('CONNECTED');
+          addToast('success', 'Feed Connected', 'Market data ticks synchronized.');
+        }
+      })
+      .catch(() => {
+        addToast('error', 'Feed Error', 'Unable to reconnect to price stream.');
+      });
+  };
+
+  const handleRetrySettings = () => {
+    setSettingsLoadError(null);
+    window.location.reload();
+  };
+
   // Load initial backend state & Poll positions/balance
   useEffect(() => {
     fetchPositions();
@@ -1475,68 +1511,22 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
           </div>
         </header>
 
-        {!engineRunning && (
-          <div id="engine-stopped-banner" className="bg-rose-950/40 border-b border-rose-800/50 px-6 py-2 flex items-center justify-between gap-3 text-rose-300 text-xs shadow-sm">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-rose-500"></span>
-              <span><strong>Trading Engine Stopped:</strong> All autonomous and manual new trade executions are blocked. Existing open positions remain actively monitored.</span>
-            </div>
-            <button
-              id="engine-banner-start-btn"
-              onClick={toggleEngine}
-              className="px-3 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 font-bold rounded border border-emerald-500/40 transition-colors cursor-pointer"
-            >
-              START ENGINE
-            </button>
-          </div>
-        )}
-
-        {settingsLoadError && (
-          <div className="bg-red-950/60 border-b-2 border-red-600/80 px-6 py-3 flex items-center justify-between gap-3 text-red-200 text-xs shadow-lg">
-            <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-full bg-red-500 animate-pulse"></span>
-              <span>
-                <strong>⚠️ CONFIGURATION ERROR:</strong> Failed to load settings from server. 
-                The values shown are <strong>display-only defaults</strong> — NOT your saved configuration. 
-                Trading engine is paused. Changes will NOT be saved until connection is restored.
-              </span>
-            </div>
-            <button
-              onClick={() => {
-                setSettingsLoadError(null);
-                // Re-trigger the mount effect by reloading the page
-                window.location.reload();
-              }}
-              className="px-3 py-1 bg-red-500/30 hover:bg-red-500/40 text-red-300 font-bold rounded border border-red-500/50 transition-colors cursor-pointer whitespace-nowrap"
-            >
-              RETRY
-            </button>
-          </div>
-        )}
-        
-        {isStale && (
-          <div className="bg-amber-500/20 border-b border-amber-500/30 px-6 py-2 flex items-center justify-between gap-3 text-amber-400 text-xs shadow-sm">
-            <div className="flex items-center gap-2">
-              <AlertTriangle size={14} className="shrink-0" />
-              <span><strong>Warning:</strong> Price data stream paused. Reconnecting to live market ticks...</span>
-            </div>
-            <button
-              onClick={() => {
-                fetch('/api/binance/proxy?path=/fapi/v1/ticker/price')
-                  .then(r => r.json())
-                  .then(data => {
-                    if (Array.isArray(data)) {
-                      setIsStale(false);
-                    }
-                  })
-                  .catch(() => {});
-              }}
-              className="px-2.5 py-1 bg-amber-500/30 hover:bg-amber-500/40 text-amber-200 rounded text-[11px] font-bold transition flex items-center gap-1"
-            >
-              <RefreshCw size={11} /> Refresh Ticks
-            </button>
-          </div>
-        )}
+        {/* Dynamic Strategy & Trade Engine Status Banner */}
+        <TradeEngineBanner 
+          engineRunning={engineRunning}
+          settings={settings}
+          connectionStatus={connectionStatus}
+          isStale={isStale}
+          settingsLoadError={settingsLoadError}
+          globalFilterState={globalFilterState}
+          systemHealth={systemHealth}
+          onToggleEngine={toggleEngine}
+          onOpenSettings={() => setActiveTab('settings')}
+          onOpenStrategy={() => setActiveTab('strategy')}
+          onRetrySettings={handleRetrySettings}
+          onRefreshFeed={handleRefreshFeed}
+          onDisableKillSwitch={handleDisableKillSwitch}
+        />
 
         {/* Scrollable Area */}
         <main className="flex-1 overflow-auto p-6">

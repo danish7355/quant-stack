@@ -236,6 +236,8 @@ export interface SystemHealth {
   lastReconciliationAt: string;
   tradingBlocked: boolean;
   blockReason?: string;
+  globalFilterActive?: boolean;
+  globalFilterReason?: string;
 }
 
 export interface TargetView {
