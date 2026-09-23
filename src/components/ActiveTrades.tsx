@@ -220,7 +220,7 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
           <Clock className="w-8 h-8 mb-2 stroke-gray-600" />
           <p className="text-sm font-medium">No open positions at the moment</p>
           <span className="text-xs text-gray-500 mt-1 max-w-sm text-center leading-relaxed">
-            Scanning {settings?.coinCount || 25} Binance Futures pairs for <strong className="text-gray-400">{settings?.activeStrategy === 'DELTA_CLIMAX' ? 'Climax Reversal' : settings?.activeStrategy === 'VOLATILITY_COMPRESSION' ? 'VCB Breakout' : settings?.activeStrategy === 'EARLY_COIL_BREAKOUT' ? 'Early Coil Breakout' : settings?.activeStrategy === 'SMC_LIQUIDITY_SWEEP' ? 'LSR Reversal' : `Score ≥ ${settings?.autoTradeThreshold || 75}`}</strong> fully-confirmed signals with tight invalidation Stop Loss and <strong className="text-indigo-400">1:3 Asymmetric Target</strong>.
+            Scanning {settings?.coinCount || 25} Binance Futures pairs across <strong className="text-gray-400">{activeStrategiesList.length > 1 ? `${activeStrategiesList.length} Active Strategies` : (activeStrategiesList[0] === 'DELTA_CLIMAX' ? 'Delta Climax' : activeStrategiesList[0] === 'VOLATILITY_COMPRESSION' ? 'VCB Breakout' : activeStrategiesList[0] === 'TREND_PULLBACK' ? 'Trend Pullback' : activeStrategiesList[0] === 'SMC_LIQUIDITY_SWEEP' ? 'SMC Liquidity' : activeStrategiesList[0] || 'Autonomous')}</strong> fully-confirmed signals with tight invalidation Stop Loss and <strong className="text-indigo-400">1:3 Asymmetric Target</strong>.
           </span>
         </div>
       ) : (

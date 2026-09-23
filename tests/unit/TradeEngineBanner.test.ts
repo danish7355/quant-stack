@@ -197,4 +197,61 @@ describe('TradeEngineBanner - Strategy & Trade Engine Active Evaluation', () => 
       ])
     );
   });
+
+  it('evaluates multi-strategy configuration and displays all 4 active strategies', () => {
+    const multiSettings: AppSettings = {
+      ...baseSettings,
+      enabledStrategies: ['VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'DELTA_CLIMAX', 'SMC_LIQUIDITY_SWEEP']
+    };
+
+    const status = evaluateEngineStatus(
+      true,
+      multiSettings,
+      'CONNECTED',
+      false,
+      null,
+      { isPausing: false, reason: null },
+      null
+    );
+
+    expect(status.isActive).toBe(true);
+    expect(status.severity).toBe('ACTIVE');
+    expect(status.activeStrategyCount).toBe(4);
+    expect(status.activeStrategies.map(s => s.id)).toEqual([
+      'VOLATILITY_COMPRESSION',
+      'TREND_PULLBACK',
+      'DELTA_CLIMAX',
+      'SMC_LIQUIDITY_SWEEP'
+    ]);
+    expect(status.strategyTag).toBe('4 ACTIVE');
+    expect(status.strategyName).toContain('4 Strategies');
+    expect(status.strategyName).toContain('VCB Breakout');
+    expect(status.strategyName).toContain('Trend Pullback');
+    expect(status.strategyName).toContain('Delta Climax');
+    expect(status.strategyName).toContain('SMC Liquidity');
+    expect(status.primaryReason).toContain('Trading Engine is ACTIVE and executing 4 strategies (VCB Breakout, Trend Pullback, Delta Climax, SMC Liquidity)');
+  });
+
+  it('displays configured multi-strategy information when trading is stopped', () => {
+    const multiSettings: AppSettings = {
+      ...baseSettings,
+      enabledStrategies: ['VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'DELTA_CLIMAX', 'SMC_LIQUIDITY_SWEEP']
+    };
+
+    const status = evaluateEngineStatus(
+      false, // engine stopped
+      multiSettings,
+      'CONNECTED',
+      false,
+      null,
+      { isPausing: false, reason: null },
+      null
+    );
+
+    expect(status.isActive).toBe(false);
+    expect(status.severity).toBe('CRITICAL');
+    expect(status.activeStrategyCount).toBe(4);
+    expect(status.primaryReason).toContain('Trading Engine is STOPPED by operator');
+    expect(status.strategyTag).toBe('4 ACTIVE');
+  });
 });

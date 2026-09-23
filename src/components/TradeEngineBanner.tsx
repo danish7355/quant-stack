@@ -21,53 +21,108 @@ export interface TradeEngineBannerProps {
   onDisableKillSwitch?: () => void;
 }
 
-export function getStrategyDisplayName(strategyKey?: string): { name: string; tag: string; description: string } {
+export interface StrategyMeta {
+  id: string;
+  name: string;
+  shortName: string;
+  tag: string;
+  badgeBg: string;
+  description: string;
+}
+
+export function getStrategyDisplayName(strategyKey?: string): { 
+  name: string; 
+  tag: string; 
+  description: string;
+  shortName: string;
+  badgeBg: string;
+} {
   switch (strategyKey) {
     case 'VOLATILITY_COMPRESSION':
       return {
         name: 'Volatility Compression Breakout (VCB)',
+        shortName: 'VCB Breakout',
         tag: 'BREAKOUT',
+        badgeBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
         description: 'Bollinger/Keltner squeeze compression to directional volume expansion with retest & follow-through gates.'
       };
     case 'SMC_LIQUIDITY_SWEEP':
     case 'LIQUIDITY_SWEEP_REVERSAL':
       return {
         name: 'Smart Money Concepts (SMC Liquidity Sweep)',
+        shortName: 'SMC Liquidity',
         tag: 'INSTITUTIONAL',
+        badgeBg: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
         description: 'Liquidity pool sweeps, MSS displacement shifts, and Fair Value Gap (FVG) / Order Block retests.'
       };
     case 'TREND_PULLBACK':
       return {
         name: 'Trend Pullback Continuation',
+        shortName: 'Trend Pullback',
         tag: 'TREND-FOLLOWING',
+        badgeBg: 'bg-blue-500/20 text-blue-300 border-blue-500/40',
         description: 'Controlled pullback to rising/falling moving averages with ADX trend strength and structural retest.'
       };
     case 'DELTA_CLIMAX':
       return {
         name: 'Delta Climax Reversal',
+        shortName: 'Delta Climax',
         tag: 'REVERSAL',
+        badgeBg: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
         description: 'Exhaustion volume spikes with rejection wicks and momentum divergence at macro extremes.'
       };
     case 'EARLY_COIL_BREAKOUT':
       return {
         name: 'Early Coil Breakout',
+        shortName: 'Early Coil',
         tag: 'MOMENTUM',
+        badgeBg: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40',
         description: 'Pre-blast micro-consolidation detection for early high-conviction breakout entries.'
+      };
+    case 'MACRO_RANGE_BREAKOUT':
+      return {
+        name: 'Macro Range Box Breakout',
+        shortName: 'Macro Box',
+        tag: 'RANGE',
+        badgeBg: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
+        description: 'Darvas box accumulation breakout targeting long-term trending expansions above multi-week range highs.'
       };
     case 'AUTO_REGIME':
       return {
         name: 'Autonomous Multi-Regime Auto-Selector',
+        shortName: 'Auto Regime',
         tag: 'HYBRID',
+        badgeBg: 'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40',
         description: 'Dynamically routes market conditions to the optimal strategy algorithm per asset regime.'
       };
     case 'BINANCE_COMPOSITE':
     default:
       return {
         name: 'Binance Composite Technical Scoring',
+        shortName: 'Composite Score',
         tag: 'COMPOSITE',
+        badgeBg: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
         description: 'Multi-factor technical consensus combining EMAs, RSI, MACD, ADX, SuperTrend, and Volume.'
       };
   }
+}
+
+export function getActiveStrategiesList(settings: AppSettings): StrategyMeta[] {
+  let keys: string[] = [];
+  if (settings.enabledStrategies && Array.isArray(settings.enabledStrategies) && settings.enabledStrategies.length > 0) {
+    keys = settings.enabledStrategies;
+  } else if (settings.activeStrategy) {
+    keys = [settings.activeStrategy];
+  } else {
+    keys = ['VOLATILITY_COMPRESSION'];
+  }
+
+  // Deduplicate keys preserving order
+  const uniqueKeys = Array.from(new Set(keys.filter((k): k is string => typeof k === 'string' && k.length > 0)));
+  return uniqueKeys.map(k => ({
+    id: k,
+    ...getStrategyDisplayName(k)
+  }));
 }
 
 export interface EngineStatusEvaluation {
@@ -79,6 +134,8 @@ export interface EngineStatusEvaluation {
   strategyName: string;
   strategyTag: string;
   strategyDescription: string;
+  activeStrategies: StrategyMeta[];
+  activeStrategyCount: number;
 }
 
 export function evaluateEngineStatus(
@@ -91,7 +148,16 @@ export function evaluateEngineStatus(
   systemHealth?: SystemHealth | null
 ): EngineStatusEvaluation {
   const reasons: string[] = [];
-  const strat = getStrategyDisplayName(settings.activeStrategy);
+  const activeStrategies = getActiveStrategiesList(settings);
+  const isMulti = activeStrategies.length > 1;
+  const stratNames = activeStrategies.map(s => s.shortName).join(', ');
+  const strategyName = isMulti
+    ? `${activeStrategies.length} Strategies (${activeStrategies.map(s => s.shortName).join(' • ')})`
+    : activeStrategies[0].name;
+  const strategyTag = isMulti ? `${activeStrategies.length} ACTIVE` : activeStrategies[0].tag;
+  const strategyDescription = isMulti
+    ? `Active Multi-Strategy Suite (${activeStrategies.length} enabled): ${activeStrategies.map(s => `${s.shortName}: ${s.description}`).join(' | ')}`
+    : activeStrategies[0].description;
 
   // 1. Critical Errors
   if (settingsLoadError) {
@@ -129,14 +195,20 @@ export function evaluateEngineStatus(
   const isActive = reasons.length === 0;
 
   if (isActive) {
+    const primaryReason = isMulti
+      ? `Trading Engine is ACTIVE and executing ${activeStrategies.length} strategies (${stratNames}).`
+      : `Trading Engine is ACTIVE and executing ${activeStrategies[0].name}.`;
+
     return {
       isActive: true,
-      primaryReason: `Trading Engine is ACTIVE and executing ${strat.name}.`,
+      primaryReason,
       allReasons: [],
       severity: 'ACTIVE',
-      strategyName: strat.name,
-      strategyTag: strat.tag,
-      strategyDescription: strat.description
+      strategyName,
+      strategyTag,
+      strategyDescription,
+      activeStrategies,
+      activeStrategyCount: activeStrategies.length
     };
   }
 
@@ -161,9 +233,11 @@ export function evaluateEngineStatus(
     allReasons: reasons,
     severity: isCritical ? 'CRITICAL' : 'WARNING',
     actionType,
-    strategyName: strat.name,
-    strategyTag: strat.tag,
-    strategyDescription: strat.description
+    strategyName,
+    strategyTag,
+    strategyDescription,
+    activeStrategies,
+    activeStrategyCount: activeStrategies.length
   };
 }
 
@@ -224,20 +298,41 @@ export function TradeEngineBanner({
 
             <div className="h-4 w-px bg-[#30363D] hidden sm:block"></div>
 
-            <div className="flex items-center gap-2">
-              <span className="text-gray-400 font-medium">Strategy:</span>
-              <button
-                onClick={onOpenStrategy}
-                className="font-bold text-emerald-300 hover:text-emerald-200 transition-colors flex items-center gap-1.5 underline decoration-emerald-500/50 underline-offset-2 cursor-pointer"
-                title="Click to view strategy rules and configuration"
-              >
-                <GitBranch size={13} className="text-emerald-400" />
-                <span>{evaluation.strategyName}</span>
-              </button>
-              <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-[#161B22] text-gray-300 border border-[#30363D]">
-                {evaluation.strategyTag}
-              </span>
-            </div>
+            {evaluation.activeStrategies.length > 1 ? (
+              <div className="flex items-center flex-wrap gap-2">
+                <span className="text-gray-400 font-medium flex items-center gap-1.5">
+                  <GitBranch size={13} className="text-emerald-400" />
+                  <span>Strategies ({evaluation.activeStrategies.length} Active):</span>
+                </span>
+                <div className="flex items-center flex-wrap gap-1.5">
+                  {evaluation.activeStrategies.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={onOpenStrategy}
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold border flex items-center gap-1 hover:brightness-125 transition-all cursor-pointer shadow-sm ${s.badgeBg}`}
+                      title={`Active Strategy: ${s.name}\n${s.description}\nClick to view strategy rules and configuration`}
+                    >
+                      <span>{s.shortName}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="text-gray-400 font-medium">Strategy:</span>
+                <button
+                  onClick={onOpenStrategy}
+                  className="font-bold text-emerald-300 hover:text-emerald-200 transition-colors flex items-center gap-1.5 underline decoration-emerald-500/50 underline-offset-2 cursor-pointer"
+                  title="Click to view strategy rules and configuration"
+                >
+                  <GitBranch size={13} className="text-emerald-400" />
+                  <span>{evaluation.strategyName}</span>
+                </button>
+                <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-[#161B22] text-gray-300 border border-[#30363D]">
+                  {evaluation.strategyTag}
+                </span>
+              </div>
+            )}
 
             <div className="h-4 w-px bg-[#30363D] hidden lg:block"></div>
 
@@ -299,20 +394,62 @@ export function TradeEngineBanner({
         {showDetails && (
           <div className="mt-2.5 pt-2.5 border-t border-[#30363D]/60 text-[11px] text-gray-300 grid grid-cols-1 md:grid-cols-3 gap-3 bg-black/30 p-2.5 rounded border border-[#30363D]/40">
             <div>
-              <span className="text-gray-500 uppercase tracking-wider text-[10px] block font-bold">Active Engine Architecture</span>
-              <p className="mt-0.5 text-gray-300 leading-relaxed">{evaluation.strategyDescription}</p>
+              <span className="text-gray-500 uppercase tracking-wider text-[10px] block font-bold">
+                {evaluation.activeStrategies.length > 1
+                  ? `Active Engine Suite (${evaluation.activeStrategies.length} Strategies)`
+                  : 'Active Engine Architecture'}
+              </span>
+              <div className="mt-1 space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                {evaluation.activeStrategies.map((s) => (
+                  <div key={s.id} className="text-[11px] leading-snug">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold border ${s.badgeBg}`}>
+                        {s.tag}
+                      </span>
+                      <strong className="text-gray-200">{s.name}</strong>
+                    </div>
+                    <p className="text-gray-400 text-[10px] mt-0.5 leading-relaxed">{s.description}</p>
+                  </div>
+                ))}
+              </div>
             </div>
             <div>
               <span className="text-gray-500 uppercase tracking-wider text-[10px] block font-bold">Scanning & Sizing Parameters</span>
               <p className="mt-0.5 text-gray-300">
                 Risk Per Trade: <strong className="text-emerald-400">{settings.accountRiskPct || 1}%</strong> • Leverage: <strong className="text-indigo-400">{settings.leverage || 1}x</strong> • Max Positions: <strong className="text-gray-200">{settings.maxConcurrentTrades || 3}</strong>
               </p>
+              <p className="mt-1 text-gray-400 text-[10px]">
+                Scan: <strong className="text-gray-300">{coinCount} pairs / {scanInterval}s</strong> • Priority arbitration: Highest score wins, breaking ties by enabled strategy order.
+              </p>
             </div>
             <div>
-              <span className="text-gray-500 uppercase tracking-wider text-[10px] block font-bold">Institutional Hard Gates</span>
-              <p className="mt-0.5 text-gray-300">
-                ATR Ratio &ge; {settings.vcbLocalAtrRatioMin ?? 1.2}x • Volume &ge; {settings.vcbBreakoutVolumeMin ?? 1.5}x • ADX &ge; {settings.vcbLocalAdxMin ?? 20} • Body &ge; {((settings.vcbBodyDominanceMin ?? 0.6) * 100).toFixed(0)}%
-              </p>
+              <span className="text-gray-500 uppercase tracking-wider text-[10px] block font-bold">Institutional Safeguards</span>
+              <div className="mt-0.5 space-y-1 text-[10px] text-gray-300">
+                {evaluation.activeStrategies.some(s => s.id === 'VOLATILITY_COMPRESSION') && (
+                  <p>
+                    <strong className="text-emerald-400">VCB:</strong> ATR Ratio &ge; {settings.vcbLocalAtrRatioMin ?? 1.2}x • Vol &ge; {settings.vcbBreakoutVolumeMin ?? 1.5}x • ADX &ge; {settings.vcbLocalAdxMin ?? 20}
+                  </p>
+                )}
+                {evaluation.activeStrategies.some(s => s.id === 'TREND_PULLBACK') && (
+                  <p>
+                    <strong className="text-blue-400">Trend Pullback:</strong> ADX &ge; {settings.tpbAdxMin ?? 25} • EMA {settings.tpbEmaFast ?? 20}/{settings.tpbEmaSlow ?? 50}
+                  </p>
+                )}
+                {evaluation.activeStrategies.some(s => s.id === 'SMC_LIQUIDITY_SWEEP' || s.id === 'LIQUIDITY_SWEEP_REVERSAL') && (
+                  <p>
+                    <strong className="text-purple-400">SMC:</strong> Liquidity Sweep + MSS + FVG Retest • 1:{settings.smcRrRatio ?? 3.0} R:R Target
+                  </p>
+                )}
+                {evaluation.activeStrategies.some(s => s.id === 'DELTA_CLIMAX') && (
+                  <p>
+                    <strong className="text-amber-400">Delta Climax:</strong> Capitulation Vol Spike • 3-Bar Exhaustion Reversal
+                  </p>
+                )}
+                <p className="text-emerald-400 pt-0.5 flex items-center gap-1 font-medium">
+                  <CheckCircle2 size={11} />
+                  <span>All Active Strategy Safeguards Armed & Monitored</span>
+                </p>
+              </div>
             </div>
           </div>
         )}
@@ -362,8 +499,23 @@ export function TradeEngineBanner({
           {/* Strategy Context in Blocked State */}
           <div className="hidden xl:flex items-center gap-1.5 text-[11px] text-gray-400">
             <span>•</span>
-            <span>Configured Strategy:</span>
-            <span className="font-bold text-gray-300">{evaluation.strategyName}</span>
+            {evaluation.activeStrategies.length > 1 ? (
+              <div className="flex items-center gap-1.5">
+                <span>Configured Strategies ({evaluation.activeStrategies.length}):</span>
+                <div className="flex items-center gap-1">
+                  {evaluation.activeStrategies.map((s) => (
+                    <span key={s.id} className={`text-[10px] px-1.5 py-0.2 rounded font-bold border ${s.badgeBg}`}>
+                      {s.shortName}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <span>Configured Strategy:</span>
+                <span className="font-bold text-gray-300">{evaluation.strategyName}</span>
+              </div>
+            )}
           </div>
         </div>
 
