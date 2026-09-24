@@ -111,11 +111,23 @@ export function getRecentTradeLogsFromDisk(limitCount = 50): any[] {
   const filePath = path.join(DATA_DIR, 'trade_logs.jsonl');
   if (!fs.existsSync(filePath)) return [];
   try {
-    const lines = fs.readFileSync(filePath, 'utf8').trim().split('\n').filter(Boolean);
+    const stat = fs.statSync(filePath);
+    if (stat.size === 0) return [];
+    const readSize = Math.min(stat.size, 512 * 1024); // read last 512KB max
+    const buffer = Buffer.alloc(readSize);
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      fs.readSync(fd, buffer, 0, readSize, stat.size - readSize);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const chunk = buffer.toString('utf8');
+    const lines = chunk.split('\n').filter(Boolean);
+    const validLines = stat.size > readSize ? lines.slice(1) : lines;
     const parsed: any[] = [];
-    for (let i = lines.length - 1; i >= 0 && parsed.length < limitCount; i--) {
+    for (let i = validLines.length - 1; i >= 0 && parsed.length < limitCount; i--) {
       try {
-        const item = JSON.parse(lines[i]);
+        const item = JSON.parse(validLines[i]);
         if (!item.id) {
           item.id = `disk-log-${item.symbol || 'COIN'}-${item.timestamp || item.time_close || i}-${i}`;
         }

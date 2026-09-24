@@ -45,13 +45,26 @@ function sanitizeForAudit(obj: Record<string, any>): Record<string, any> {
 try {
   const jsonlPath = path.join(process.cwd(), 'data', 'settings_audit.jsonl');
   if (fs.existsSync(jsonlPath)) {
-    const lines = fs.readFileSync(jsonlPath, 'utf8').trim().split('\n').filter(Boolean);
-    const recent = lines.slice(-MAX_AUDIT_BUFFER);
-    for (let i = recent.length - 1; i >= 0; i--) {
+    const stat = fs.statSync(jsonlPath);
+    if (stat.size > 0) {
+      const readSize = Math.min(stat.size, 512 * 1024); // read last 512KB max
+      const buffer = Buffer.alloc(readSize);
+      const fd = fs.openSync(jsonlPath, 'r');
       try {
-        const item = JSON.parse(recent[i]);
-        auditBuffer.push(item);
-      } catch (e) {}
+        fs.readSync(fd, buffer, 0, readSize, stat.size - readSize);
+      } finally {
+        fs.closeSync(fd);
+      }
+      const chunk = buffer.toString('utf8');
+      const lines = chunk.split('\n').filter(Boolean);
+      const validLines = stat.size > readSize ? lines.slice(1) : lines;
+      const recent = validLines.slice(-MAX_AUDIT_BUFFER);
+      for (let i = recent.length - 1; i >= 0; i--) {
+        try {
+          const item = JSON.parse(recent[i]);
+          auditBuffer.push(item);
+        } catch (e) {}
+      }
     }
   }
 } catch (err) {
