@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Menu, PanelLeftOpen, PanelLeftClose,
   TrendingUp, TrendingDown, LayoutDashboard, Settings as SettingsIcon, LineChart, History, ShieldAlert, Terminal,
   CircleCheck, ChevronRight, AlertTriangle, RefreshCw, Bell, Sun, Moon, Play, Square, Search, Activity, BarChart2, List, GitPullRequest, Zap, GitBranch
@@ -152,57 +152,58 @@ export default function App() {
     positionsRef.current = positions;
   }, [positions]);
 
-  useEffect(() => {
-    // Initial fetch of server settings from Firestore
-    const loadSettings = async (retryCount = 0) => {
-      try {
-        const res = await fetch('/api/bot/settings');
-        if (!res.ok) {
-          throw new Error(`Server returned ${res.status}: ${res.statusText}`);
+  // Reusable fetch of server settings from backend / Firestore
+  const reloadSettings = useCallback(async (retryCount = 0) => {
+    try {
+      const res = await fetch('/api/bot/settings');
+      if (!res.ok) {
+        throw new Error(`Server returned ${res.status}: ${res.statusText}`);
+      }
+      const serverSettings = await res.json();
+      if (serverSettings && typeof serverSettings === 'object' && Object.keys(serverSettings).length > 0) {
+        if (serverSettings.autoTradeEnabled !== undefined) {
+          setEngineRunning(serverSettings.autoTradeEnabled !== false);
         }
-        const serverSettings = await res.json();
-        if (serverSettings && typeof serverSettings === 'object' && Object.keys(serverSettings).length > 0) {
-          if (serverSettings.autoTradeEnabled !== undefined) {
-            setEngineRunning(serverSettings.autoTradeEnabled !== false);
-          }
-          setSettings(prev => {
-            const merged = { ...prev };
-            // Merge server settings, but never wipe existing non-empty credentials with empty strings
-            for (const [key, val] of Object.entries(serverSettings)) {
-              if (val !== undefined && val !== null) {
-                const isCredentialField = key === 'telegramBotToken' || key === 'telegramChatId' || key === 'binanceApiKey' || key === 'binanceApiSecret';
-                if (isCredentialField && typeof val === 'string' && val.trim() === '') {
-                  // Keep whatever local credentials we already have
-                  if (!merged[key as keyof AppSettings]) {
-                    (merged as any)[key] = val;
-                  }
-                } else {
+        setSettings(prev => {
+          const merged = { ...prev };
+          // Merge server settings, but never wipe existing non-empty credentials with empty strings
+          for (const [key, val] of Object.entries(serverSettings)) {
+            if (val !== undefined && val !== null) {
+              const isCredentialField = key === 'telegramBotToken' || key === 'telegramChatId' || key === 'binanceApiKey' || key === 'binanceApiSecret';
+              if (isCredentialField && typeof val === 'string' && val.trim() === '') {
+                // Keep whatever local credentials we already have
+                if (!merged[key as keyof AppSettings]) {
                   (merged as any)[key] = val;
                 }
+              } else {
+                (merged as any)[key] = val;
               }
             }
-            return merged;
-          });
-        }
-        setSettingsLoadError(null);
-        setHasLoadedServerSettings(true);
-      } catch (err) {
-        console.warn('AutoTrader: Could not load initial server settings', err);
-        if (retryCount < 3) {
-          // Retry with exponential backoff
-          const delay = Math.pow(2, retryCount) * 1000;
-          addTerminalLog(`⚠️ Settings load failed (attempt ${retryCount + 1}/3). Retrying in ${delay / 1000}s...`);
-          setTimeout(() => loadSettings(retryCount + 1), delay);
-        } else {
-          // D1 fix: Do NOT set hasLoadedServerSettings = true on failure.
-          // This prevents the auto-sync from firing and wiping server settings with defaults.
-          setSettingsLoadError(String(err));
-          addTerminalLog(`🚨 CRITICAL: Failed to load settings after 3 attempts. Trading engine paused. Using display-only defaults.`);
-        }
+          }
+          return merged;
+        });
       }
-    };
-    loadSettings();
+      setSettingsLoadError(null);
+      setHasLoadedServerSettings(true);
+    } catch (err) {
+      console.warn('AutoTrader: Could not load initial server settings', err);
+      if (retryCount < 3) {
+        // Retry with exponential backoff
+        const delay = Math.pow(2, retryCount) * 1000;
+        addTerminalLog(`⚠️ Settings load failed (attempt ${retryCount + 1}/3). Retrying in ${delay / 1000}s...`);
+        setTimeout(() => reloadSettings(retryCount + 1), delay);
+      } else {
+        // D1 fix: Do NOT set hasLoadedServerSettings = true on failure.
+        // This prevents the auto-sync from firing and wiping server settings with defaults.
+        setSettingsLoadError(String(err));
+        addTerminalLog(`🚨 CRITICAL: Failed to load settings after 3 attempts. Trading engine paused. Using display-only defaults.`);
+      }
+    }
   }, []);
+
+  useEffect(() => {
+    reloadSettings();
+  }, [reloadSettings]);
 
   useEffect(() => {
   }, [equitySnapshots]);
@@ -1637,6 +1638,7 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
                 onResetSettings={handleResetSettings}
                 hasLoadedServerSettings={hasLoadedServerSettings}
                 settingsLoadError={settingsLoadError}
+                onReloadServerSettings={reloadSettings}
             />
           )}
           {activeTab === 'strategy' && (

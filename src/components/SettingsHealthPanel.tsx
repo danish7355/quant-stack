@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, CheckCircle, AlertTriangle, RefreshCw, Shield, Server, Database, Clock } from 'lucide-react';
+import { Activity, CheckCircle, AlertTriangle, RefreshCw, Shield, Server, Database, Clock, ArrowDownToLine, ArrowUpToLine } from 'lucide-react';
 import { TradingSettings } from '../types';
 
 interface HealthData {
@@ -22,17 +22,25 @@ interface SettingsHealthPanelProps {
   isDirty: boolean;
   hasLoadedServerSettings: boolean;
   settingsLoadError: string | null;
+  onReloadServerSettings?: () => Promise<void>;
+  onForceSyncToEngine?: () => Promise<void>;
 }
 
 export function SettingsHealthPanel({
   currentSettings,
   isDirty,
   hasLoadedServerSettings,
-  settingsLoadError
+  settingsLoadError,
+  onReloadServerSettings,
+  onForceSyncToEngine
 }: SettingsHealthPanelProps) {
   const [health, setHealth] = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [lastCheck, setLastCheck] = useState<string>('Just now');
+
+  const frontendVersion = currentSettings.settingsVersion || 1;
+  const engineVersion = health?.engineVersion ?? frontendVersion;
 
   const fetchHealth = async () => {
     setLoading(true);
@@ -42,6 +50,12 @@ export function SettingsHealthPanel({
         const data = await res.json();
         setHealth(data);
         setLastCheck(new Date().toLocaleTimeString());
+
+        // If user has NO unsaved edits and engine has advanced ahead, auto-sync seamlessly
+        if (!isDirty && data.engineVersion > frontendVersion && onReloadServerSettings) {
+          console.log(`⚡ [SettingsHealth] Engine version v${data.engineVersion} is ahead of local v${frontendVersion}. Auto-syncing...`);
+          onReloadServerSettings().catch(() => {});
+        }
       }
     } catch (e) {
       console.warn('Failed to fetch settings health:', e);
@@ -54,10 +68,8 @@ export function SettingsHealthPanel({
     fetchHealth();
     const interval = setInterval(fetchHealth, 15000); // Check every 15s
     return () => clearInterval(interval);
-  }, []);
+  }, [frontendVersion, isDirty]);
 
-  const frontendVersion = currentSettings.settingsVersion || 1;
-  const engineVersion = health?.engineVersion ?? frontendVersion;
   const isSync = hasLoadedServerSettings && !settingsLoadError && (!health || frontendVersion === engineVersion) && !isDirty;
 
   let overallStatus = 'SYNCHRONIZED';
@@ -99,8 +111,8 @@ export function SettingsHealthPanel({
 
         <button
           onClick={fetchHealth}
-          disabled={loading}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#21262D] hover:bg-[#30363D] text-gray-300 text-xs font-semibold border border-[#30363D] transition disabled:opacity-50"
+          disabled={loading || isSyncing}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#21262D] hover:bg-[#30363D] text-gray-300 text-xs font-semibold border border-[#30363D] transition disabled:opacity-50 cursor-pointer"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           <span>Refresh</span>
@@ -174,16 +186,59 @@ export function SettingsHealthPanel({
         </div>
       </div>
 
-      {/* Out of Sync Warning Banner */}
+      {/* Out of Sync Warning Banner with Interactive Resolution Buttons */}
       {health && frontendVersion !== engineVersion && (
-        <div className="bg-rose-950/50 border border-rose-600/60 rounded-lg p-3 flex items-start gap-2.5 text-rose-300 text-xs">
-          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-          <div className="space-y-0.5">
-            <p className="font-bold">Configuration Out of Sync!</p>
-            <p className="text-rose-400 text-[11px]">
-              The trading engine is currently executing on version <strong>v{engineVersion}</strong>, while your local interface has version <strong>v{frontendVersion}</strong>.
-              Save settings to push your latest configuration to the engine.
-            </p>
+        <div className="bg-rose-950/50 border border-rose-600/60 rounded-lg p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-rose-300 text-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <p className="font-bold text-sm">Configuration Out of Sync!</p>
+              <p className="text-rose-400 text-[11px]">
+                The trading engine is currently executing on version <strong>v{engineVersion}</strong>, while your local interface has version <strong>v{frontendVersion}</strong>.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center flex-wrap">
+            {onReloadServerSettings && (
+              <button
+                onClick={async () => {
+                  setIsSyncing(true);
+                  try {
+                    await onReloadServerSettings();
+                    await fetchHealth();
+                  } finally {
+                    setIsSyncing(false);
+                  }
+                }}
+                disabled={isSyncing}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition disabled:opacity-50 shadow-sm cursor-pointer"
+                title={`Pull active version v${engineVersion} from trading engine into browser`}
+              >
+                <ArrowDownToLine className={`w-3.5 h-3.5 ${isSyncing ? 'animate-bounce' : ''}`} />
+                <span>Pull v{engineVersion} from Engine</span>
+              </button>
+            )}
+
+            {onForceSyncToEngine && (
+              <button
+                onClick={async () => {
+                  setIsSyncing(true);
+                  try {
+                    await onForceSyncToEngine();
+                    await fetchHealth();
+                  } finally {
+                    setIsSyncing(false);
+                  }
+                }}
+                disabled={isSyncing}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#21262D] hover:bg-[#30363D] border border-rose-600/50 text-rose-200 font-semibold text-xs transition disabled:opacity-50 cursor-pointer"
+                title="Push current local settings to the engine to align versions"
+              >
+                <ArrowUpToLine className="w-3.5 h-3.5" />
+                <span>Push Local to Engine</span>
+              </button>
+            )}
           </div>
         </div>
       )}

@@ -11,6 +11,7 @@ interface SettingsPanelProps {
   onResetSettings: () => void;
   hasLoadedServerSettings?: boolean;
   settingsLoadError?: string | null;
+  onReloadServerSettings?: () => Promise<void>;
 }
 
 const LocalNumberInput = ({ value, onChange, className }: any) => {
@@ -141,7 +142,8 @@ export default function SettingsPanel({
   onResetBalance,
   onResetSettings,
   hasLoadedServerSettings = true,
-  settingsLoadError = null
+  settingsLoadError = null,
+  onReloadServerSettings
 }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<'general' | 'filters' | 'risk' | 'strategies' | 'autotrade' | 'alerts' | 'credentials' | 'github' | 'health' | 'audit'>('general');
   const [showBotToken, setShowBotToken] = useState(false);
@@ -251,8 +253,8 @@ export default function SettingsPanel({
     }
 
     if (diffs.length === 0) {
-      setSaveStatus('✓ No changes to save');
-      setTimeout(() => setSaveStatus(null), 2500);
+      // If there are no pending input changes, execute save directly to sync version with engine
+      executeActualSave();
       return;
     }
 
@@ -447,6 +449,16 @@ export default function SettingsPanel({
           )}
         </div>
         <div className="flex space-x-3">
+          {onReloadServerSettings && (
+            <button 
+              onClick={onReloadServerSettings}
+              className="flex items-center space-x-2 px-3 py-1.5 rounded-lg border border-[#30363D] text-gray-400 hover:bg-[#21262D] text-sm font-semibold transition-colors"
+              title="Pull latest active configuration from trading engine"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span>Pull from Engine</span>
+            </button>
+          )}
           <button 
             onClick={onResetSettings}
             className="flex items-center space-x-2 px-3 py-1.5 rounded-lg border border-[#30363D] text-gray-400 hover:bg-[#21262D] text-sm font-semibold transition-colors"
@@ -1718,6 +1730,8 @@ export default function SettingsPanel({
             isDirty={isDirty}
             hasLoadedServerSettings={Boolean(hasLoadedServerSettings)}
             settingsLoadError={settingsLoadError || null}
+            onReloadServerSettings={onReloadServerSettings}
+            onForceSyncToEngine={executeActualSave}
           />
         )}
 
