@@ -83,10 +83,16 @@ export class TelegramService {
       const localSettings = readLocalJson<any>('settings.json', null);
       if (localSettings) {
         if (localSettings.telegramBotToken !== undefined) {
-          this.botToken = this.sanitizeToken(localSettings.telegramBotToken);
+          const clean = this.sanitizeToken(localSettings.telegramBotToken);
+          if (clean && !clean.includes('****') && !clean.includes('••••')) {
+            this.botToken = clean;
+          }
         }
         if (localSettings.telegramChatId !== undefined) {
-          this.chatId = this.sanitizeChatId(localSettings.telegramChatId);
+          const clean = this.sanitizeChatId(localSettings.telegramChatId);
+          if (clean && !clean.includes('****') && !clean.includes('••••')) {
+            this.chatId = clean;
+          }
         }
         this.updateSettings(localSettings);
       }
@@ -98,10 +104,16 @@ export class TelegramService {
       if (snapRes.exists && snapRes.data) {
         const data = snapRes.data;
         if (data.telegramBotToken !== undefined) {
-          this.botToken = this.sanitizeToken(data.telegramBotToken);
+          const clean = this.sanitizeToken(data.telegramBotToken);
+          if (clean && !clean.includes('****') && !clean.includes('••••')) {
+            this.botToken = clean;
+          }
         }
         if (data.telegramChatId !== undefined) {
-          this.chatId = this.sanitizeChatId(data.telegramChatId);
+          const clean = this.sanitizeChatId(data.telegramChatId);
+          if (clean && !clean.includes('****') && !clean.includes('••••')) {
+            this.chatId = clean;
+          }
         }
         
         this.alertOnNewSignal = data.alertOnNewSignal ?? true;
@@ -122,15 +134,35 @@ export class TelegramService {
   }
 
   public updateConfig(token?: string, chatId?: string) {
-    if (token !== undefined) this.botToken = this.sanitizeToken(token);
-    if (chatId !== undefined) this.chatId = this.sanitizeChatId(chatId);
+    if (token !== undefined) {
+      const clean = this.sanitizeToken(token);
+      if (clean && !clean.includes('****') && !clean.includes('••••')) {
+        this.botToken = clean;
+      }
+    }
+    if (chatId !== undefined) {
+      const clean = this.sanitizeChatId(chatId);
+      if (clean && !clean.includes('****') && !clean.includes('••••')) {
+        this.chatId = clean;
+      }
+    }
     console.log(`📱 [Telegram] Config updated. Chat: ${this.chatId ? 'Configured' : 'Missing'}, Token: ${this.botToken ? 'Configured' : 'Missing'}`);
   }
 
   public updateSettings(settings: any) {
     if (!settings || typeof settings !== 'object') return;
-    if (settings.telegramBotToken !== undefined) this.botToken = this.sanitizeToken(settings.telegramBotToken);
-    if (settings.telegramChatId !== undefined) this.chatId = this.sanitizeChatId(settings.telegramChatId);
+    if (settings.telegramBotToken !== undefined) {
+      const clean = this.sanitizeToken(settings.telegramBotToken);
+      if (clean && !clean.includes('****') && !clean.includes('••••')) {
+        this.botToken = clean;
+      }
+    }
+    if (settings.telegramChatId !== undefined) {
+      const clean = this.sanitizeChatId(settings.telegramChatId);
+      if (clean && !clean.includes('****') && !clean.includes('••••')) {
+        this.chatId = clean;
+      }
+    }
     if (settings.alertOnNewSignal !== undefined) this.alertOnNewSignal = Boolean(settings.alertOnNewSignal);
     if (settings.alertOnTradeExecuted !== undefined) this.alertOnTradeExecuted = Boolean(settings.alertOnTradeExecuted);
     if (settings.alertOnTpHit !== undefined) this.alertOnTpHit = Boolean(settings.alertOnTpHit);

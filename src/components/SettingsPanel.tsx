@@ -310,11 +310,12 @@ export default function SettingsPanel({
         body: JSON.stringify(settings)
       });
 
+      const isMaskedToken = !settings.telegramBotToken || settings.telegramBotToken.includes('****') || settings.telegramBotToken.includes('••••');
       const res = await fetch('/api/bot/telegram/test', { 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          botToken: settings.telegramBotToken,
+          botToken: isMaskedToken ? undefined : settings.telegramBotToken,
           chatId: settings.telegramChatId
         })
       });

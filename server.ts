@@ -448,8 +448,10 @@ async function startServer() {
   app.post("/api/bot/telegram/test", async (req, res) => {
     try {
       const { botToken, chatId } = req.body;
-      if (botToken && chatId) {
+      if (botToken && !botToken.includes('****') && !botToken.includes('••••')) {
         telegramService.updateConfig(botToken, chatId);
+      } else if (chatId) {
+        telegramService.updateConfig(undefined, chatId);
       }
       const success = await telegramService.sendMessage(
         `🤖 <b>Telegram Alerts Connected!</b> 🚀\n\n` +

@@ -70,6 +70,29 @@ describe('TelegramService - Robustness & Alert Bug Fixes', () => {
       empty.updateConfig('valid_token', 'valid_chat');
       expect(empty.isConfigured()).toBe(true);
     });
+
+    it('does not overwrite configured token or chatId with masked strings containing **** or ••••', async () => {
+      service.updateConfig('real_valid_token_123', 'real_chat_id_456');
+      expect(service.isConfigured()).toBe(true);
+
+      // Attempt to overwrite with masked token/chat via updateConfig
+      service.updateConfig('real_va****', 'real_ch****');
+
+      // Attempt to overwrite with masked token/chat via updateSettings
+      service.updateSettings({
+        telegramBotToken: '••••••••',
+        telegramChatId: '••••••••'
+      });
+
+      let sentUrl = '';
+      global.fetch = vi.fn().mockImplementation(async (url: string) => {
+        sentUrl = url;
+        return { json: async () => ({ ok: true, result: { message_id: 999 } }) };
+      });
+
+      await service.sendMessage('Test');
+      expect(sentUrl).toBe('https://api.telegram.org/botreal_valid_token_123/sendMessage');
+    });
   });
 
   describe('Unfreezable Queue & Error Handling', () => {
