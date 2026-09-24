@@ -160,6 +160,12 @@ function nearestStructureTarget(enriched: any[], direction: 'LONG'|'SHORT', entr
 function buildSignal(direction: 'LONG'|'SHORT', enriched: any[], c1: any, c2: any, c3: any, stopLevel: number, settings: AppSettings): CRSignal {
     const entry = c3.close; // Enter on the live candle
     const atr = c2.atr || (c2.high - c2.low);
+
+    // Inverted stop guard
+    if ((direction === 'LONG' && stopLevel >= entry) || (direction === 'SHORT' && stopLevel <= entry)) {
+        return { status: 'rejected', reason: 'invalid_stop_placement' };
+    }
+
     const riskPerUnit = Math.abs(entry - stopLevel);
 
     // ANTI-CHASING GUARD: If entry is too far from stop level (already moved > 1.4 ATR), reject
@@ -314,6 +320,7 @@ export function findCRSetup(candles: any[], settings: AppSettings): CRSignal | n
         c1.high >= highestRecentHigh * 0.995 &&
         isClimaxCandle(c1, settings) &&
         volatilityOk(c1, settings) &&
+        isOverextended(c1, 'SHORT', settings) &&
         c2.close < c2.open &&
         (bypassRejectionWick || rejectionRatio(c2) >= settings.crMinRejectionWickRatio || c2.close < c1.open) &&
         c2.high >= c1.high * 0.995
@@ -328,6 +335,7 @@ export function findCRSetup(candles: any[], settings: AppSettings): CRSignal | n
         c1.low <= lowestRecentLow * 1.005 &&
         isClimaxCandle(c1, settings) &&
         volatilityOk(c1, settings) &&
+        isOverextended(c1, 'LONG', settings) &&
         c2.close > c2.open &&
         (bypassRejectionWick || rejectionRatio(c2) >= settings.crMinRejectionWickRatio || c2.close > c1.open) &&
         c2.low <= c1.low * 1.005

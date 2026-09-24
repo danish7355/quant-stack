@@ -241,6 +241,7 @@ export interface TrendPullbackRegimeMetrics {
   ema50: number;
   ema50Slope: number;
   minTrendSlope?: number;
+  minAdx?: number;
   htfBias: HtfBias;
   higherHighHigherLow: boolean;
   lowerHighLowerLow: boolean;
@@ -254,8 +255,9 @@ export interface TrendPullbackRegimeMetrics {
  */
 export function allowTrendPullback(m: TrendPullbackRegimeMetrics, direction: 'LONG' | 'SHORT'): boolean {
   const minTrendSlope = m.minTrendSlope ?? 0.02;
+  const minAdx = m.minAdx ?? 25;
   const common =
-    m.adx15 >= 25 &&
+    m.adx15 >= minAdx &&
     m.adxRisingOrStable &&
     m.pullbackVolume < m.impulseVolume &&
     !m.structureBroken &&
@@ -557,7 +559,14 @@ export function extractSmcRegimeMetrics(candles: any[], htfCandles?: any[] | nul
   const volSma = calculateSMA(volumes, 20);
   const currentVolSma = volSma[lastIdx] || (lastBar.volume || 1);
 
-  // Look back 25 bars for swing levels & liquidity pools
+  // Look back for prior swing levels & liquidity pools (bars prior to recent sweep window)
+  const sweepWindowLen = 8;
+  const sweepStartIdx = Math.max(0, lastIdx - sweepWindowLen);
+  const referenceBars = candles.slice(Math.max(0, sweepStartIdx - 25), sweepStartIdx);
+  const priorHighest = referenceBars.length > 0 ? Math.max(...referenceBars.map(c => c.high)) : -Infinity;
+  const priorLowest = referenceBars.length > 0 ? Math.min(...referenceBars.map(c => c.low)) : Infinity;
+
+  // Window bars for range span & middle-of-range calculation
   const windowBars = candles.slice(Math.max(0, lastIdx - 25), lastIdx);
   const highestSwing = Math.max(...windowBars.map(c => c.high));
   const lowestSwing = Math.min(...windowBars.map(c => c.low));
@@ -573,33 +582,35 @@ export function extractSmcRegimeMetrics(candles: any[], htfCandles?: any[] | nul
   let sweptLevel = 0;
 
   // Sweep Low check (Bullish setup)
-  for (let i = Math.max(0, lastIdx - 8); i < lastIdx; i++) {
-    const c = candles[i];
-    if (c.low < lowestSwing) {
-      const wick = Math.min(c.open, c.close) - c.low;
-      const tot = Math.max(0.0001, c.high - c.low);
-      if (wick / tot >= 0.5 && c.close > lowestSwing) {
-        sweepDetected = true;
-        rejectionClose = true;
-        sweptLevelType = 'SWING_LOW';
-        sweptLevel = lowestSwing;
-        break;
+  if (priorLowest !== Infinity) {
+    for (let i = sweepStartIdx; i < lastIdx; i++) {
+      const c = candles[i];
+      if (c.low < priorLowest) {
+        const wick = Math.min(c.open, c.close) - c.low;
+        const tot = Math.max(0.0001, c.high - c.low);
+        if (wick / tot >= 0.5 && c.close > priorLowest) {
+          sweepDetected = true;
+          rejectionClose = true;
+          sweptLevelType = 'SWING_LOW';
+          sweptLevel = priorLowest;
+          break;
+        }
       }
     }
   }
 
   // Sweep High check (Bearish setup)
-  if (!sweepDetected) {
-    for (let i = Math.max(0, lastIdx - 8); i < lastIdx; i++) {
+  if (!sweepDetected && priorHighest !== -Infinity) {
+    for (let i = sweepStartIdx; i < lastIdx; i++) {
       const c = candles[i];
-      if (c.high > highestSwing) {
+      if (c.high > priorHighest) {
         const wick = c.high - Math.max(c.open, c.close);
         const tot = Math.max(0.0001, c.high - c.low);
-        if (wick / tot >= 0.5 && c.close < highestSwing) {
+        if (wick / tot >= 0.5 && c.close < priorHighest) {
           sweepDetected = true;
           rejectionClose = true;
           sweptLevelType = 'SWING_HIGH';
-          sweptLevel = highestSwing;
+          sweptLevel = priorHighest;
           break;
         }
       }
@@ -738,7 +749,11 @@ export function extractEmaMeanReversionRegimeMetrics(candles: any[], htfCandles?
   };
 }
 
-export function extractTrendPullbackRegimeMetrics(candles: any[], htfCandles?: any[] | null): TrendPullbackRegimeMetrics {
+export function extractTrendPullbackRegimeMetrics(
+  candles: any[],
+  htfCandles?: any[] | null,
+  customSettings?: any
+): TrendPullbackRegimeMetrics {
   if (!candles || candles.length < 35) {
     return {
       adx15: 0,
@@ -820,7 +835,9 @@ export function extractTrendPullbackRegimeMetrics(candles: any[], htfCandles?: a
     htfBias,
     higherHighHigherLow,
     lowerHighLowerLow,
-    pullbackHeldStructure
+    pullbackHeldStructure,
+    minAdx: customSettings?.tpbAdxMin,
+    minTrendSlope: customSettings?.tpbMinTrendSlope
   };
 }
 
@@ -981,6 +998,7 @@ export function evaluateMasterRegimeDecision(
     symbol?: string;
     tracker?: StrategyRegimeTracker;
     candleTime?: number;
+    customSettings?: any;
     vcbMetrics?: Partial<VcbRegimeMetrics>;
     smcMetrics?: Partial<SmcRegimeMetrics>;
     emaMrMetrics?: Partial<EmaMeanReversionRegimeMetrics>;
@@ -993,7 +1011,7 @@ export function evaluateMasterRegimeDecision(
 
   // Extract or override metrics
   const vcbM: VcbRegimeMetrics = {
-    ...extractVcbRegimeMetrics(candles, htfCandles),
+    ...extractVcbRegimeMetrics(candles, htfCandles, options?.customSettings),
     ...(options?.vcbMetrics || {})
   };
   const smcM: SmcRegimeMetrics = {
@@ -1005,7 +1023,7 @@ export function evaluateMasterRegimeDecision(
     ...(options?.emaMrMetrics || {})
   };
   const trendM: TrendPullbackRegimeMetrics = {
-    ...extractTrendPullbackRegimeMetrics(candles, htfCandles),
+    ...extractTrendPullbackRegimeMetrics(candles, htfCandles, options?.customSettings),
     ...(options?.trendMetrics || {})
   };
 

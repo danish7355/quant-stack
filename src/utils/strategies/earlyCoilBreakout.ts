@@ -205,6 +205,7 @@ export function evaluateEarlyCoilBreakout(
     // Stop loss: below the base low or 1.5x ATR, to invalidate the support structure
     // We want the stop to remain outside normal candle noise
     const stopLoss = Math.min(rangeLow - 0.2 * currentAtr, currentCandle.close - 1.5 * currentAtr);
+    if (stopLoss >= currentCandle.close) return null;
     const risk = currentCandle.close - stopLoss;
     
     // Skip if risk is disproportionately small or large
@@ -239,13 +240,14 @@ export function evaluateEarlyCoilBreakout(
   if (isBearishTrend && isBearishBreakout && hasVolumeSurge && noLargeLowerWick) {
     // Stop loss: above the base high or 1.5x ATR
     const stopLoss = Math.max(rangeHigh + 0.2 * currentAtr, currentCandle.close + 1.5 * currentAtr);
+    if (stopLoss <= currentCandle.close) return null;
     const risk = stopLoss - currentCandle.close;
 
     if (risk < 0.2 * currentAtr || risk > 3.5 * currentAtr) return null;
 
-    const tp1 = currentCandle.close - (risk * 2.0);
-    const tp2 = currentCandle.close - (risk * 3.0);
-    const tp3 = currentCandle.close - Math.max(risk * 5.0, rangeHeight);
+    const tp1 = Math.max(0.0001, currentCandle.close - (risk * 2.0));
+    const tp2 = Math.max(0.0001, currentCandle.close - (risk * 3.0));
+    const tp3 = Math.max(0.0001, currentCandle.close - Math.max(risk * 5.0, rangeHeight));
 
     return {
       direction: 'SHORT',

@@ -58,6 +58,11 @@ export function detectMacroRangeBreakout(candles: any[], currentPrice: number, a
     localSwingExtreme = localSwingExtreme + (atr * 0.25);
   }
 
+  // Inverted stop guard
+  if ((direction === 'LONG' && localSwingExtreme >= currentPrice) || (direction === 'SHORT' && localSwingExtreme <= currentPrice)) {
+    return null;
+  }
+
   const risk = Math.abs(currentPrice - localSwingExtreme);
   if (risk <= 0) return null;
   
@@ -66,9 +71,9 @@ export function detectMacroRangeBreakout(candles: any[], currentPrice: number, a
     score: 95,
     atr,
     sl: localSwingExtreme,
-    tp1: direction === 'LONG' ? currentPrice + (risk * 1.5) : currentPrice - (risk * 1.5),
-    tp2: direction === 'LONG' ? currentPrice + (risk * 3.0) : currentPrice - (risk * 3.0),
-    tp3: direction === 'LONG' ? currentPrice + (risk * 5.0) : currentPrice - (risk * 5.0),
+    tp1: direction === 'LONG' ? currentPrice + (risk * 1.5) : Math.max(0.0001, currentPrice - (risk * 1.5)),
+    tp2: direction === 'LONG' ? currentPrice + (risk * 3.0) : Math.max(0.0001, currentPrice - (risk * 3.0)),
+    tp3: direction === 'LONG' ? currentPrice + (risk * 5.0) : Math.max(0.0001, currentPrice - (risk * 5.0)),
     boxHigh,
     boxLow
   };

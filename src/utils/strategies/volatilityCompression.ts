@@ -23,14 +23,16 @@ export function calculateEMA(closes: number[], period: number): number[] {
 }
 
 export function calculateATR(candles: Candle[], period: number): number[] {
-  if (candles.length < period) return [];
+  if (candles.length === 0) return [];
+  if (candles.length < period) return candles.map(c => c.high - c.low);
   const tr = candles.map((c, i) => {
     if (i === 0) return c.high - c.low;
     const pc = candles[i - 1].close;
     return Math.max(c.high - c.low, Math.abs(c.high - pc), Math.abs(c.low - pc));
   });
   const firstAtr = tr.slice(0, period).reduce((a, b) => a + b, 0) / period;
-  const atr: number[] = [firstAtr];
+  const atr: number[] = new Array(period - 1).fill(firstAtr);
+  atr.push(firstAtr);
   for (let i = period; i < tr.length; i++) {
     atr.push((atr[atr.length - 1] * (period - 1) + tr[i]) / period);
   }
@@ -175,10 +177,6 @@ export function detectCompression(recentCandles: Candle[], atr: number, atrAvg: 
   if (preBoxNetMove > 0.4 * atr && higherHighsCount >= lowerLowsCount) {
     priorTrend = 'UPTREND';
   } else if (preBoxNetMove < -0.4 * atr && lowerLowsCount >= higherHighsCount) {
-    priorTrend = 'DOWNTREND';
-  } else if (preBoxNetMove > 0) {
-    priorTrend = 'UPTREND';
-  } else if (preBoxNetMove < 0) {
     priorTrend = 'DOWNTREND';
   }
 
@@ -559,8 +557,8 @@ export function calculateVcbTargets(
     let tp2 = Math.max(0.0001, entryPrice - 3.0 * risk);
     if (structureLevel && structureLevel < entryPrice && structureLevel <= tp1) {
       tp2 = structureLevel;
-    } else if (entryPrice - measuredMove < tp1 && entryPrice - measuredMove > 0) {
-      tp2 = Math.min(tp2, entryPrice - measuredMove);
+    } else if (measuredMove > 0 && entryPrice - measuredMove < tp1) {
+      tp2 = Math.max(0.0001, Math.min(tp2, entryPrice - measuredMove));
     }
 
     // TP3_short = Runner / Trail beyond (4.5R or extended impulse leg)
@@ -610,6 +608,10 @@ export function calculateSafePositionSize(
   spec?: Partial<ProductSpec> & { maxAllocation?: number },
   riskPercent: number = 0.01
 ): SizeResult {
+  if (!entryPrice || entryPrice <= 0 || !Number.isFinite(entryPrice) || !Number.isFinite(stopPrice) || !Number.isFinite(accountEquity) || accountEquity <= 0) {
+    return { contracts: 0, leverage: 0, liquidationPrice: 0, allocatedBalance: 0, rejected: true, reason: 'Invalid or non-finite price or equity inputs.' };
+  }
+
   const stopDistancePct = Math.abs(entryPrice - stopPrice) / entryPrice;
   if (stopDistancePct === 0) {
     return { contracts: 0, leverage: 0, liquidationPrice: 0, allocatedBalance: 0, rejected: true, reason: 'Stop price identical to entry price.' };
@@ -1207,7 +1209,8 @@ export function evaluateVcbDetailed(
   const recentAtrs = atrs.slice(-20);
   const atrAvg = recentAtrs.length > 0 ? recentAtrs.reduce((a, b) => a + b, 0) / recentAtrs.length : atr;
 
-  const compression = detectCompression(candles, atr, atrAvg, settings as AppSettings);
+  const previousCandles = candles.slice(0, -1);
+  const compression = detectCompression(previousCandles, atr, atrAvg, settings as AppSettings);
   const regimeMetrics = extractVcbRegimeMetrics(candles, htfCandles, settings);
 
   if (!compression.isCompressed) {
@@ -1244,10 +1247,11 @@ export function evaluateVcbDetailed(
   }
 
   // Calculate default SL and targets for checklist
-  const sl = direction === 'LONG' ? compression.windowLow - (0.5 * atr) : compression.windowHigh + (0.5 * atr);
+  const sl = determineStopLoss(direction, compression, atr, settings as AppSettings, candles, price);
   const risk = Math.abs(price - sl);
-  const tp1 = direction === 'LONG' ? price + (risk * 2.0) : price - (risk * 2.0);
-  const tp2 = direction === 'LONG' ? price + (risk * 3.0) : price - (risk * 3.0);
+  const targets = calculateVcbTargets(price, direction, risk, compression);
+  const tp1 = targets.tp1;
+  const tp2 = targets.tp2;
 
   const checklist = evaluateVcbChecklist(
     candles,

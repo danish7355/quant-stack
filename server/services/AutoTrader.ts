@@ -1406,6 +1406,7 @@ export class AutoTrader {
           minStopDistanceAtr: this.settings.tpbMinStopDistanceAtr ?? 0.8,
           maxStopDistanceAtr: this.settings.tpbMaxStopDistanceAtr ?? 3.0,
           allowBroadStop: this.settings.tpbAllowBroadStop === true,
+          atrBufferMult: this.settings.tpbAtrBuffer ?? 0.3,
           maxSpreadAtr: this.settings.tpbMaxSpreadAtr ?? 0.3,
           allowLongs: this.settings.tpbAllowLongs !== false,
           allowShorts: this.settings.tpbAllowShorts !== false,
@@ -1432,7 +1433,9 @@ export class AutoTrader {
       try {
         const htf = this.settings.smcHtfResolution || '1h';
         const htfCandles = await this.getKlines(symbol, htf);
-        const sig = evaluateSmc(klines, htfCandles, currentPrice, {
+        const closedKlines = klines.slice(0, -1);
+        const closedHtf = htfCandles ? htfCandles.slice(0, -1) : null;
+        const sig = evaluateSmc(closedKlines, closedHtf, currentPrice, {
           htfResolution: htf,
           structureLen: this.settings.smcStructureLen,
           wickRatio: this.settings.smcWickRatio,

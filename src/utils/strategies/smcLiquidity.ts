@@ -114,6 +114,9 @@ export interface SmcOptions {
   strictHtfRegime?: boolean;    // If true, disallow trades during CHOP (default false)
   enforceRegimeFilter?: boolean; // If true, requires dedicated allowSMCLiquidity regime filter check
   symbol?: string;              // Ticker symbol for webhook generation (default 'BTCUSDT')
+  confluenceAtrMult?: number;   // Maximum ATR distance for FVG-OB adjacency confluence (default 1.5)
+  structureRightBars?: number;  // Asymmetrical right bars for swing detection (default min(3, structureLen))
+  maxStopDistanceAtr?: number;  // Max ATR distance allowed for stop loss
 }
 
 // ---------------------------------------------------------------------------
@@ -479,12 +482,15 @@ export function detectOrderBlock(
 // ---------------------------------------------------------------------------
 
 /**
- * Validates that the FVG zone and Order Block zone overlap:
- * - Bullish: bullFVGTop >= obBullBottom && bullFVGBottom <= obBullTop
- * - Bearish: bearFVGTop >= obBearBottom && bearFVGBottom <= obBearTop
+ * Validates that the FVG zone and Order Block zone overlap or are adjacent within maxDistance:
+ * - Bullish: bullFVGTop >= obBullBottom - maxDistance && bullFVGBottom <= obBullTop + maxDistance
+ * - Bearish: bearFVGTop >= obBearBottom - maxDistance && bearFVGBottom <= obBearTop + maxDistance
  */
-export function checkConfluence(fvg: FvgZone, ob: OrderBlockZone): boolean {
-  // Overlap condition between two intervals [A_low, A_high] and [B_low, B_high]:
+export function checkConfluence(fvg: FvgZone, ob: OrderBlockZone, maxDistance: number = 0): boolean {
+  if (maxDistance > 0) {
+    return fvg.top >= (ob.bottom - maxDistance) && fvg.bottom <= (ob.top + maxDistance);
+  }
+  // Direct overlap condition between two intervals [A_low, A_high] and [B_low, B_high]:
   // A_high >= B_low && A_low <= B_high
   return fvg.top >= ob.bottom && fvg.bottom <= ob.top;
 }
@@ -526,7 +532,7 @@ export function calculateSmcLevels(
   fvg: FvgZone,
   sweepPrice: number,
   atr: number,
-  options: { atrStopMult?: number; rrRatio?: number } = {}
+  options: { atrStopMult?: number; rrRatio?: number; maxStopDistanceAtr?: number } = {}
 ): { entryPrice: number; sl: number; tp1: number; tp2: number; tp3: number; risk: number; rrRatio: number } {
   const atrStopMult = options.atrStopMult ?? 1.5;
   const rrRatio = options.rrRatio ?? 3.0;
@@ -539,20 +545,28 @@ export function calculateSmcLevels(
     const baseStop = entryPrice - (atr * atrStopMult);
     const structuralStop = sweepPrice * 0.9995; // 0.05% safety buffer under sweep low
     sl = Math.min(baseStop, structuralStop);
+    if (options.maxStopDistanceAtr) {
+      const maxAllowedRisk = options.maxStopDistanceAtr * atr;
+      sl = Math.max(sl, entryPrice - maxAllowedRisk);
+    }
     // Ensure SL is strictly below entry
     if (sl >= entryPrice) sl = entryPrice * 0.995;
   } else {
     const baseStop = entryPrice + (atr * atrStopMult);
     const structuralStop = sweepPrice * 1.0005; // 0.05% safety buffer above sweep high
     sl = Math.max(baseStop, structuralStop);
+    if (options.maxStopDistanceAtr) {
+      const maxAllowedRisk = options.maxStopDistanceAtr * atr;
+      sl = Math.min(sl, entryPrice + maxAllowedRisk);
+    }
     // Ensure SL is strictly above entry
     if (sl <= entryPrice) sl = entryPrice * 1.005;
   }
 
   const risk = Math.abs(entryPrice - sl);
-  const tp1 = direction === 'LONG' ? entryPrice + (risk * 1.5) : entryPrice - (risk * 1.5);
-  const tp2 = direction === 'LONG' ? entryPrice + (risk * rrRatio) : entryPrice - (risk * rrRatio);
-  const tp3 = direction === 'LONG' ? entryPrice + (risk * 5.0) : entryPrice - (risk * 5.0);
+  const tp1 = direction === 'LONG' ? entryPrice + (risk * 1.5) : Math.max(0.0001, entryPrice - (risk * 1.5));
+  const tp2 = direction === 'LONG' ? entryPrice + (risk * rrRatio) : Math.max(0.0001, entryPrice - (risk * rrRatio));
+  const tp3 = direction === 'LONG' ? entryPrice + (risk * 5.0) : Math.max(0.0001, entryPrice - (risk * 5.0));
 
   return {
     entryPrice: parseFloat(entryPrice.toFixed(4)),
@@ -655,7 +669,8 @@ export function evaluateSmc(
   const atr = atrs[atrs.length - 1] || (currentPrice * 0.01);
 
   // Find recent pivots for liquidity levels
-  const { highs: swingHighs, lows: swingLows } = findPivots(closedKlines, structureLen, structureLen);
+  const rightBars = options.structureRightBars ?? Math.min(3, structureLen);
+  const { highs: swingHighs, lows: swingLows } = findPivots(closedKlines, structureLen, rightBars);
 
   const mssIndex = closedKlines.length - 1;
   const lastCandle = closedKlines[mssIndex];
@@ -698,13 +713,15 @@ export function evaluateSmc(
               // 5. Check Order Block
               const ob = detectOrderBlock(closedKlines, s, mssIndex, 'LONG', atr);
               if (ob) {
-                // 6. Confluence: FVG + OB Overlap
-                const hasConfluence = checkConfluence(fvg, ob);
+                // 6. Confluence: FVG + OB Overlap or Adjacency within confluenceDistance
+                const confluenceDistance = (options.confluenceAtrMult ?? 1.5) * atr;
+                const hasConfluence = checkConfluence(fvg, ob, confluenceDistance);
                 if (hasConfluence) {
                   // 8. Calculate Entry & 1:3 R:R Levels
                   const levels = calculateSmcLevels('LONG', fvg, sweepResult.sweepPrice, atr, {
                     atrStopMult: options.atrStopMult,
-                    rrRatio: options.rrRatio
+                    rrRatio: options.rrRatio,
+                    maxStopDistanceAtr: options.maxStopDistanceAtr
                   });
 
                   // Score calculation based on institutional criteria
@@ -794,11 +811,14 @@ export function evaluateSmc(
             if (fvg) {
               const ob = detectOrderBlock(closedKlines, s, mssIndex, 'SHORT', atr);
               if (ob) {
-                const hasConfluence = checkConfluence(fvg, ob);
+                // 6. Confluence: FVG + OB Overlap or Adjacency within confluenceDistance
+                const confluenceDistance = (options.confluenceAtrMult ?? 1.5) * atr;
+                const hasConfluence = checkConfluence(fvg, ob, confluenceDistance);
                 if (hasConfluence) {
                   const levels = calculateSmcLevels('SHORT', fvg, sweepResult.sweepPrice, atr, {
                     atrStopMult: options.atrStopMult,
-                    rrRatio: options.rrRatio
+                    rrRatio: options.rrRatio,
+                    maxStopDistanceAtr: options.maxStopDistanceAtr
                   });
 
                   let score = 85;

@@ -765,8 +765,8 @@ export function checkPullbackStructure(
   if (direction === 'LONG') {
     const priorLows = swingLows.filter(l => l.index < len - 4);
     const invalidationLevel = priorLows.length > 0
-      ? Math.min(...priorLows.map(l => l.price))
-      : Math.min(...candles.slice(0, Math.max(1, len - 4)).map(c => c.low));
+      ? priorLows[priorLows.length - 1].price
+      : Math.min(...candles.slice(Math.max(0, len - 20), Math.max(1, len - 4)).map(c => c.low));
 
     // Dynamic value zone check (EMA20/50 touch)
     const pullbackWindow = candles.slice(Math.max(0, len - 4), len + 1);
@@ -841,7 +841,7 @@ export function checkPullbackStructure(
     const retestExpired = !isCurrentCandleBreakout && barsSinceImpulse > maxRetestBars;
 
     // Check if price pulled back into retest zone or value zone
-    const retestSlice = isCurrentCandleBreakout ? [] : candles.slice(peakIdx, len);
+    const retestSlice = isCurrentCandleBreakout ? [] : candles.slice(peakIdx, len + 1);
     const retestDetected = retestSlice.some(c =>
       (c.low <= brokenResistance + retestTolerance && c.high >= brokenResistance - retestTolerance) ||
       (c.low <= eFast * 1.01) ||
@@ -850,7 +850,7 @@ export function checkPullbackStructure(
 
     // 3. Check if current closed candle IS the breakout candle
     if (!isCurrentCandleBreakout) {
-      isCurrentCandleBreakout = !retestDetected && (barsSinceImpulse <= 2 || impulseIdx === len);
+      isCurrentCandleBreakout = !retestDetected && (impulseIdx === len && c0.close > peakHigh);
     }
 
     // Structural swing preservation
@@ -940,8 +940,8 @@ export function checkPullbackStructure(
     // SHORT evaluation
     const priorHighs = swingHighs.filter(h => h.index < len - 4);
     const invalidationLevel = priorHighs.length > 0
-      ? Math.max(...priorHighs.map(h => h.price))
-      : Math.max(...candles.slice(0, Math.max(1, len - 4)).map(c => c.high));
+      ? priorHighs[priorHighs.length - 1].price
+      : Math.max(...candles.slice(Math.max(0, len - 20), Math.max(1, len - 4)).map(c => c.high));
 
     // Dynamic value zone check (EMA20/50 touch)
     const pullbackWindow = candles.slice(Math.max(0, len - 4), len + 1);
@@ -1015,7 +1015,7 @@ export function checkPullbackStructure(
     const retestExpired = !isCurrentCandleBreakout && barsSinceImpulse > maxRetestBars;
 
     // Check if price pulled back into retest zone or value zone
-    const retestSlice = isCurrentCandleBreakout ? [] : candles.slice(troughIdx, len);
+    const retestSlice = isCurrentCandleBreakout ? [] : candles.slice(troughIdx, len + 1);
     const retestDetected = retestSlice.some(c =>
       (c.high >= brokenSupport - retestTolerance && c.low <= brokenSupport + retestTolerance) ||
       (c.high >= eFast * 0.99) ||
@@ -1023,7 +1023,7 @@ export function checkPullbackStructure(
     );
 
     if (!isCurrentCandleBreakout) {
-      isCurrentCandleBreakout = !retestDetected && (barsSinceImpulse <= 2 || impulseIdx === len);
+      isCurrentCandleBreakout = !retestDetected && (impulseIdx === len && c0.close < troughLow);
     }
 
     const maxPullbackHigh = Math.max(...pullbackSlice.map(c => c.high), c0.high);
@@ -1403,24 +1403,47 @@ export function calculateStopLoss(
   atr: number,
   atrBuffer: number,
   pullback: { invalidationLevel: number },
-  pa: { stopReference: number }
+  pa: { stopReference: number },
+  minStopAtr: number = 0.8,
+  allowBroadStop: boolean = false
 ): { stopPrice: number; stopType: StopPlacementType; stopDistance: number } {
+  const minStopDistance = minStopAtr * atr;
+
   if (direction === 'LONG') {
     const localStop = pa.stopReference - atrBuffer;
-    if (localStop < currentPrice && (currentPrice - localStop) > 0) {
+    const localDist = currentPrice - localStop;
+
+    if (localStop < currentPrice && localDist >= minStopDistance) {
       return {
         stopPrice: localStop,
         stopType: 'LOCAL_EXECUTION_STOP',
-        stopDistance: currentPrice - localStop
+        stopDistance: localDist
       };
     }
 
     const broadStop = pullback.invalidationLevel - atrBuffer;
-    if (broadStop < currentPrice && (currentPrice - broadStop) > 0) {
+    const broadDist = currentPrice - broadStop;
+    if (allowBroadStop && broadStop < currentPrice && broadDist >= minStopDistance) {
       return {
         stopPrice: broadStop,
         stopType: 'BROAD_STRUCTURAL_STOP',
-        stopDistance: currentPrice - broadStop
+        stopDistance: broadDist
+      };
+    }
+
+    if (localStop < currentPrice && localDist > 0) {
+      return {
+        stopPrice: localStop,
+        stopType: 'LOCAL_EXECUTION_STOP',
+        stopDistance: localDist
+      };
+    }
+
+    if (broadStop < currentPrice && broadDist > 0) {
+      return {
+        stopPrice: broadStop,
+        stopType: 'BROAD_STRUCTURAL_STOP',
+        stopDistance: broadDist
       };
     }
 
@@ -1428,20 +1451,39 @@ export function calculateStopLoss(
   } else {
     // SHORT
     const localStop = pa.stopReference + atrBuffer;
-    if (localStop > currentPrice && (localStop - currentPrice) > 0) {
+    const localDist = localStop - currentPrice;
+
+    if (localStop > currentPrice && localDist >= minStopDistance) {
       return {
         stopPrice: localStop,
         stopType: 'LOCAL_EXECUTION_STOP',
-        stopDistance: localStop - currentPrice
+        stopDistance: localDist
       };
     }
 
     const broadStop = pullback.invalidationLevel + atrBuffer;
-    if (broadStop > currentPrice && (broadStop - currentPrice) > 0) {
+    const broadDist = broadStop - currentPrice;
+    if (allowBroadStop && broadStop > currentPrice && broadDist >= minStopDistance) {
       return {
         stopPrice: broadStop,
         stopType: 'BROAD_STRUCTURAL_STOP',
-        stopDistance: broadStop - currentPrice
+        stopDistance: broadDist
+      };
+    }
+
+    if (localStop > currentPrice && localDist > 0) {
+      return {
+        stopPrice: localStop,
+        stopType: 'LOCAL_EXECUTION_STOP',
+        stopDistance: localDist
+      };
+    }
+
+    if (broadStop > currentPrice && broadDist > 0) {
+      return {
+        stopPrice: broadStop,
+        stopType: 'BROAD_STRUCTURAL_STOP',
+        stopDistance: broadDist
       };
     }
 
@@ -1893,7 +1935,7 @@ export function evaluateTrendPullbackDetailed(
   }
 
   // 10. Volume sequence verification
-  if (!pullback.volumeSequenceConfirmed && !vol.isUnconfirmedVolume) {
+  if (options.requireVolume !== false && !pullback.volumeSequenceConfirmed && !vol.isUnconfirmedVolume) {
     return {
       success: false,
       status: 'TRADE REJECTED',
@@ -1944,6 +1986,8 @@ export function evaluateTrendPullbackDetailed(
   }
 
   // Stop Loss Placement & Classification
+  const minStopAtr = options.minStopDistanceAtr !== undefined ? options.minStopDistanceAtr : 0.8;
+  const maxStopAtr = options.maxStopDistanceAtr !== undefined ? options.maxStopDistanceAtr : 3.0;
   const atrBuffer = (options.atrBufferMult !== undefined ? options.atrBufferMult : 0.3) * atr;
   const { stopPrice, stopType, stopDistance } = calculateStopLoss(
     tradeCandles,
@@ -1952,7 +1996,9 @@ export function evaluateTrendPullbackDetailed(
     atr,
     atrBuffer,
     pullback,
-    pa
+    pa,
+    minStopAtr,
+    options.allowBroadStop
   );
 
   // 12. if (!stopPlacementValid) reject("INVALID_STOP_PLACEMENT")
@@ -1986,8 +2032,6 @@ export function evaluateTrendPullbackDetailed(
 
   // 13. if (stopTooWide) reject("STOP_TOO_WIDE_FOR_EXECUTION_TIMEFRAME")
   const stopATRMultiple = stopDistance / (atr || 1);
-  const minStopAtr = options.minStopDistanceAtr !== undefined ? options.minStopDistanceAtr : 0.8;
-  const maxStopAtr = options.maxStopDistanceAtr !== undefined ? options.maxStopDistanceAtr : 3.0;
 
   if (stopATRMultiple > maxStopAtr || (options.atrBufferMult && options.atrBufferMult >= 10.0)) {
     return {
@@ -2056,41 +2100,48 @@ export function evaluateTrendPullbackDetailed(
   // Opposing Barrier Proximity Check
   const { highs: swingHighs, lows: swingLows } = detectSwingPoints(tradeCandles, 2);
   let noOpposingLevelScore = 1;
+  const brokenIndex = pullback.brokenLevel?.candleIndex ?? (tradeCandles.length - 1);
 
   if (direction === 'LONG' && swingHighs.length > 0) {
-    const recentResistance = Math.max(...swingHighs.slice(-3).map(h => h.price));
-    if (recentResistance > currentPrice) {
-      const rrToResistance = (recentResistance - currentPrice) / (stopDistance || 1);
-      if (rrToResistance < minRr) {
-        return {
-          success: false,
-          status: 'TRADE REJECTED',
-          stage: 'STAGE_A_SETUP_DETECTED',
-          decision: 'NO_TRADE',
-          outcomeReason: 'REWARD_TOO_SMALL',
-          rejectionReason: 'OPPOSING_BARRIER_BLOCKS_RR',
-          reason: `Signal rejected: distance to nearest major resistance provides less than ${minRr}R (${rrToResistance.toFixed(2)}R available).`,
-          score: 7,
-          result: null
-        };
+    const priorResistanceHighs = swingHighs.filter(h => h.index < brokenIndex);
+    if (priorResistanceHighs.length > 0) {
+      const recentResistance = Math.max(...priorResistanceHighs.slice(-3).map(h => h.price));
+      if (recentResistance > currentPrice) {
+        const rrToResistance = (recentResistance - currentPrice) / (stopDistance || 1);
+        if (rrToResistance < minRr) {
+          return {
+            success: false,
+            status: 'TRADE REJECTED',
+            stage: 'STAGE_A_SETUP_DETECTED',
+            decision: 'NO_TRADE',
+            outcomeReason: 'REWARD_TOO_SMALL',
+            rejectionReason: 'OPPOSING_BARRIER_BLOCKS_RR',
+            reason: `Signal rejected: distance to nearest major resistance provides less than ${minRr}R (${rrToResistance.toFixed(2)}R available).`,
+            score: 7,
+            result: null
+          };
+        }
       }
     }
   } else if (direction === 'SHORT' && swingLows.length > 0) {
-    const recentSupport = Math.min(...swingLows.slice(-3).map(l => l.price));
-    if (recentSupport < currentPrice) {
-      const rrToSupport = (currentPrice - recentSupport) / (stopDistance || 1);
-      if (rrToSupport < minRr) {
-        return {
-          success: false,
-          status: 'TRADE REJECTED',
-          stage: 'STAGE_A_SETUP_DETECTED',
-          decision: 'NO_TRADE',
-          outcomeReason: 'REWARD_TOO_SMALL',
-          rejectionReason: 'OPPOSING_BARRIER_BLOCKS_RR',
-          reason: `Signal rejected: distance to nearest major support provides less than ${minRr}R (${rrToSupport.toFixed(2)}R available).`,
-          score: 7,
-          result: null
-        };
+    const priorSupportLows = swingLows.filter(l => l.index < brokenIndex);
+    if (priorSupportLows.length > 0) {
+      const recentSupport = Math.min(...priorSupportLows.slice(-3).map(l => l.price));
+      if (recentSupport < currentPrice) {
+        const rrToSupport = (currentPrice - recentSupport) / (stopDistance || 1);
+        if (rrToSupport < minRr) {
+          return {
+            success: false,
+            status: 'TRADE REJECTED',
+            stage: 'STAGE_A_SETUP_DETECTED',
+            decision: 'NO_TRADE',
+            outcomeReason: 'REWARD_TOO_SMALL',
+            rejectionReason: 'OPPOSING_BARRIER_BLOCKS_RR',
+            reason: `Signal rejected: distance to nearest major support provides less than ${minRr}R (${rrToSupport.toFixed(2)}R available).`,
+            score: 7,
+            result: null
+          };
+        }
       }
     }
   }
@@ -2332,7 +2383,8 @@ export interface ExpectancyMetrics {
  * - OFF_HOURS: 21:00 - 24:00 UTC
  */
 export function getTradingSession(timestampMs: number): 'ASIA' | 'LONDON' | 'NEW_YORK' | 'OFF_HOURS' {
-  const d = new Date(timestampMs);
+  const ms = timestampMs < 1e11 ? timestampMs * 1000 : timestampMs;
+  const d = new Date(ms);
   const hour = d.getUTCHours();
   if (hour >= 0 && hour < 8) return 'ASIA';
   if (hour >= 8 && hour < 14) return 'LONDON';

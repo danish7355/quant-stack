@@ -578,8 +578,8 @@ export function evaluateRangeMeanReversion(
     tp3 = close + (stopDist * 3.0);
 
     const rewardToMid = tp1 - close;
-    if (rewardToMid < stopDist * minRr && rewardToMid > 0) {
-      // If reward to midpoint is too tight, check full range reward
+    if (rewardToMid < stopDist * minRr) {
+      // If reward to midpoint is too tight or price already beyond mid, check full range reward
       if ((tp2 - close) < stopDist * minRr) {
         return null; // Poor reward-to-risk ratio
       }
@@ -587,16 +587,21 @@ export function evaluateRangeMeanReversion(
   } else {
     sl = rejectionExtreme + atrBuffer;
     tp1 = range.rangeMid;
-    tp2 = range.rangeLow;
+    tp2 = Math.max(0.0001, range.rangeLow);
     const stopDist = Math.max(sl - close, atr * 0.4);
-    tp3 = close - (stopDist * 3.0);
+    tp3 = Math.max(0.0001, close - (stopDist * 3.0));
 
     const rewardToMid = close - tp1;
-    if (rewardToMid < stopDist * minRr && rewardToMid > 0) {
+    if (rewardToMid < stopDist * minRr) {
       if ((close - tp2) < stopDist * minRr) {
         return null; // Poor reward-to-risk ratio
       }
     }
+  }
+
+  // Inverted stop guard
+  if ((direction === 'LONG' && sl >= close) || (direction === 'SHORT' && sl <= close)) {
+    return null;
   }
 
   const stopDistance = Math.abs(close - sl);

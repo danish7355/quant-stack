@@ -23,6 +23,7 @@ import {
   calculateATR, calculateEMA, determineStopLoss, calculateVcbTargets
 } from './utils/strategies/volatilityCompression';
 import { evaluateSmc } from './utils/strategies/smcLiquidity';
+import { evaluateTrendPullbackDetailed } from './utils/strategies/trendPullback';
 import { formatPrice } from './utils/format';
 import { useToast } from './components/ToastContext';
 import { SystemHealthPage } from './components/SystemHealth';
@@ -622,6 +623,78 @@ Status: ARMED — WAIT FOR RETEST INTO ENTRY ZONE`;
                 finalDirection = results.direction || 'NEUTRAL';
                 finalStatus = 'RANGE';
                 finalReason = 'Scanning for Liquidity Sweep (LSR)';
+              }
+            } else if (settingsRef.current.activeStrategy === 'TREND_PULLBACK') {
+              if (candles.length >= 35) {
+                const previousCandles = candles.slice(0, -1);
+                const tpbEval = evaluateTrendPullbackDetailed(
+                  previousCandles,
+                  null,
+                  pair.price,
+                  {
+                    tradeTimeframe: settingsRef.current.timeframe,
+                    symbol: pair.symbol,
+                    emaFast: settingsRef.current.tpbEmaFast || 20,
+                    emaSlow: settingsRef.current.tpbEmaSlow || 50,
+                    adxMin: settingsRef.current.tpbAdxMin || 18,
+                    volSmaPeriod: settingsRef.current.tpbVolumeSmaPeriod || 20,
+                    minVolumeRatio: settingsRef.current.tpbMinVolumeRatio || 1.0,
+                    requireVolume: settingsRef.current.tpbRequireVolume !== false,
+                    unconfirmedVolumeMode: settingsRef.current.tpbAllowUnconfirmedVolume === true,
+                    maxEntryDistanceAtr: settingsRef.current.tpbMaxEntryDistanceAtr ?? 0.25,
+                    minStopDistanceAtr: settingsRef.current.tpbMinStopDistanceAtr ?? 0.8,
+                    maxStopDistanceAtr: settingsRef.current.tpbMaxStopDistanceAtr ?? 3.0,
+                    allowBroadStop: settingsRef.current.tpbAllowBroadStop === true,
+                    atrBufferMult: settingsRef.current.tpbAtrBuffer ?? 0.3,
+                    maxSpreadAtr: settingsRef.current.tpbMaxSpreadAtr ?? 0.3,
+                    allowLongs: settingsRef.current.tpbAllowLongs !== false,
+                    allowShorts: settingsRef.current.tpbAllowShorts !== false,
+                    minRrRatio: settingsRef.current.tpbMinRrRatio || 1.5,
+                    minScore: settingsRef.current.tpbMinScore || 8
+                  }
+                );
+
+                if (tpbEval.success && tpbEval.result) {
+                  finalScore = Math.min(100, Math.round((tpbEval.score / 15) * 100));
+                  finalDirection = tpbEval.result.direction;
+                  finalStatus = 'STRONG_TREND';
+                  finalReason = tpbEval.reason;
+                  finalSl = tpbEval.result.sl;
+                  finalTp1 = tpbEval.result.tp1;
+                  finalTp2 = tpbEval.result.tp2;
+                  finalTp3 = tpbEval.result.tp3;
+
+                  if (!loggedTriggerStatesRef.current.has(pair.symbol)) {
+                    loggedTriggerStatesRef.current.add(pair.symbol);
+                    const riskPerUnit = Math.abs(pair.price - finalSl).toFixed(5);
+                    const tp1R = (Math.abs(finalTp1 - pair.price) / Math.abs(pair.price - finalSl)).toFixed(1);
+                    const msg = `[TREND PULLBACK PAPER TRADE — ${finalDirection}]
+Symbol: ${pair.symbol}
+Setup Timeframe: ${settingsRef.current.timeframe}
+Status: TRIGGERED
+
+Reason: ${finalReason}
+Entry: ${pair.price}
+Stop-Loss: ${finalSl.toFixed(5)}
+Risk per Unit: ${riskPerUnit}
+
+TP1: ${finalTp1.toFixed(5)} (${tp1R}R, 40%)
+TP2: ${finalTp2.toFixed(5)} (2.5R, 40%)
+TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
+                    addTerminalLog(msg);
+                    addToast('info', 'New Signal Triggered', `Trend Pullback ${finalDirection} on ${pair.symbol}`, { label: 'View Chart', onClick: () => { setSelectedSymbol(pair.symbol); setActiveTab('chart'); } });
+                  }
+                } else if (tpbEval.stage === 'STAGE_A_SETUP_DETECTED' || tpbEval.state === 'RETEST_HELD' || tpbEval.state === 'RETEST_DETECTED') {
+                  finalScore = 65;
+                  finalDirection = results.direction || 'NEUTRAL';
+                  finalStatus = 'ARMED';
+                  finalReason = `TPB ARMED: ${tpbEval.reason}`;
+                } else {
+                  finalScore = Math.max(20, Math.min(48, Math.round((results.regime?.score || 30) * 0.4 + 15)));
+                  finalDirection = results.direction || 'NEUTRAL';
+                  finalStatus = 'RANGE';
+                  finalReason = tpbEval.reason || 'Scanning for Trend Retest';
+                }
               }
             }
 
