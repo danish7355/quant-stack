@@ -452,15 +452,16 @@ async function startServer() {
         telegramService.updateConfig(botToken, chatId);
       }
       const success = await telegramService.sendMessage(
-        `🤖 *Telegram Alerts Connected!* 🚀\n\n` +
+        `🤖 <b>Telegram Alerts Connected!</b> 🚀\n\n` +
         `Your 24/7 Crypto Futures Auto-Trade Bot is online and actively monitoring live Binance markets.\n` +
         `You will receive real-time notifications whenever a trade is executed, take-profit is reached, or stop-loss is triggered.\n\n` +
-        `⏰ _Connected at ${new Date().toUTCString()}_`
+        `⏰ <i>Connected at ${new Date().toUTCString()}</i>`
       );
       if (success) {
         res.json({ success: true, message: "Telegram test message sent successfully!" });
       } else {
-        res.status(400).json({ success: false, error: "Failed to send message. Please verify your Bot Token and Chat ID." });
+        const errorDetail = telegramService.getLastError() || "Failed to send message. Please verify your Bot Token and Chat ID.";
+        res.status(400).json({ success: false, error: errorDetail });
       }
     } catch (e) {
       res.status(500).json({ success: false, error: String(e) });
@@ -472,7 +473,7 @@ async function startServer() {
       const { text } = req.body;
       if (!text) return res.status(400).json({ success: false, error: "Missing text parameter" });
       const success = await telegramService.sendMessage(text);
-      res.json({ success });
+      res.json({ success, error: success ? undefined : telegramService.getLastError() });
     } catch (e) {
       res.status(500).json({ success: false, error: String(e) });
     }

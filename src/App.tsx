@@ -484,6 +484,9 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)
 Exposure Status: APPROVED\nReason Passed: ${finalReason}`;
                     addTerminalLog(msg);
                     addToast('info', 'New Signal Triggered', `VCB ${breakout.direction} on ${pair.symbol}`, { label: 'View Chart', onClick: () => { setSelectedSymbol(pair.symbol); setActiveTab('chart'); } });
+                    if (settingsRef.current.alertOnNewSignal !== false) {
+                      dispatchTelegramAlert(`📡 <b>NEW SIGNAL: ${pair.symbol}</b>\n\n<pre>${msg.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`);
+                    }
                   }
                 } else if (compression.isCompressed) {
                   let coilingScore = 48;
@@ -598,6 +601,9 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)
 Exposure Status: APPROVED\nReason Passed: ${finalReason}`;
                     addTerminalLog(msg);
                     addToast('info', 'New Signal Triggered', `LSR ${finalDirection} on ${pair.symbol}`, { label: 'View Chart', onClick: () => { setSelectedSymbol(pair.symbol); setActiveTab('chart'); } });
+                    if (settingsRef.current.alertOnNewSignal !== false) {
+                      dispatchTelegramAlert(`📡 <b>NEW SIGNAL: ${pair.symbol}</b>\n\n<pre>${msg.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`);
+                    }
                   }
                 } else {
                   finalScore = 65;
@@ -683,6 +689,9 @@ TP2: ${finalTp2.toFixed(5)} (2.5R, 40%)
 TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
                     addTerminalLog(msg);
                     addToast('info', 'New Signal Triggered', `Trend Pullback ${finalDirection} on ${pair.symbol}`, { label: 'View Chart', onClick: () => { setSelectedSymbol(pair.symbol); setActiveTab('chart'); } });
+                    if (settingsRef.current.alertOnNewSignal !== false) {
+                      dispatchTelegramAlert(`📡 <b>NEW SIGNAL: ${pair.symbol}</b>\n\n<pre>${msg.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`);
+                    }
                   }
                 } else if (tpbEval.stage === 'STAGE_A_SETUP_DETECTED' || tpbEval.state === 'RETEST_HELD' || tpbEval.state === 'RETEST_DETECTED') {
                   finalScore = 65;

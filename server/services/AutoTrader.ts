@@ -961,6 +961,20 @@ export class AutoTrader {
 
           if (!this.isEngineActive()) {
             console.log(`🛑 [AutoTrader] Trade execution blocked for ${symbol}: Engine is stopped.`);
+            if (this.settings.alertOnNewSignal !== false) {
+              telegramService.notifySignal({
+                symbol,
+                direction: signal.direction,
+                strategy: finalStrat,
+                score: signal.score,
+                price: currentPrice,
+                sl: signal.sl,
+                tp1: signal.tp1,
+                tp2: signal.tp2,
+                tp3: signal.tp3,
+                reason: (signal as any).reason || 'Qualified setup detected by AutoTrader'
+              }).catch(() => {});
+            }
             this.pendingSymbols.delete(symbol);
             continue;
           }

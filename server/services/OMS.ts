@@ -484,6 +484,17 @@ export class OMS {
     riskManager.recordTradeResult(pnl, 10000);
     this.onTradeClosed?.(pnl);
 
+    // Dispatch Telegram trade closure notification
+    telegramService.notifyTradeClose(
+      pos,
+      currentPrice,
+      pnl,
+      pctReturn,
+      exitReason
+    ).catch((err) => {
+      console.warn('OMS: Telegram notifyTradeClose failed:', err);
+    });
+
     return pnl;
   }
 }

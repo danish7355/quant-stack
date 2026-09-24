@@ -2,9 +2,36 @@ import { db } from '../firebase.js';
 import { doc } from 'firebase/firestore';
 import { safeGetDoc, readLocalJson } from './firestoreSafe.js';
 
+/**
+ * Escapes characters that are special in Telegram HTML format: &, <, >
+ */
+export function escapeHtml(str: string | number | undefined | null): string {
+  if (str === undefined || str === null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
+ * Safe price formatter preventing TypeError on undefined/null values
+ */
+export function formatPrice(val: number | undefined | null): string {
+  if (val === undefined || val === null || isNaN(Number(val))) return '0.00';
+  return Number(val).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+}
+
+/**
+ * Safe numeric formatter preventing TypeError on undefined/null values
+ */
+export function formatNum(val: number | undefined | null, decimals: number = 2): string {
+  if (val === undefined || val === null || isNaN(Number(val))) return '0.00';
+  return Number(val).toFixed(decimals);
+}
+
 export class TelegramService {
-  private botToken: string = process.env.TELEGRAM_BOT_TOKEN || '';
-  private chatId: string = process.env.TELEGRAM_CHAT_ID || '';
+  private botToken: string = '';
+  private chatId: string = '';
 
   // Alert Settings
   public alertOnNewSignal: boolean = true;
@@ -20,28 +47,62 @@ export class TelegramService {
   private messageQueue: { text: string; resolve: (val: boolean) => void }[] = [];
   private isProcessingQueue: boolean = false;
   private lastSendTime: number = 0;
+  private lastError: string = '';
 
-  constructor() {
-    this.loadConfigFromDb();
+  constructor(autoLoad: boolean = true) {
+    this.botToken = this.sanitizeToken(process.env.TELEGRAM_BOT_TOKEN || '');
+    this.chatId = this.sanitizeChatId(process.env.TELEGRAM_CHAT_ID || '');
+    if (autoLoad && process.env.NODE_ENV !== 'test') {
+      this.loadConfigFromDb().catch(() => {});
+    }
+  }
+
+  /**
+   * Cleans tokens: removes leading 'bot' prefix if user accidentally included it, strips whitespace
+   */
+  public sanitizeToken(token?: string): string {
+    if (!token) return '';
+    return token.trim().replace(/^bot/i, '');
+  }
+
+  /**
+   * Cleans chat IDs: removes quotes, leading/trailing whitespace
+   */
+  public sanitizeChatId(chatId?: string): string {
+    if (!chatId) return '';
+    return chatId.trim().replace(/^["']|["']$/g, '');
+  }
+
+  public getLastError(): string {
+    return this.lastError;
   }
 
   public async loadConfigFromDb() {
-    // First try local settings backup
+    // 1. Try local settings backup first
     try {
       const localSettings = readLocalJson<any>('settings.json', null);
       if (localSettings) {
-        if (localSettings.telegramBotToken) this.botToken = localSettings.telegramBotToken;
-        if (localSettings.telegramChatId) this.chatId = localSettings.telegramChatId;
+        if (localSettings.telegramBotToken !== undefined) {
+          this.botToken = this.sanitizeToken(localSettings.telegramBotToken);
+        }
+        if (localSettings.telegramChatId !== undefined) {
+          this.chatId = this.sanitizeChatId(localSettings.telegramChatId);
+        }
         this.updateSettings(localSettings);
       }
     } catch (e) {}
 
+    // 2. Load from Firestore
     try {
       const snapRes = await safeGetDoc(doc(db, 'settings', 'bot_config'));
       if (snapRes.exists && snapRes.data) {
         const data = snapRes.data;
-        if (data.telegramBotToken) this.botToken = data.telegramBotToken;
-        if (data.telegramChatId) this.chatId = data.telegramChatId;
+        if (data.telegramBotToken !== undefined) {
+          this.botToken = this.sanitizeToken(data.telegramBotToken);
+        }
+        if (data.telegramChatId !== undefined) {
+          this.chatId = this.sanitizeChatId(data.telegramChatId);
+        }
         
         this.alertOnNewSignal = data.alertOnNewSignal ?? true;
         this.alertOnTradeExecuted = data.alertOnTradeExecuted ?? true;
@@ -53,7 +114,7 @@ export class TelegramService {
         this.alertSilentMode = data.alertSilentMode ?? false;
         this.alertFormat = data.alertFormat ?? 'Verbose';
         
-        console.log(`📱 [Telegram] Config loaded from DB. Chat: ${this.chatId ? 'Configured' : 'Missing'}, Token: ${this.botToken ? 'Configured' : 'Missing'}`);
+        console.log(`📱 [Telegram] Config loaded. Chat: ${this.chatId ? 'Configured' : 'Missing'}, Token: ${this.botToken ? 'Configured' : 'Missing'}`);
       }
     } catch (e) {
       console.warn('TelegramService: Could not load config from Firestore, using local fallback.');
@@ -61,22 +122,23 @@ export class TelegramService {
   }
 
   public updateConfig(token?: string, chatId?: string) {
-    if (token !== undefined) this.botToken = token;
-    if (chatId !== undefined) this.chatId = chatId;
+    if (token !== undefined) this.botToken = this.sanitizeToken(token);
+    if (chatId !== undefined) this.chatId = this.sanitizeChatId(chatId);
     console.log(`📱 [Telegram] Config updated. Chat: ${this.chatId ? 'Configured' : 'Missing'}, Token: ${this.botToken ? 'Configured' : 'Missing'}`);
   }
 
   public updateSettings(settings: any) {
-    if (settings.telegramBotToken !== undefined) this.botToken = settings.telegramBotToken;
-    if (settings.telegramChatId !== undefined) this.chatId = settings.telegramChatId;
-    if (settings.alertOnNewSignal !== undefined) this.alertOnNewSignal = settings.alertOnNewSignal;
-    if (settings.alertOnTradeExecuted !== undefined) this.alertOnTradeExecuted = settings.alertOnTradeExecuted;
-    if (settings.alertOnTpHit !== undefined) this.alertOnTpHit = settings.alertOnTpHit;
-    if (settings.alertOnSlHit !== undefined) this.alertOnSlHit = settings.alertOnSlHit;
-    if (settings.alertOnTsMoved !== undefined) this.alertOnTsMoved = settings.alertOnTsMoved;
-    if (settings.alertOnDailyLossLimit !== undefined) this.alertOnDailyLossLimit = settings.alertOnDailyLossLimit;
-    if (settings.alertOnRangingDetected !== undefined) this.alertOnRangingDetected = settings.alertOnRangingDetected;
-    if (settings.alertSilentMode !== undefined) this.alertSilentMode = settings.alertSilentMode;
+    if (!settings || typeof settings !== 'object') return;
+    if (settings.telegramBotToken !== undefined) this.botToken = this.sanitizeToken(settings.telegramBotToken);
+    if (settings.telegramChatId !== undefined) this.chatId = this.sanitizeChatId(settings.telegramChatId);
+    if (settings.alertOnNewSignal !== undefined) this.alertOnNewSignal = Boolean(settings.alertOnNewSignal);
+    if (settings.alertOnTradeExecuted !== undefined) this.alertOnTradeExecuted = Boolean(settings.alertOnTradeExecuted);
+    if (settings.alertOnTpHit !== undefined) this.alertOnTpHit = Boolean(settings.alertOnTpHit);
+    if (settings.alertOnSlHit !== undefined) this.alertOnSlHit = Boolean(settings.alertOnSlHit);
+    if (settings.alertOnTsMoved !== undefined) this.alertOnTsMoved = Boolean(settings.alertOnTsMoved);
+    if (settings.alertOnDailyLossLimit !== undefined) this.alertOnDailyLossLimit = Boolean(settings.alertOnDailyLossLimit);
+    if (settings.alertOnRangingDetected !== undefined) this.alertOnRangingDetected = Boolean(settings.alertOnRangingDetected);
+    if (settings.alertSilentMode !== undefined) this.alertSilentMode = Boolean(settings.alertSilentMode);
     if (settings.alertFormat !== undefined) this.alertFormat = settings.alertFormat;
   }
 
@@ -86,24 +148,28 @@ export class TelegramService {
 
   /**
    * Queue-based message dispatcher:
-   * 1. Guarantees >= 1000ms spacing between sends to strictly respect Telegram's rate limits
-   * 2. Automatically retries if 429 rate limit occurs
-   * 3. Falls back to raw plain text if Markdown entity parsing fails
+   * 1. Guarantees >= 1100ms spacing between sends to strictly respect Telegram's rate limits (max 1 msg/sec per chat)
+   * 2. Automatically handles 429 backoff
+   * 3. Wrapped in try/finally so the queue processor NEVER freezes permanently on exceptions
+   * 4. Automatic plain-text fallback if HTML entity parsing fails
    */
   public async sendMessage(text: string): Promise<boolean> {
-    // If not configured, attempt immediate one-time reload from DB before giving up
     if (!this.botToken || !this.chatId) {
       await this.loadConfigFromDb();
     }
 
     if (!this.botToken || !this.chatId) {
-      console.warn('📱 [Telegram] Message skipped: Bot token or Chat ID not configured.');
+      const errMsg = 'Bot token or Chat ID not configured.';
+      this.lastError = errMsg;
+      console.warn(`📱 [Telegram] Message skipped: ${errMsg}`);
       return false;
     }
 
     return new Promise<boolean>((resolve) => {
       this.messageQueue.push({ text, resolve });
-      this.processQueue();
+      this.processQueue().catch((err) => {
+        console.error('❌ [Telegram] processQueue top-level error:', err);
+      });
     });
   }
 
@@ -111,29 +177,40 @@ export class TelegramService {
     if (this.isProcessingQueue) return;
     this.isProcessingQueue = true;
 
-    while (this.messageQueue.length > 0) {
-      const item = this.messageQueue[0];
-      
-      // Enforce at least 1100ms between telegram API calls to avoid rate limiting
-      const elapsed = Date.now() - this.lastSendTime;
-      if (elapsed < 1100) {
-        await new Promise(r => setTimeout(r, 1100 - elapsed));
+    try {
+      while (this.messageQueue.length > 0) {
+        const item = this.messageQueue[0];
+        let success = false;
+        try {
+          // Enforce >= 1100ms spacing between Telegram API requests
+          const elapsed = Date.now() - this.lastSendTime;
+          if (elapsed < 1100) {
+            await new Promise(r => setTimeout(r, 1100 - elapsed));
+          }
+
+          success = await this.sendSingleMessage(item.text);
+          this.lastSendTime = Date.now();
+        } catch (err: any) {
+          console.error('❌ [Telegram] Error processing message item:', err);
+          this.lastError = err?.message || String(err);
+          success = false;
+        } finally {
+          // Guaranteed shift and resolve: queue can never deadlock
+          this.messageQueue.shift();
+          try {
+            item.resolve(success);
+          } catch {}
+        }
       }
-
-      const success = await this.sendSingleMessage(item.text);
-      this.lastSendTime = Date.now();
-      
-      this.messageQueue.shift();
-      item.resolve(success);
+    } finally {
+      this.isProcessingQueue = false;
     }
-
-    this.isProcessingQueue = false;
   }
 
-  private async sendSingleMessage(text: string): Promise<boolean> {
+  private async sendSingleMessage(text: string, retryCount: number = 0): Promise<boolean> {
     const url = `https://api.telegram.org/bot${this.botToken}/sendMessage`;
     
-    // Attempt 1: Send with Markdown parse mode
+    // Attempt 1: Send with parse_mode: 'HTML'
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -141,31 +218,33 @@ export class TelegramService {
         body: JSON.stringify({
           chat_id: this.chatId,
           text,
-          parse_mode: 'Markdown',
+          parse_mode: 'HTML',
           disable_web_page_preview: true,
           disable_notification: this.alertSilentMode === true
         })
       });
-      const resData: any = await response.json();
+
+      const resData: any = await response.json().catch(() => ({ ok: false, description: 'Non-JSON API response' }));
 
       if (resData.ok) {
+        this.lastError = '';
         console.log(`✅ [Telegram] Alert delivered successfully to chat ${this.chatId}`);
         return true;
       }
 
-      // If rate limited (429), wait the requested duration and retry
-      if (resData.error_code === 429) {
-        const retryAfter = (resData.parameters?.retry_after || 2) * 1000;
-        console.warn(`⏳ [Telegram] Rate limited (429). Retrying after ${retryAfter}ms...`);
+      // Handle Rate Limit (429)
+      if (resData.error_code === 429 && retryCount < 3) {
+        const retryAfter = Math.min((resData.parameters?.retry_after || 2) * 1000, 10000);
+        console.warn(`⏳ [Telegram] Rate limited (429). Retrying after ${retryAfter}ms (attempt ${retryCount + 1})...`);
         await new Promise(r => setTimeout(r, retryAfter));
-        return this.sendSingleMessage(text);
+        return this.sendSingleMessage(text, retryCount + 1);
       }
 
-      // If Markdown formatting failed, fallback to plain text without parse_mode
-      if (resData.description && (resData.description.includes("can't parse entities") || resData.description.includes("parse error"))) {
-        console.warn(`⚠️ [Telegram] Markdown parse error (${resData.description}). Falling back to plain text...`);
-        // Strip markdown backticks, asterisks, and underscores for clean fallback
-        const plainText = text.replace(/[*_`]/g, '');
+      // If HTML entity parsing failed, fallback immediately to plain text with HTML tags stripped
+      const desc = resData.description || '';
+      if (desc.includes("can't parse entities") || desc.includes('parse error') || desc.includes('tag')) {
+        console.warn(`⚠️ [Telegram] HTML entity parse error (${desc}). Retrying with plain text...`);
+        const plainText = text.replace(/<[^>]*>/g, '');
         const retryRes = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -176,28 +255,30 @@ export class TelegramService {
             disable_notification: this.alertSilentMode === true
           })
         });
-        const retryData: any = await retryRes.json();
+
+        const retryData: any = await retryRes.json().catch(() => ({ ok: false, description: 'Plaintext fallback non-JSON response' }));
         if (retryData.ok) {
+          this.lastError = '';
           console.log(`✅ [Telegram] Alert delivered via plain text fallback.`);
           return true;
+        } else {
+          this.lastError = retryData.description || desc;
         }
+      } else {
+        this.lastError = desc || `Telegram API Error (${resData.error_code || response.status})`;
       }
 
       console.error(`❌ [Telegram] API rejected message:`, resData);
       return false;
-    } catch (e) {
+    } catch (e: any) {
+      this.lastError = e?.message || 'Network dispatch exception';
       console.error('❌ [Telegram] Network dispatch exception:', e);
       return false;
     }
   }
 
-  public async sendUrgentAlert(text: string) {
-    if (!this.botToken || !this.chatId) return;
-    try {
-      await this.sendSingleMessage(`🚨 <b>URGENT ALERT</b> 🚨\n\n${text}`);
-    } catch (e) {
-      console.error('Failed to send urgent alert:', e);
-    }
+  public async sendUrgentAlert(text: string): Promise<boolean> {
+    return this.sendMessage(`🚨 <b>URGENT ALERT</b> 🚨\n\n${escapeHtml(text)}`);
   }
 
   public async notifyTradeOpen(pos: {
@@ -209,14 +290,14 @@ export class TelegramService {
     is_auto_regime?: boolean;
     frequency_preset?: string;
     entry_price: number;
-    quantity: number;
-    leverage: number;
-    allocated_balance: number;
-    sl: number;
-    tp1: number;
-    tp2: number;
-    tp3: number;
-  }, score?: number) {
+    quantity?: number;
+    leverage?: number;
+    allocated_balance?: number;
+    sl?: number;
+    tp1?: number;
+    tp2?: number;
+    tp3?: number;
+  }, score?: number): Promise<boolean> {
     if (!this.alertOnTradeExecuted) return false;
 
     const isLong = pos.direction === 'LONG';
@@ -232,12 +313,14 @@ export class TelegramService {
       stratName = '💥 VCB Breakout (Squeeze)';
     } else if (pos.strategy === 'EARLY_COIL_BREAKOUT') {
       stratName = '🔥 Early Coil Breakout';
-    } else if (pos.strategy === 'SMC_LIQUIDITY_SWEEP' || pos.strategy === 'SMC') {
-      stratName = '💧 SMC Liquidity Sweep & FVG';
+    } else if (pos.strategy === 'SMC_LIQUIDITY_SWEEP' || pos.strategy === 'SMC' || pos.strategy === 'LIQUIDITY_SWEEP_REVERSAL') {
+      stratName = '💧 SMC Liquidity Sweep &amp; FVG';
+    } else if (pos.strategy === 'RANGE_MEAN_REVERSION') {
+      stratName = '🔄 Range Mean Reversion';
     } else if (pos.strategy === 'BINANCE_COMPOSITE') {
       stratName = '📊 Composite 10-Gate';
     } else if (pos.strategy) {
-      stratName = pos.strategy;
+      stratName = escapeHtml(pos.strategy);
     }
 
     const freqBadge = pos.frequency_preset === 'HIGH' 
@@ -246,31 +329,39 @@ export class TelegramService {
       ? '🛡️ Low Freq (Strict)' 
       : '🎯 Medium Freq (Balanced)';
     
-    const regimeLine = pos.market_regime ? `*Detected Regime:* \`${pos.market_regime}\`\n` : '';
+    const regimeLine = pos.market_regime ? `<b>Detected Regime:</b> <code>${escapeHtml(pos.market_regime)}</code>\n` : '';
     const modeBadge = pos.is_auto_regime 
-      ? `*Selection Mode:* \`🤖 Auto Regime-Adaptive (Best EV)\`\n` 
-      : `*Selection Mode:* \`Manual / Default\`\n`;
+      ? `<b>Selection Mode:</b> <code>🤖 Auto Regime-Adaptive (Best EV)</code>\n` 
+      : `<b>Selection Mode:</b> <code>Manual / Default</code>\n`;
+
+    const allocMargin = pos.allocated_balance || 0;
+    const lev = pos.leverage || 1;
+    const qty = pos.quantity || 0;
 
     const message = this.alertFormat === 'Minimal' 
-      ? `${icon} *TRADE OPENED: ${pos.symbol}*\n*Action:* ${arrow}\n*Price:* \`$${pos.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n*Leverage:* \`${pos.leverage}x\`\n*Strategy:* \`${stratName}\``
-      : `${icon} *24/7 BOT: TRADE OPENED*\n\n` +
-        `*Pair:* \`${pos.symbol}\`\n` +
-        `*Action:* ${arrow}\n` +
-        `*Strategy:* \`${stratName}\`\n` +
+      ? `${icon} <b>TRADE OPENED: ${escapeHtml(pos.symbol)}</b>\n` +
+        `<b>Action:</b> ${arrow}\n` +
+        `<b>Price:</b> <code>$${formatPrice(pos.entry_price)}</code>\n` +
+        `<b>Leverage:</b> <code>${lev}x</code>\n` +
+        `<b>Strategy:</b> <code>${stratName}</code>`
+      : `${icon} <b>24/7 BOT: TRADE OPENED</b>\n\n` +
+        `<b>Pair:</b> <code>${escapeHtml(pos.symbol)}</code>\n` +
+        `<b>Action:</b> ${arrow}\n` +
+        `<b>Strategy:</b> <code>${stratName}</code>\n` +
         regimeLine +
         modeBadge +
-        `*Frequency Mode:* \`${freqBadge}\`\n` +
-        `*Entry Price:* \`$${pos.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
-        `*Leverage:* \`${pos.leverage}x\`\n` +
-        `*Allocated Margin:* \`$${pos.allocated_balance.toFixed(2)}\`\n` +
-        `*Position Size:* \`$${(pos.allocated_balance * pos.leverage).toFixed(2)}\` (\`${pos.quantity.toFixed(4)}\`)\n` +
-        (score ? `*Strategy Score:* \`${score}/100\`\n` : '') +
+        `<b>Frequency Mode:</b> <code>${freqBadge}</code>\n` +
+        `<b>Entry Price:</b> <code>$${formatPrice(pos.entry_price)}</code>\n` +
+        `<b>Leverage:</b> <code>${lev}x</code>\n` +
+        `<b>Allocated Margin:</b> <code>$${formatNum(allocMargin, 2)}</code>\n` +
+        `<b>Position Size:</b> <code>$${formatNum(allocMargin * lev, 2)}</code> (<code>${formatNum(qty, 4)}</code>)\n` +
+        (score !== undefined ? `<b>Strategy Score:</b> <code>${score}/100</code>\n` : '') +
         `----------------------------\n` +
-        `🎯 *TP1:* \`$${pos.tp1.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
-        `🎯 *TP2:* \`$${pos.tp2.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
-        `🎯 *TP3:* \`$${pos.tp3.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
-        `🛑 *Stop Loss:* \`$${pos.sl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n\n` +
-        `⏰ _Time: ${new Date().toUTCString()}_`;
+        (pos.tp1 ? `🎯 <b>TP1:</b> <code>$${formatPrice(pos.tp1)}</code>\n` : '') +
+        (pos.tp2 ? `🎯 <b>TP2:</b> <code>$${formatPrice(pos.tp2)}</code>\n` : '') +
+        (pos.tp3 ? `🎯 <b>TP3:</b> <code>$${formatPrice(pos.tp3)}</code>\n` : '') +
+        (pos.sl ? `🛑 <b>Stop Loss:</b> <code>$${formatPrice(pos.sl)}</code>\n\n` : '\n') +
+        `⏰ <i>Time: ${new Date().toUTCString()}</i>`;
 
     return this.sendMessage(message);
   }
@@ -280,9 +371,10 @@ export class TelegramService {
     symbol: string;
     direction: 'LONG' | 'SHORT';
     strategy?: string;
-    entry_price: number;
-    allocated_balance: number;
-  }, closePrice: number, pnl: number, pctReturn: number, reason: string) {
+    entry_price?: number;
+    allocated_balance?: number;
+    leverage?: number;
+  }, closePrice: number, pnl: number, pctReturn: number, reason: string): Promise<boolean> {
     const isWin = pnl >= 0;
     
     // Check specific exit alert settings
@@ -301,26 +393,30 @@ export class TelegramService {
       stratName = '💥 VCB Breakout';
     } else if (pos.strategy === 'EARLY_COIL_BREAKOUT') {
       stratName = '🔥 Early Coil Breakout';
-    } else if (pos.strategy === 'SMC_LIQUIDITY_SWEEP' || pos.strategy === 'SMC') {
+    } else if (pos.strategy === 'SMC_LIQUIDITY_SWEEP' || pos.strategy === 'SMC' || pos.strategy === 'LIQUIDITY_SWEEP_REVERSAL') {
       stratName = '💧 SMC Liquidity Sweep';
+    } else if (pos.strategy === 'RANGE_MEAN_REVERSION') {
+      stratName = '🔄 Range Mean Reversion';
     } else if (pos.strategy === 'BINANCE_COMPOSITE') {
       stratName = '📊 Composite 10-Gate';
     } else if (pos.strategy) {
-      stratName = pos.strategy;
+      stratName = escapeHtml(pos.strategy);
     }
 
-    const cleanReason = (reason || 'Closed').replace(/[[\]]/g, '');
+    const cleanReason = escapeHtml((reason || 'Closed').replace(/[[\]]/g, ''));
     const message = this.alertFormat === 'Minimal'
-      ? `${icon} *TRADE CLOSED: ${pos.symbol}*\n*Status:* ${status} (${cleanReason})\n*Net PnL:* \`${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}\` (\`${pctReturn >= 0 ? '+' : ''}${pctReturn.toFixed(2)}%\`)`
-      : `${icon} *24/7 BOT: TRADE CLOSED (${cleanReason})*\n\n` +
-        `*Pair:* \`${pos.symbol}\` (${pos.direction})\n` +
-        `*Strategy:* \`${stratName}\`\n` +
-        `*Status:* *${status}*\n` +
-        `*Entry Price:* \`$${pos.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
-        `*Exit Price:* \`$${closePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
-        `*Net PnL:* \`${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}\` (\`${pctReturn >= 0 ? '+' : ''}${pctReturn.toFixed(2)}%\`)\n` +
-        `*Exit Reason:* \`${reason}\`\n\n` +
-        `⏰ _Time: ${new Date().toUTCString()}_`;
+      ? `${icon} <b>TRADE CLOSED: ${escapeHtml(pos.symbol)}</b>\n` +
+        `<b>Status:</b> ${status} (${cleanReason})\n` +
+        `<b>Net PnL:</b> <code>${pnl >= 0 ? '+' : ''}$${formatNum(pnl, 2)}</code> (<code>${pctReturn >= 0 ? '+' : ''}${formatNum(pctReturn, 2)}%</code>)`
+      : `${icon} <b>24/7 BOT: TRADE CLOSED (${cleanReason})</b>\n\n` +
+        `<b>Pair:</b> <code>${escapeHtml(pos.symbol)}</code> (${escapeHtml(pos.direction)})\n` +
+        `<b>Strategy:</b> <code>${stratName}</code>\n` +
+        `<b>Status:</b> <b>${status}</b>\n` +
+        `<b>Entry Price:</b> <code>$${formatPrice(pos.entry_price)}</code>\n` +
+        `<b>Exit Price:</b> <code>$${formatPrice(closePrice)}</code>\n` +
+        `<b>Net PnL:</b> <code>${pnl >= 0 ? '+' : ''}$${formatNum(pnl, 2)}</code> (<code>${pctReturn >= 0 ? '+' : ''}${formatNum(pctReturn, 2)}%</code>)\n` +
+        `<b>Exit Reason:</b> <code>${cleanReason}</code>\n\n` +
+        `⏰ <i>Time: ${new Date().toUTCString()}</i>`;
 
     return this.sendMessage(message);
   }
@@ -329,23 +425,115 @@ export class TelegramService {
     id: string;
     symbol: string;
     direction: 'LONG' | 'SHORT';
-    entry_price: number;
-    allocated_balance: number;
-    sl: number;
-  }, closePrice: number, pnl: number, pctReturn: number, closedQty: number, remainingQty: number) {
+    entry_price?: number;
+    allocated_balance?: number;
+    sl?: number;
+  }, closePrice: number, pnl: number, pctReturn: number, closedQty: number, remainingQty: number): Promise<boolean> {
     if (!this.alertOnTpHit) return false;
 
     const message = this.alertFormat === 'Minimal'
-      ? `🎯 *PARTIAL TP: ${pos.symbol}*\n*Secured:* \`+$${pnl.toFixed(2)}\` (\`+${pctReturn.toFixed(2)}%\`)\n*New SL:* \`$${pos.sl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\``
-      : `🎯 *24/7 BOT: VCB INITIAL TP HIT (25% SECURED)*\n\n` +
-        `*Pair:* \`${pos.symbol}\` (${pos.direction})\n` +
-        `*Action:* Banked 25% partial profit, Stop moved to Breakeven + Fee buffer\n` +
-        `*Entry Price:* \`$${pos.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
-        `*Exit Price:* \`$${closePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n` +
-        `*Secured PnL:* \`+$${pnl.toFixed(2)}\` (\`+${pctReturn.toFixed(2)}%\`)\n` +
-        `*Closed Contracts:* \`${closedQty.toFixed(4)}\` | *Remaining:* \`${remainingQty.toFixed(4)}\` (75%)\n` +
-        `*New Trailing Stop (Chandelier):* \`$${pos.sl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}\`\n\n` +
-        `⏰ _Time: ${new Date().toUTCString()}_`;
+      ? `🎯 <b>PARTIAL TP: ${escapeHtml(pos.symbol)}</b>\n` +
+        `<b>Secured:</b> <code>+$${formatNum(pnl, 2)}</code> (<code>+${formatNum(pctReturn, 2)}%</code>)\n` +
+        `<b>New SL:</b> <code>$${formatPrice(pos.sl)}</code>`
+      : `🎯 <b>24/7 BOT: TAKE PROFIT PARTIAL HIT</b>\n\n` +
+        `<b>Pair:</b> <code>${escapeHtml(pos.symbol)}</code> (${escapeHtml(pos.direction)})\n` +
+        `<b>Action:</b> Banked partial profit, Stop moved toward Breakeven\n` +
+        `<b>Entry Price:</b> <code>$${formatPrice(pos.entry_price)}</code>\n` +
+        `<b>Exit Price:</b> <code>$${formatPrice(closePrice)}</code>\n` +
+        `<b>Secured PnL:</b> <code>+$${formatNum(pnl, 2)}</code> (<code>+${formatNum(pctReturn, 2)}%</code>)\n` +
+        `<b>Closed Contracts:</b> <code>${formatNum(closedQty, 4)}</code> | <b>Remaining:</b> <code>${formatNum(remainingQty, 4)}</code>\n` +
+        `<b>New Stop (Chandelier / BE):</b> <code>$${formatPrice(pos.sl)}</code>\n\n` +
+        `⏰ <i>Time: ${new Date().toUTCString()}</i>`;
+
+    return this.sendMessage(message);
+  }
+
+  public async notifyTrailingStop(pos: {
+    id: string;
+    symbol: string;
+    direction: 'LONG' | 'SHORT';
+    entry_price?: number;
+  }, oldSl: number, newSl: number, currentPrice: number): Promise<boolean> {
+    if (!this.alertOnTsMoved) return false;
+
+    const isLong = pos.direction === 'LONG';
+    const isLockedProfit = isLong ? (newSl > (pos.entry_price || 0)) : (newSl < (pos.entry_price || 999999));
+    const badge = isLockedProfit ? '🔒 PROFIT LOCKED' : '🛡️ BREAKEVEN PROTECTED';
+
+    const message = this.alertFormat === 'Minimal'
+      ? `🛡️ <b>TRAILING STOP MOVED: ${escapeHtml(pos.symbol)}</b>\n` +
+        `<b>Old SL:</b> <code>$${formatPrice(oldSl)}</code> ➔ <b>New SL:</b> <code>$${formatPrice(newSl)}</code>`
+      : `🛡️ <b>24/7 BOT: TRAILING STOP UPDATED</b>\n\n` +
+        `<b>Pair:</b> <code>${escapeHtml(pos.symbol)}</code> (${escapeHtml(pos.direction)})\n` +
+        `<b>Status:</b> <b>${badge}</b>\n` +
+        `<b>Old Stop-Loss:</b> <code>$${formatPrice(oldSl)}</code>\n` +
+        `<b>New Trailing Stop:</b> <code>$${formatPrice(newSl)}</code>\n` +
+        `<b>Current Price:</b> <code>$${formatPrice(currentPrice)}</code>\n` +
+        (pos.entry_price ? `<b>Entry Price:</b> <code>$${formatPrice(pos.entry_price)}</code>\n\n` : '\n') +
+        `⏰ <i>Time: ${new Date().toUTCString()}</i>`;
+
+    return this.sendMessage(message);
+  }
+
+  public async notifyDailyLossLimit(currentDailyLossPct: number, dailyLossLimitPct: number): Promise<boolean> {
+    if (!this.alertOnDailyLossLimit) return false;
+
+    const message = `🚨 <b>RISK ALERT: DAILY LOSS LIMIT REACHED</b> 🚨\n\n` +
+      `<b>Current Daily Drawdown:</b> <code>${formatNum(currentDailyLossPct, 2)}%</code>\n` +
+      `<b>Configured Daily Limit:</b> <code>${formatNum(dailyLossLimitPct, 2)}%</code>\n\n` +
+      `🛡️ <b>Action:</b> New position entries have been automatically halted to protect trading capital.\n` +
+      `Trading will resume after the 00:00 UTC daily risk reset.\n\n` +
+      `⏰ <i>Time: ${new Date().toUTCString()}</i>`;
+
+    return this.sendMessage(message);
+  }
+
+  public async notifyRangingMarket(symbol: string, regime: string, reason?: string): Promise<boolean> {
+    if (!this.alertOnRangingDetected) return false;
+
+    const message = `⚠️ <b>REGIME ADVISORY: RANGING / CHOPPY MARKET</b>\n\n` +
+      `<b>Symbol:</b> <code>${escapeHtml(symbol)}</code>\n` +
+      `<b>Regime:</b> <code>${escapeHtml(regime)}</code>\n` +
+      (reason ? `<b>Details:</b> <code>${escapeHtml(reason)}</code>\n\n` : '\n') +
+      `ℹ️ Breakout strategies automatically filtered to avoid chop.\n\n` +
+      `⏰ <i>Time: ${new Date().toUTCString()}</i>`;
+
+    return this.sendMessage(message);
+  }
+
+  public async notifySignal(signal: {
+    symbol: string;
+    direction: 'LONG' | 'SHORT';
+    strategy: string;
+    score: number;
+    price: number;
+    sl?: number;
+    tp1?: number;
+    tp2?: number;
+    tp3?: number;
+    reason?: string;
+  }): Promise<boolean> {
+    if (!this.alertOnNewSignal) return false;
+
+    const isLong = signal.direction === 'LONG';
+    const icon = isLong ? '🟢' : '🔴';
+    const arrow = isLong ? '📈 LONG' : '📉 SHORT';
+
+    const message = this.alertFormat === 'Minimal'
+      ? `📡 <b>NEW SIGNAL: ${escapeHtml(signal.symbol)}</b>\n` +
+        `<b>Action:</b> ${arrow} | <b>Score:</b> <code>${signal.score}/100</code>\n` +
+        `<b>Price:</b> <code>$${formatPrice(signal.price)}</code>`
+      : `📡 <b>24/7 BOT: HIGH-SCORE SIGNAL DETECTED</b>\n\n` +
+        `<b>Pair:</b> <code>${escapeHtml(signal.symbol)}</code>\n` +
+        `<b>Action:</b> ${arrow}\n` +
+        `<b>Strategy:</b> <code>${escapeHtml(signal.strategy)}</code>\n` +
+        `<b>Signal Score:</b> <code>${signal.score}/100</code>\n` +
+        `<b>Price:</b> <code>$${formatPrice(signal.price)}</code>\n` +
+        (signal.sl ? `<b>Stop Loss:</b> <code>$${formatPrice(signal.sl)}</code>\n` : '') +
+        (signal.tp1 ? `<b>Target 1:</b> <code>$${formatPrice(signal.tp1)}</code>\n` : '') +
+        (signal.tp2 ? `<b>Target 2:</b> <code>$${formatPrice(signal.tp2)}</code>\n` : '') +
+        (signal.reason ? `<b>Reason:</b> <code>${escapeHtml(signal.reason)}</code>\n\n` : '\n') +
+        `⏰ <i>Time: ${new Date().toUTCString()}</i>`;
 
     return this.sendMessage(message);
   }

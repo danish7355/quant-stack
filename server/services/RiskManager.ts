@@ -1,3 +1,5 @@
+import { telegramService } from './TelegramService.js';
+
 export interface RiskSettingsPayload {
   limitPct?: number;
   maxLosses?: number;
@@ -35,6 +37,7 @@ export class RiskManager {
   private minStopDistancePct = 0.005;
   private allowFractionalContracts = true;
   private lastResetDate = new Date().toISOString().split('T')[0];
+  private dailyLossAlertSent = false;
 
   public updateSettings(
     limitPctOrOpts?: number | RiskSettingsPayload, 
@@ -124,6 +127,7 @@ export class RiskManager {
     if (this.lastResetDate !== today) {
       this.currentDailyLossPct = 0;
       this.consecutiveLosses = 0;
+      this.dailyLossAlertSent = false;
       this.lastResetDate = today;
       console.log('RiskManager: Daily stats reset');
     }
@@ -316,12 +320,20 @@ export class RiskManager {
       this.consecutiveLosses = 0;
       this.currentDailyLossPct += (pnl / totalBalance) * 100;
     }
+
+    if (!this.bypassDailyLossLimit && this.currentDailyLossPct <= this.dailyLossLimitPct && !this.dailyLossAlertSent) {
+      this.dailyLossAlertSent = true;
+      telegramService.notifyDailyLossLimit(this.currentDailyLossPct, this.dailyLossLimitPct).catch((err) => {
+        console.warn('RiskManager: Failed to dispatch Telegram daily loss alert:', err);
+      });
+    }
   }
 
   public reset() {
     this.currentExposure = 0;
     this.consecutiveLosses = 0;
     this.currentDailyLossPct = 0;
+    this.dailyLossAlertSent = false;
     this.killSwitchActive = false;
   }
 
@@ -391,6 +403,7 @@ export class RiskManager {
 
   public resetDailyLoss() {
     this.currentDailyLossPct = 0;
+    this.dailyLossAlertSent = false;
   }
 
   public getDailyLossLimitPct(): number {

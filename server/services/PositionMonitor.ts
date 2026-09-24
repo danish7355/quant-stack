@@ -271,7 +271,14 @@ export class PositionMonitor {
               ? pos.extremeSinceEntry - chandelierAtrMult * entryAtr
               : pos.extremeSinceEntry + chandelierAtrMult * entryAtr;
             
-            pos.sl = isLong ? Math.max(pos.sl || 0, candidate) : Math.min(pos.sl || 999999, candidate);
+            const oldSl = pos.sl || 0;
+            const newSl = isLong ? Math.max(pos.sl || 0, candidate) : Math.min(pos.sl || 999999, candidate);
+            if (isLong ? newSl > (pos.sl || 0) : newSl < (pos.sl || 999999)) {
+              pos.sl = newSl;
+              safeUpdateDoc(doc(db, 'positions', pos.id), { sl: newSl }).catch(() => {});
+              writeLocalJson('positions.json', this.activePositions);
+              telegramService.notifyTrailingStop(pos, oldSl, newSl, currentPrice).catch(() => {});
+            }
           }
 
           // Check if Stop Loss or Chandelier Stop is hit
@@ -314,6 +321,7 @@ export class PositionMonitor {
               const newSl = Math.max(pos.entry_price, candidate, pos.sl || 0);
               
               if (newSl > (pos.sl || 0)) {
+                const oldSl = pos.sl || 0;
                 pos.sl = newSl;
                 pos.trailing_stop_active = 1;
                 safeUpdateDoc(doc(db, 'positions', pos.id), { sl: newSl, trailing_stop_active: 1, extremeSinceEntry: pos.extremeSinceEntry }).catch(() => {});
@@ -321,6 +329,7 @@ export class PositionMonitor {
                 // C4 fix: Update exchange stop-loss to match trailed stop
                 executionAdapter.replaceStopOrder(pos.symbol, 'sell', pos.quantity, newSl)
                   .catch(err => console.warn(`[PositionMonitor] Failed to update exchange SL for ${pos.symbol}:`, err));
+                telegramService.notifyTrailingStop(pos, oldSl, newSl, currentPrice).catch(() => {});
               }
             }
 
@@ -337,6 +346,7 @@ export class PositionMonitor {
               const newSl = Math.min(pos.entry_price, candidate, pos.sl || 999999);
               
               if (newSl < (pos.sl || 999999)) {
+                const oldSl = pos.sl || 999999;
                 pos.sl = newSl;
                 pos.trailing_stop_active = 1;
                 safeUpdateDoc(doc(db, 'positions', pos.id), { sl: newSl, trailing_stop_active: 1, extremeSinceEntry: pos.extremeSinceEntry }).catch(() => {});
@@ -344,6 +354,7 @@ export class PositionMonitor {
                 // C4 fix: Update exchange stop-loss to match trailed stop
                 executionAdapter.replaceStopOrder(pos.symbol, 'buy', pos.quantity, newSl)
                   .catch(err => console.warn(`[PositionMonitor] Failed to update exchange SL for ${pos.symbol}:`, err));
+                telegramService.notifyTrailingStop(pos, oldSl, newSl, currentPrice).catch(() => {});
               }
             }
 
@@ -367,13 +378,9 @@ export class PositionMonitor {
   - True SL in DB: ${pos.sl}
   - Condition: ${isLong ? (exitReason === 'SL' || exitReason === 'TRAIL_BE' ? `${currentPrice} <= ${effectiveSl}` : `${currentPrice} >= ${effectiveTp1 || effectiveTp3}`) : (exitReason === 'SL' || exitReason === 'TRAIL_BE' ? `${currentPrice} >= ${effectiveSl}` : `${currentPrice} <= ${effectiveTp1 || effectiveTp3}`)}`);
           
-          // Execute closing via OMS with recorded MFE/MAE
+          // Execute closing via OMS with recorded MFE/MAE (OMS handles telegram notifyTradeClose)
           oms.closePosition(pos.id, currentPrice, exitReason, { mfe: (pos as any).mfe, mae: (pos as any).mae })
-            .then(async (pnl) => {
-              if (pnl !== null) {
-                const pct = (pnl / pos.allocated_balance) * 100;
-                await telegramService.notifyTradeClose(pos, currentPrice, pnl, pct, exitReason!);
-              }
+            .then(async () => {
               await this.refreshOpenPositions();
             })
             .catch((err) => {
