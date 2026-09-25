@@ -45,9 +45,26 @@ export class PositionMonitor {
   private isProcessing = false;
   private syncInterval: NodeJS.Timeout | null = null;
   private closingSet = new Set<string>();
+  private positionListeners = new Set<(positions: MonitoredPosition[]) => void>();
 
   constructor() {
     this.init();
+  }
+
+  public onPositionsChange(listener: (positions: MonitoredPosition[]) => void): () => void {
+    this.positionListeners.add(listener);
+    return () => this.positionListeners.delete(listener);
+  }
+
+  private notifyPositionListeners() {
+    const positionsCopy = [...this.activePositions];
+    for (const listener of this.positionListeners) {
+      try {
+        listener(positionsCopy);
+      } catch (err) {
+        console.error('PositionMonitor: Error in position listener:', err);
+      }
+    }
   }
 
   public async init() {
@@ -75,6 +92,7 @@ export class PositionMonitor {
     writeLocalJson('positions.json', this.activePositions);
     const totalAllocated = this.activePositions.reduce((sum, p) => sum + (p.allocated_balance || 0), 0);
     riskManager.updateCurrentExposure(totalAllocated);
+    this.notifyPositionListeners();
   }
 
   public removePosition(posId: string) {
@@ -83,6 +101,7 @@ export class PositionMonitor {
     writeLocalJson('positions.json', this.activePositions);
     const totalAllocated = this.activePositions.reduce((sum, p) => sum + (p.allocated_balance || 0), 0);
     riskManager.updateCurrentExposure(totalAllocated);
+    this.notifyPositionListeners();
   }
 
   public async refreshOpenPositions() {
@@ -137,6 +156,7 @@ export class PositionMonitor {
     writeLocalJson('positions.json', this.activePositions);
     const totalAllocated = this.activePositions.reduce((sum, p) => sum + (p.allocated_balance || 0), 0);
     riskManager.updateCurrentExposure(totalAllocated);
+    this.notifyPositionListeners();
   }
 
   private async evaluatePositions(prices: Map<string, number>) {
@@ -277,6 +297,7 @@ export class PositionMonitor {
               pos.sl = newSl;
               safeUpdateDoc(doc(db, 'positions', pos.id), { sl: newSl }).catch(() => {});
               writeLocalJson('positions.json', this.activePositions);
+              this.notifyPositionListeners();
               telegramService.notifyTrailingStop(pos, oldSl, newSl, currentPrice).catch(() => {});
             }
           }
@@ -326,6 +347,7 @@ export class PositionMonitor {
                 pos.trailing_stop_active = 1;
                 safeUpdateDoc(doc(db, 'positions', pos.id), { sl: newSl, trailing_stop_active: 1, extremeSinceEntry: pos.extremeSinceEntry }).catch(() => {});
                 writeLocalJson('positions.json', this.activePositions);
+                this.notifyPositionListeners();
                 // C4 fix: Update exchange stop-loss to match trailed stop
                 executionAdapter.replaceStopOrder(pos.symbol, 'sell', pos.quantity, newSl)
                   .catch(err => console.warn(`[PositionMonitor] Failed to update exchange SL for ${pos.symbol}:`, err));
@@ -351,6 +373,7 @@ export class PositionMonitor {
                 pos.trailing_stop_active = 1;
                 safeUpdateDoc(doc(db, 'positions', pos.id), { sl: newSl, trailing_stop_active: 1, extremeSinceEntry: pos.extremeSinceEntry }).catch(() => {});
                 writeLocalJson('positions.json', this.activePositions);
+                this.notifyPositionListeners();
                 // C4 fix: Update exchange stop-loss to match trailed stop
                 executionAdapter.replaceStopOrder(pos.symbol, 'buy', pos.quantity, newSl)
                   .catch(err => console.warn(`[PositionMonitor] Failed to update exchange SL for ${pos.symbol}:`, err));

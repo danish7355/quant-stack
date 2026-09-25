@@ -83,6 +83,72 @@ const getInitialSidebarCollapsed = (): boolean => {
   return false;
 };
 
+export const mergeServerSettingsWithLocal = (prev: AppSettings, serverSettings: Partial<AppSettings>): AppSettings => {
+  const merged = { ...prev };
+  for (const [key, val] of Object.entries(serverSettings)) {
+    if (val !== undefined && val !== null) {
+      const isCredentialField = key === 'telegramBotToken' || key === 'telegramChatId' || key === 'binanceApiKey' || key === 'binanceApiSecret' || key === 'githubPat';
+      const isMaskedVal = typeof val === 'string' && (val.includes('****') || val.includes('••••'));
+      const isEmptyVal = typeof val === 'string' && val.trim() === '';
+      if (isCredentialField && (isEmptyVal || isMaskedVal)) {
+        const existing = merged[key as keyof AppSettings];
+        if (!existing || (typeof existing === 'string' && (existing.includes('****') || existing.includes('••••')))) {
+          (merged as any)[key] = val;
+        }
+      } else {
+        (merged as any)[key] = val;
+      }
+    }
+  }
+  return merged;
+};
+
+export const mapRawPositionsToFrontend = (data: any[]): Position[] => {
+  if (!Array.isArray(data)) return [];
+  return data.map((p: any) => {
+    const isLong = p.direction === 'LONG';
+    const currentP = p.current_price || p.currentPrice || p.entry_price || p.entryPrice || 0;
+    const entryP = p.entry_price || p.entryPrice || 0;
+    const qty = p.quantity || 0;
+    const leverage = p.leverage || 1;
+    const allocated = p.allocated_balance || p.allocatedBalance || (entryP * qty) / leverage || 0;
+    
+    const priceDeltaPct = entryP > 0 ? (isLong ? (currentP - entryP) / entryP : (entryP - currentP) / entryP) : 0;
+    const pnl = priceDeltaPct * allocated * leverage;
+
+    return {
+      id: p.id,
+      symbol: p.symbol,
+      direction: p.direction,
+      entryPrice: entryP,
+      currentPrice: currentP,
+      quantity: qty,
+      leverage: leverage,
+      allocatedBalance: allocated,
+      tp1: p.tp1 || 0,
+      tp2: p.tp2 || 0,
+      tp3: p.tp3 || 0,
+      sl: p.sl || 0,
+      trailingStop: typeof p.trailing_stop === 'number' ? p.trailing_stop : (typeof p.trailingStop === 'number' ? p.trailingStop : null),
+      trailingStopActive: p.trailing_stop_active === 1 || p.trailingStopActive === true,
+      entryAtr: p.entry_atr || p.entryAtr || (entryP * 0.015),
+      timeOpen: p.time_open || p.timeOpen || new Date().toISOString(),
+      scoreAtEntry: p.score_at_entry || p.scoreAtEntry || p.score || 0,
+      strategy: p.strategy || 'BINANCE_COMPOSITE',
+      marketRegime: p.market_regime || p.marketRegime || undefined,
+      isAutoRegime: !!(p.is_auto_regime ?? p.isAutoRegime),
+      frequencyPreset: p.frequency_preset || p.frequencyPreset || 'LOW',
+      unrealizedPnl: pnl,
+      realizedPnl: p.realizedPnl || 0,
+      sizeRemainingPct: p.sizeRemainingPct ?? 100,
+      lastUpdated: Date.now(),
+      stopStatus: p.stopStatus || 'UNKNOWN',
+      mfe: p.mfe,
+      mae: p.mae
+    };
+  });
+};
+
 export default function App() {
   const { addToast } = useToast();
 
@@ -164,24 +230,7 @@ export default function App() {
         if (serverSettings.autoTradeEnabled !== undefined) {
           setEngineRunning(serverSettings.autoTradeEnabled !== false);
         }
-        setSettings(prev => {
-          const merged = { ...prev };
-          // Merge server settings, but never wipe existing non-empty credentials with empty strings
-          for (const [key, val] of Object.entries(serverSettings)) {
-            if (val !== undefined && val !== null) {
-              const isCredentialField = key === 'telegramBotToken' || key === 'telegramChatId' || key === 'binanceApiKey' || key === 'binanceApiSecret';
-              if (isCredentialField && typeof val === 'string' && val.trim() === '') {
-                // Keep whatever local credentials we already have
-                if (!merged[key as keyof AppSettings]) {
-                  (merged as any)[key] = val;
-                }
-              } else {
-                (merged as any)[key] = val;
-              }
-            }
-          }
-          return merged;
-        });
+        setSettings(prev => mergeServerSettingsWithLocal(prev, serverSettings));
       }
       setSettingsLoadError(null);
       setHasLoadedServerSettings(true);
@@ -968,46 +1017,7 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
       const res = await fetch('/api/positions');
       if (res.ok) {
         const data = await res.json();
-        const mapped = data.map((p: any) => {
-          const isLong = p.direction === 'LONG';
-          const currentP = p.current_price || p.entry_price || 0;
-          const entryP = p.entry_price || 0;
-          const qty = p.quantity || 0;
-          const leverage = p.leverage || 1;
-          const allocated = p.allocated_balance || (entryP * qty) / leverage || 0;
-          
-          const priceDeltaPct = entryP > 0 ? (isLong ? (currentP - entryP) / entryP : (entryP - currentP) / entryP) : 0;
-          const pnl = priceDeltaPct * allocated * leverage;
-
-          return {
-            id: p.id,
-            symbol: p.symbol,
-            direction: p.direction,
-            entryPrice: entryP,
-            currentPrice: currentP,
-            quantity: qty,
-            leverage: p.leverage || 1,
-            allocatedBalance: p.allocated_balance || (entryP * qty) / (p.leverage || 1) || 0,
-            tp1: p.tp1 || 0,
-            tp2: p.tp2 || 0,
-            tp3: p.tp3 || 0,
-            sl: p.sl || 0,
-            trailingStop: typeof p.trailing_stop === 'number' ? p.trailing_stop : null,
-            trailingStopActive: p.trailing_stop_active === 1,
-            timeOpen: p.time_open || new Date().toISOString(),
-            scoreAtEntry: p.score_at_entry || p.score || 0,
-            strategy: p.strategy || 'BINANCE_COMPOSITE',
-            marketRegime: p.market_regime || undefined,
-            isAutoRegime: !!p.is_auto_regime,
-            frequencyPreset: p.frequency_preset || 'LOW',
-            unrealizedPnl: pnl,
-            realizedPnl: 0,
-            sizeRemainingPct: 100,
-            lastUpdated: Date.now(),
-            stopStatus: p.stopStatus || 'UNKNOWN'
-          };
-        });
-        setPositions(mapped);
+        setPositions(mapRawPositionsToFrontend(data));
       }
     } catch (e) {}
   };
@@ -1279,7 +1289,41 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
           if (!active) return;
           try {
             const data = JSON.parse(event.data);
-            handlePriceBatch(data);
+            if (Array.isArray(data)) {
+              handlePriceBatch(data);
+            } else if (data && typeof data === 'object') {
+              if (data.type === 'PRICE_BATCH' && Array.isArray(data.data)) {
+                handlePriceBatch(data.data);
+              } else if (data.type === 'SETTINGS_UPDATE' && data.data) {
+                const s = data.data;
+                if (s.autoTradeEnabled !== undefined) {
+                  setEngineRunning(s.autoTradeEnabled !== false);
+                }
+                setSettings((prev) => mergeServerSettingsWithLocal(prev, s));
+              } else if (data.type === 'ENGINE_STATUS' && data.data) {
+                if (data.data.engineRunning !== undefined) {
+                  setEngineRunning(data.data.engineRunning);
+                }
+                if (data.data.autoTradeEnabled !== undefined) {
+                  setSettings(prev => prev.autoTradeEnabled === data.data.autoTradeEnabled ? prev : { ...prev, autoTradeEnabled: data.data.autoTradeEnabled });
+                }
+                if (data.data.globalFilterActive !== undefined) {
+                  setGlobalFilterState({
+                    isPausing: !!data.data.globalFilterActive,
+                    reason: data.data.globalFilterReason || null
+                  });
+                }
+              } else if (data.type === 'POSITIONS_UPDATE' && Array.isArray(data.data)) {
+                setPositions(mapRawPositionsToFrontend(data.data));
+              } else if (data.type === 'BALANCE_UPDATE' && data.data) {
+                if (data.data.demoBalance !== undefined) {
+                  setBalance(data.data.demoBalance);
+                }
+                if (Array.isArray(data.data.equitySnapshots)) {
+                  setEquitySnapshots(data.data.equitySnapshots);
+                }
+              }
+            }
           } catch (err) {}
         };
 
@@ -1410,11 +1454,19 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
         const res = await fetch('/api/bot/engine/status');
         if (res.ok) {
           const data = await res.json();
-          if (isMounted && data.globalFilterActive !== undefined) {
-            setGlobalFilterState({
-              isPausing: !!data.globalFilterActive,
-              reason: data.globalFilterReason || null
-            });
+          if (isMounted) {
+            if (data.globalFilterActive !== undefined) {
+              setGlobalFilterState({
+                isPausing: !!data.globalFilterActive,
+                reason: data.globalFilterReason || null
+              });
+            }
+            if (data.engineRunning !== undefined) {
+              setEngineRunning(data.engineRunning);
+            }
+            if (data.autoTradeEnabled !== undefined) {
+              setSettings(prev => prev.autoTradeEnabled === data.autoTradeEnabled ? prev : { ...prev, autoTradeEnabled: data.autoTradeEnabled });
+            }
           }
         }
       } catch (e) {
@@ -1422,12 +1474,15 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
       }
     };
     fetchStatus();
-    const interval = setInterval(fetchStatus, 8000);
+    const interval = setInterval(() => {
+      fetchStatus();
+      reloadSettings();
+    }, 8000);
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, []);
+  }, [reloadSettings]);
 
   // Synchronize engine state with settings.autoTradeEnabled
   useEffect(() => {

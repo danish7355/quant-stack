@@ -33,6 +33,43 @@ async function startServer() {
   // Connected browser UI WebSocket clients
   const clients = new Set<any>();
 
+  // Helper to mask sensitive credentials before transmitting over WebSocket / REST
+  const sanitizeSettingsForClient = (settings: any) => {
+    if (!settings) return {};
+    const safeSettings = { ...settings };
+    if (safeSettings.binanceApiKey) {
+      safeSettings.binanceApiKey = safeSettings.binanceApiKey.slice(0, 4) + '****' + safeSettings.binanceApiKey.slice(-4);
+    }
+    if (safeSettings.binanceApiSecret) {
+      safeSettings.binanceApiSecret = '••••••••';
+    }
+    if (safeSettings.telegramBotToken) {
+      safeSettings.telegramBotToken = safeSettings.telegramBotToken.slice(0, 6) + '****';
+    }
+    if (safeSettings.githubPat) {
+      safeSettings.githubPat = safeSettings.githubPat.slice(0, 4) + '****';
+    }
+    return safeSettings;
+  };
+
+  // Broadcast structured event to all active UI WebSocket clients
+  const broadcastWsEvent = (type: string, data: any) => {
+    if (clients.size === 0) return;
+    const msg = JSON.stringify({ type, data, timestamp: Date.now() });
+    for (const client of clients) {
+      if (client.readyState === 1) { // OPEN
+        try {
+          client.send(msg);
+        } catch (e) {}
+      }
+    }
+  };
+
+  // Wire PositionMonitor changes to instant WebSocket broadcasting
+  positionMonitor.onPositionsChange((positions) => {
+    broadcastWsEvent('POSITIONS_UPDATE', positions);
+  });
+
   // Keepalive heartbeat ping for connected clients every 15s to prevent proxy timeouts
   setInterval(() => {
     for (const client of clients) {
@@ -70,6 +107,33 @@ async function startServer() {
         ws.send(JSON.stringify(currentPrices));
       } catch (e) {}
     }
+
+    // Send immediate initial state snapshots
+    try {
+      ws.send(JSON.stringify({
+        type: 'ENGINE_STATUS',
+        data: {
+          engineRunning: autoTrader.isEngineActive(),
+          autoTradeEnabled: autoTrader.getSettings().autoTradeEnabled,
+          globalFilterActive: autoTrader.isGlobalFilterPausing(),
+          globalFilterReason: autoTrader.getGlobalFilterBlockReason()
+        },
+        timestamp: Date.now()
+      }));
+
+      ws.send(JSON.stringify({
+        type: 'SETTINGS_UPDATE',
+        data: sanitizeSettingsForClient(autoTrader.getSettings()),
+        timestamp: Date.now()
+      }));
+
+      ws.send(JSON.stringify({
+        type: 'POSITIONS_UPDATE',
+        data: positionMonitor.getActivePositions(),
+        timestamp: Date.now()
+      }));
+    } catch (e) {}
+
     ws.on('close', () => {
       console.log(`[WS] UI Client disconnected`);
       clients.delete(ws);
@@ -156,22 +220,7 @@ async function startServer() {
   app.get("/api/bot/settings", (req, res) => {
     try {
       const settings = autoTrader.getSettings();
-      // S3 fix: Never expose raw credentials to frontend
-      const safeSettings = { ...settings };
-      if (safeSettings.binanceApiKey) {
-        safeSettings.binanceApiKey = safeSettings.binanceApiKey.slice(0, 4) + '****' + safeSettings.binanceApiKey.slice(-4);
-      }
-      if (safeSettings.binanceApiSecret) {
-        safeSettings.binanceApiSecret = '••••••••';
-      }
-      if (safeSettings.telegramBotToken) {
-        safeSettings.telegramBotToken = safeSettings.telegramBotToken.slice(0, 6) + '****';
-      }
-      // Never expose GitHub PAT
-      if (safeSettings.githubPat) {
-        safeSettings.githubPat = safeSettings.githubPat.slice(0, 4) + '****';
-      }
-      res.json(safeSettings);
+      res.json(sanitizeSettingsForClient(settings));
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
@@ -193,7 +242,14 @@ async function startServer() {
   app.post("/api/bot/engine/start", async (req, res) => {
     try {
       autoTrader.startLoop();
-      await autoTrader.saveSettings({ autoTradeEnabled: true });
+      const updated = await autoTrader.saveSettings({ autoTradeEnabled: true });
+      broadcastWsEvent('ENGINE_STATUS', {
+        engineRunning: true,
+        autoTradeEnabled: true,
+        globalFilterActive: autoTrader.isGlobalFilterPausing(),
+        globalFilterReason: autoTrader.getGlobalFilterBlockReason()
+      });
+      broadcastWsEvent('SETTINGS_UPDATE', sanitizeSettingsForClient(updated));
       res.json({ success: true, engineRunning: true, message: "Engine started. Autonomous scanning & new trade execution active." });
     } catch (e) {
       res.status(500).json({ success: false, error: String(e) });
@@ -203,7 +259,14 @@ async function startServer() {
   app.post("/api/bot/engine/stop", async (req, res) => {
     try {
       autoTrader.stopLoop();
-      await autoTrader.saveSettings({ autoTradeEnabled: false });
+      const updated = await autoTrader.saveSettings({ autoTradeEnabled: false });
+      broadcastWsEvent('ENGINE_STATUS', {
+        engineRunning: false,
+        autoTradeEnabled: false,
+        globalFilterActive: autoTrader.isGlobalFilterPausing(),
+        globalFilterReason: autoTrader.getGlobalFilterBlockReason()
+      });
+      broadcastWsEvent('SETTINGS_UPDATE', sanitizeSettingsForClient(updated));
       res.json({ success: true, engineRunning: false, message: "Engine stopped. All new trade execution halted." });
     } catch (e) {
       res.status(500).json({ success: false, error: String(e) });
@@ -315,6 +378,15 @@ async function startServer() {
       payload.updatedAt = new Date().toISOString();
       payload.settingsVersion = (autoTrader.getSettings().settingsVersion || 0) + 1;
       const updated = await autoTrader.saveSettings(payload);
+      broadcastWsEvent('SETTINGS_UPDATE', sanitizeSettingsForClient(updated));
+      if (payload.autoTradeEnabled !== undefined) {
+        broadcastWsEvent('ENGINE_STATUS', {
+          engineRunning: autoTrader.isEngineActive(),
+          autoTradeEnabled: updated.autoTradeEnabled,
+          globalFilterActive: autoTrader.isGlobalFilterPausing(),
+          globalFilterReason: autoTrader.getGlobalFilterBlockReason()
+        });
+      }
       res.json({ 
         success: true, 
         settings: updated,
@@ -402,10 +474,12 @@ async function startServer() {
   });
 
   // Risk Manager Emergency Kill Switch Toggle Endpoint
-  app.post("/api/risk/toggle-kill-switch", (req, res) => {
+  app.post("/api/risk/toggle-kill-switch", async (req, res) => {
     try {
       const active = req.body?.active !== undefined ? Boolean(req.body.active) : !riskManager.isKillSwitchActive();
       riskManager.setKillSwitch(active);
+      const updated = await autoTrader.saveSettings({ killSwitchActive: active });
+      broadcastWsEvent('SETTINGS_UPDATE', sanitizeSettingsForClient(updated));
       console.log(`🛡️ [RiskManager] Kill switch ${active ? 'ENGAGED' : 'DISENGAGED'} by user request.`);
       res.json({ success: true, killSwitchActive: active });
     } catch (e) {
@@ -417,20 +491,7 @@ async function startServer() {
   app.get("/api/settings/trading", (req, res) => {
     try {
       const settings = autoTrader.getSettings();
-      const safeSettings = { ...settings };
-      if (safeSettings.binanceApiKey) {
-        safeSettings.binanceApiKey = safeSettings.binanceApiKey.slice(0, 4) + '****' + safeSettings.binanceApiKey.slice(-4);
-      }
-      if (safeSettings.binanceApiSecret) {
-        safeSettings.binanceApiSecret = '••••••••';
-      }
-      if (safeSettings.telegramBotToken) {
-        safeSettings.telegramBotToken = safeSettings.telegramBotToken.slice(0, 6) + '****';
-      }
-      if (safeSettings.githubPat) {
-        safeSettings.githubPat = safeSettings.githubPat.slice(0, 4) + '****';
-      }
-      res.json(safeSettings);
+      res.json(sanitizeSettingsForClient(settings));
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
@@ -555,6 +616,7 @@ async function startServer() {
         return res.status(400).json({ success: false, error: "Risk manager rejected or order already processing" });
       }
       await positionMonitor.refreshOpenPositions();
+      broadcastWsEvent('POSITIONS_UPDATE', positionMonitor.getActivePositions());
       res.json({ success: true, posId });
     } catch(e: any) {
       console.error("Trade execution error:", e);
@@ -564,9 +626,17 @@ async function startServer() {
 
   app.post("/api/bot/close", async (req, res) => {
     try {
-      const { id, currentPrice, reason } = req.body;
-      const pnl = await oms.closePosition(id, currentPrice, reason || 'MANUAL');
+      const id = req.body?.id || req.body?.positionId;
+      const currentPrice = req.body?.currentPrice ?? req.body?.closePrice;
+      const reason = req.body?.reason || req.body?.exitReason || 'MANUAL';
+      if (!id) {
+        return res.status(400).json({ success: false, error: "Missing position id" });
+      }
+      const pnl = await oms.closePosition(id, currentPrice, reason);
       await positionMonitor.refreshOpenPositions();
+      broadcastWsEvent('POSITIONS_UPDATE', positionMonitor.getActivePositions());
+      const s = autoTrader.getSettings();
+      broadcastWsEvent('BALANCE_UPDATE', { demoBalance: s.demoBalance, startingBalance: s.startingBalance, equitySnapshots: s.equitySnapshots || [] });
       res.json({ success: true, pnl });
     } catch(e) {
       res.status(500).json({ error: String(e) });
@@ -593,9 +663,12 @@ async function startServer() {
       const settings = autoTrader.getSettings();
       settings.demoBalance = settings.startingBalance || 10000;
       settings.equitySnapshots = [];
-      await autoTrader.saveSettings(settings);
+      const updated = await autoTrader.saveSettings(settings);
       
       await positionMonitor.refreshOpenPositions();
+      broadcastWsEvent('POSITIONS_UPDATE', []);
+      broadcastWsEvent('BALANCE_UPDATE', { demoBalance: updated.demoBalance, startingBalance: updated.startingBalance, equitySnapshots: [] });
+      broadcastWsEvent('SETTINGS_UPDATE', sanitizeSettingsForClient(updated));
       res.json({ success: true });
     } catch(e) {
       res.status(500).json({ error: String(e) });
@@ -611,6 +684,7 @@ async function startServer() {
         await oms.closePosition(p.id, p.current_price, "FLATTEN");
       }
       await positionMonitor.refreshOpenPositions();
+      broadcastWsEvent('POSITIONS_UPDATE', positionMonitor.getActivePositions());
       res.json({ success: true, message: `Flattened ${positions.length} positions.` });
     } catch(e) {
       res.status(500).json({ error: String(e) });
