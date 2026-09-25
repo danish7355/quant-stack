@@ -97,8 +97,8 @@ export class PriceStream {
   }
 
   private startHealthCheck() {
-    // If WS has not received messages in 6s, execute fallback REST poll
-    // If WS silent for > 20s, force WS reconnect
+    // High-speed adaptive price poller:
+    // If WS does not deliver frames within 1200ms, pull fast REST ticks every ~800ms
     if (this.fallbackInterval) clearInterval(this.fallbackInterval);
     this.fallbackInterval = setInterval(async () => {
       const now = Date.now();
@@ -111,7 +111,8 @@ export class PriceStream {
         this.isStale = true;
       }
 
-      if (timeSinceWsMessage > 6000 && timeSinceRestMessage > 3000) {
+      // Fast-path: When WebSocket is silent or blocked, immediately stream REST ticks without delay
+      if (timeSinceWsMessage > 1200 && timeSinceRestMessage >= 750) {
         try {
           const res = await fetch('https://fapi.binance.com/fapi/v1/ticker/price');
           if (res.ok) {
@@ -138,13 +139,13 @@ export class PriceStream {
         }
       }
       
-      // Trigger WS reconnection if persistently silent
-      if (timeSinceWsMessage > 25000) {
-        console.log('Binance WS silent for 25s, reconnecting WebSocket...');
-        this.lastWsMessageTime = now;
+      // Periodically attempt WS reconnection in background without pausing REST stream
+      if (timeSinceWsMessage > 60000) {
+        console.log('📡 [PriceStream] Retrying Binance WebSocket stream in background...');
+        this.lastWsMessageTime = now - 50000; // Preserve REST polling during reconnect
         this.connectWs();
       }
-    }, 2500);
+    }, 800);
   }
 
   private notifyListeners(batch: Array<{ s: string; p: number }>) {
