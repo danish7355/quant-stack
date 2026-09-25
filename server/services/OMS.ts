@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { db } from '../firebase.js';
+import { COLLECTIONS } from '../dbCollections.js';
 import { doc, setDoc, getDoc, updateDoc, writeBatch, collection } from 'firebase/firestore';
 import { riskManager } from './RiskManager.js';
 import { telegramService } from './TelegramService.js';
@@ -123,7 +124,7 @@ export class OMS {
       
       // Trade Admission Record (Audit Trail) - Non-blocking async
       if (!isQuotaExhausted()) {
-        safeSetDoc(doc(collection(db, 'trade_admissions'), posId), {
+        safeSetDoc(doc(collection(db, COLLECTIONS.TRADE_ADMISSIONS), posId), {
            posId,
            symbol,
            direction,
@@ -226,7 +227,7 @@ export class OMS {
       // Keep position instantly active in memory/local store
       positionMonitor.addPosition(positionData as any);
 
-      const docRef = doc(db, 'positions', posId);
+      const docRef = doc(db, COLLECTIONS.POSITIONS, posId);
       safeSetDoc(docRef, positionData).catch(() => {});
 
       // Trigger 24/7 background Telegram notification asynchronously
@@ -257,7 +258,7 @@ export class OMS {
     }
     this.closingPositions.add(posId);
     try {
-    const posRef = doc(db, 'positions', posId);
+    const posRef = doc(db, COLLECTIONS.POSITIONS, posId);
     // I5 fix: Use quota-safe Firestore read with in-memory fallback
     const snapRes = await safeGetDoc(posRef);
     if (!snapRes.exists) {
@@ -305,7 +306,7 @@ export class OMS {
     });
 
     const logId = `${posId}_tp1_${Date.now()}`;
-    await safeSetDoc(doc(db, 'trade_logs', logId), {
+    await safeSetDoc(doc(db, COLLECTIONS.TRADE_LOGS, logId), {
       id: logId,
       parent_position_id: posId,
       symbol: pos.symbol,
@@ -356,7 +357,7 @@ export class OMS {
   }
 
   public async closePosition(posId: string, currentPrice: number, exitReason: string, extraDiagnostic?: { mfe?: number; mae?: number }) {
-    const posRef = doc(db, 'positions', posId);
+    const posRef = doc(db, COLLECTIONS.POSITIONS, posId);
     let pos: any = null;
     const snapRes = await safeGetDoc(posRef);
     if (snapRes.exists && snapRes.data) {
@@ -416,7 +417,7 @@ export class OMS {
     const mfeVal = extraDiagnostic?.mfe ?? (pos as any).mfe ?? null;
     const maeVal = extraDiagnostic?.mae ?? (pos as any).mae ?? null;
 
-    await safeSetDoc(doc(db, 'trade_logs', posId), {
+    await safeSetDoc(doc(db, COLLECTIONS.TRADE_LOGS, posId), {
       id: posId,
       symbol: pos.symbol,
       direction: pos.direction,

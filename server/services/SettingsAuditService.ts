@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { doc } from 'firebase/firestore';
 import { db } from '../firebase.js';
+import { COLLECTIONS } from '../dbCollections.js';
 import { appendLocalJsonl, safeSetDoc, isQuotaExhausted } from './firestoreSafe.js';
 
 export interface SettingsAuditRecord {
@@ -125,7 +126,7 @@ export function recordSettingsAudit(
 
   // Best-effort persist to Firestore if quota not exhausted
   if (!isQuotaExhausted()) {
-    safeSetDoc(doc(db, 'settings_audit', auditId), record).catch(() => {});
+    safeSetDoc(doc(db, COLLECTIONS.SETTINGS_AUDIT, auditId), record).catch(() => {});
   }
 
   console.log(`📝 [SettingsAudit] Recorded audit ${auditId} (v${version}): ${changedFields.join(', ') || 'No fields changed'}`);

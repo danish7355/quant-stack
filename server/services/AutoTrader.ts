@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { db } from '../firebase.js';
+import { COLLECTIONS } from '../dbCollections.js';
 import { doc, getDoc, setDoc, collection, query, where, getDocs, deleteDoc } from 'firebase/firestore';
 import { oms } from './OMS.js';
 import { positionMonitor } from './PositionMonitor.js';
@@ -393,19 +394,19 @@ export class AutoTrader {
       console.log(`🧹 [AutoTrader] Starting cleanup of trade logs and closed positions older than ${cutoffDate}`);
 
       // 1. Cleanup 'trade_logs'
-      const tradeLogsRef = collection(db, 'trade_logs');
+      const tradeLogsRef = collection(db, COLLECTIONS.TRADE_LOGS);
       const qLogs = query(tradeLogsRef, where('time_close', '<', cutoffDate));
       const logsSnap = await getDocs(qLogs);
       
       let logsDeleted = 0;
       for (const docSnap of logsSnap.docs.slice(0, 10)) {
-        await safeDeleteDoc(doc(db, 'trade_logs', docSnap.id));
+        await safeDeleteDoc(doc(db, COLLECTIONS.TRADE_LOGS, docSnap.id));
         logsDeleted++;
       }
 
       // 2. Cleanup 'positions' where status is 'CLOSED' and time_close < cutoffDate
       // We query just on 'status' and filter dates locally to avoid requiring composite Firestore indexes
-      const posRef = collection(db, 'positions');
+      const posRef = collection(db, COLLECTIONS.POSITIONS);
       const qPos = query(posRef, where('status', '==', 'CLOSED'));
       const posSnap = await getDocs(qPos);
       
@@ -414,7 +415,7 @@ export class AutoTrader {
         if (posDeleted >= 10) break;
         const data = docSnap.data();
         if (data.time_close && data.time_close < cutoffDate) {
-          await safeDeleteDoc(doc(db, 'positions', docSnap.id));
+          await safeDeleteDoc(doc(db, COLLECTIONS.POSITIONS, docSnap.id));
           posDeleted++;
         }
       }
@@ -469,7 +470,7 @@ export class AutoTrader {
     // 2. Fetch remote settings from Firestore (canonical cloud source across Render deploys)
     let remoteData: Partial<ServerBotSettings> | null = null;
     try {
-      const snapRes = await safeGetDocSettings(doc(db, 'settings', 'bot_config'));
+      const snapRes = await safeGetDocSettings(doc(db, COLLECTIONS.SETTINGS, COLLECTIONS.SETTINGS_DOC));
       if (snapRes.success && snapRes.data) {
         remoteData = snapRes.data as Partial<ServerBotSettings>;
       }
@@ -497,7 +498,7 @@ export class AutoTrader {
         // Case B: Local disk settings are strictly newer than Firestore
         console.log(`💾 [AutoTrader] Local settings (v${localVersion}) are newer than Firestore (v${remoteVersion}). Syncing local to Firestore...`);
         // Keep local settings and push them to Firestore so cloud stays up-to-date!
-        safeSetDocSettings(doc(db, 'settings', 'bot_config'), this.settings, { merge: true }).catch(() => {});
+        safeSetDocSettings(doc(db, COLLECTIONS.SETTINGS, COLLECTIONS.SETTINGS_DOC), this.settings, { merge: true }).catch(() => {});
       } else {
         // Case C: Same version - merge any credentials that exist in one but not the other
         this.settings = this.mergeSettingsPreservingCredentials(this.settings, remoteData);
@@ -506,7 +507,7 @@ export class AutoTrader {
     } else if (hasLocal) {
       // Case D: Firestore was empty or unreachable, but local settings exist -> push local to Firestore
       console.log(`💾 [AutoTrader] Initializing Firestore from local settings (v${this.settings.settingsVersion || 1})...`);
-      safeSetDocSettings(doc(db, 'settings', 'bot_config'), this.settings, { merge: true }).catch(() => {});
+      safeSetDocSettings(doc(db, COLLECTIONS.SETTINGS, COLLECTIONS.SETTINGS_DOC), this.settings, { merge: true }).catch(() => {});
     }
 
     // 3. Fallback to process.env credentials if still missing (essential for Render env vars)
@@ -589,7 +590,7 @@ export class AutoTrader {
     writeLocalJson('settings.json', this.settings);
 
     // 2. Persist to Firestore with high-reliability settings writer (survives network lag on Render)
-    const firestoreRes = await safeSetDocSettings(doc(db, 'settings', 'bot_config'), this.settings, { merge: true });
+    const firestoreRes = await safeSetDocSettings(doc(db, COLLECTIONS.SETTINGS, COLLECTIONS.SETTINGS_DOC), this.settings, { merge: true });
     if (firestoreRes.success) {
       console.log(`✅ [AutoTrader] Settings v${this.settings.settingsVersion || 1} persisted to Firestore & local disk.`);
     } else {

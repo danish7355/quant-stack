@@ -1,4 +1,5 @@
 import { db } from '../firebase.js';
+import { COLLECTIONS } from '../dbCollections.js';
 import { doc } from 'firebase/firestore';
 import { safeGetDoc, readLocalJson } from './firestoreSafe.js';
 
@@ -100,7 +101,7 @@ export class TelegramService {
 
     // 2. Load from Firestore
     try {
-      const snapRes = await safeGetDoc(doc(db, 'settings', 'bot_config'));
+      const snapRes = await safeGetDoc(doc(db, COLLECTIONS.SETTINGS, COLLECTIONS.SETTINGS_DOC));
       if (snapRes.exists && snapRes.data) {
         const data = snapRes.data;
         if (data.telegramBotToken !== undefined) {

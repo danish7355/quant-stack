@@ -7,6 +7,7 @@ import { exec } from "child_process";
 import { promisify } from "util";
 const execAsync = promisify(exec);
 import { db } from "./server/firebase.js";
+import { COLLECTIONS } from "./server/dbCollections.js";
 import { collection, query, where, getDocs, orderBy, limit, writeBatch, deleteDoc, doc } from "firebase/firestore";
 import { oms } from "./server/services/OMS.js";
 import { executionAdapter } from "./server/services/ExecutionAdapter.js";
@@ -558,7 +559,7 @@ async function startServer() {
 
       // 3. Fallback to Firestore with non-blocking safe timeout
       if (!isQuotaExhausted()) {
-        const q = query(collection(db, 'positions'), where('status', '==', 'OPEN'));
+        const q = query(collection(db, COLLECTIONS.POSITIONS), where('status', '==', 'OPEN'));
         const { safeGetDocs } = await import('./server/services/firestoreSafe.js');
         const snap = await safeGetDocs(q);
         if (snap.success && snap.docs.length > 0) {
@@ -579,7 +580,7 @@ async function startServer() {
       if (isQuotaExhausted()) {
         return res.json(getRecentTradeLogsFromDisk(100));
       }
-      const q = query(collection(db, 'trade_logs'), orderBy('time_close', 'desc'), limit(100));
+      const q = query(collection(db, COLLECTIONS.TRADE_LOGS), orderBy('time_close', 'desc'), limit(100));
       const snapshot = await getDocs(q);
       const logs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       res.json(logs);
@@ -646,14 +647,14 @@ async function startServer() {
   app.post("/api/bot/reset", async (req, res) => {
     try {
       riskManager.reset();
-      const posSnapshot = await getDocs(collection(db, 'positions'));
+      const posSnapshot = await getDocs(collection(db, COLLECTIONS.POSITIONS));
       const posBatch = writeBatch(db);
       posSnapshot.docs.forEach((doc) => {
         posBatch.delete(doc.ref);
       });
       await posBatch.commit();
       
-      const logsSnapshot = await getDocs(collection(db, 'trade_logs'));
+      const logsSnapshot = await getDocs(collection(db, COLLECTIONS.TRADE_LOGS));
       const logsBatch = writeBatch(db);
       logsSnapshot.docs.forEach((doc) => {
         logsBatch.delete(doc.ref);
@@ -677,7 +678,7 @@ async function startServer() {
 
   app.post("/api/bot/flatten", async (req, res) => {
     try {
-      const q = query(collection(db, 'positions'), where('status', '==', 'OPEN'));
+      const q = query(collection(db, COLLECTIONS.POSITIONS), where('status', '==', 'OPEN'));
       const snapshot = await getDocs(q);
       const positions = snapshot.docs.map(doc => doc.data());
       for (const p of positions) {

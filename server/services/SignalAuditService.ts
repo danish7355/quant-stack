@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { doc } from 'firebase/firestore';
 import { db } from '../firebase.js';
+import { COLLECTIONS } from '../dbCollections.js';
 import { appendLocalJsonl, safeSetDoc, isQuotaExhausted } from './firestoreSafe.js';
 
 export type SignalDecision = 'ENTER' | 'WATCH' | 'REJECT';
@@ -78,7 +79,7 @@ export async function writeSignalAudit(record: Omit<SignalAuditRecord, 'createdA
 
     // Persist to Firestore only for actionable trade signals (ENTER), not every rejected coin scan
     if (!isQuotaExhausted() && fullRecord.decision === 'ENTER') {
-      safeSetDoc(doc(db, 'signal_audits', fullRecord.signalId), fullRecord).catch(() => {});
+      safeSetDoc(doc(db, COLLECTIONS.SIGNAL_AUDITS, fullRecord.signalId), fullRecord).catch(() => {});
     }
   } catch (error) {
     console.error('[SignalAuditService] Failed to record signal audit:', error);

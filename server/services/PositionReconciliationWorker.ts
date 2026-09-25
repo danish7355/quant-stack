@@ -1,4 +1,5 @@
 import { db } from '../firebase.js';
+import { COLLECTIONS } from '../dbCollections.js';
 import { collection, doc } from 'firebase/firestore';
 import { executionAdapter } from './ExecutionAdapter.js';
 import { telegramService } from './TelegramService.js';
@@ -43,7 +44,7 @@ export class PositionReconciliationWorker {
         const local = readLocalJson<any[]>('positions.json', []);
         activeDbPositions = local.filter((p: any) => p.status === 'OPEN').map((p: any) => ({ docId: p.id, ...p }));
       } else {
-        const snapRes = await safeGetDocs(collection(db, 'positions'));
+        const snapRes = await safeGetDocs(collection(db, COLLECTIONS.POSITIONS));
         if (snapRes.success) {
           activeDbPositions = snapRes.docs.map(d => ({ docId: d.id, ...d.data() })).filter((p: any) => p.status === 'OPEN');
         } else {
@@ -84,7 +85,7 @@ export class PositionReconciliationWorker {
         }
 
         if (dbPos.stopStatus !== stopStatus) {
-           await safeUpdateDoc(doc(db, 'positions', dbPos.docId), {
+           await safeUpdateDoc(doc(db, COLLECTIONS.POSITIONS, dbPos.docId), {
              stopStatus
            });
         }
@@ -95,7 +96,7 @@ export class PositionReconciliationWorker {
         const isBinanceOpen = activeBinancePositions.some((p: any) => p.symbol === dbPos.symbol);
         if (!isBinanceOpen) {
           console.warn(`[Reconciliation] DB shows OPEN position for ${dbPos.symbol}, but Binance is flat. Auto-closing DB record.`);
-          await safeUpdateDoc(doc(db, 'positions', dbPos.docId), {
+          await safeUpdateDoc(doc(db, COLLECTIONS.POSITIONS, dbPos.docId), {
             status: 'CLOSED',
             execution_state: 'CLOSED_BY_RECONCILIATION'
           });

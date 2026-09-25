@@ -1,4 +1,5 @@
 import { db } from '../firebase.js';
+import { COLLECTIONS } from '../dbCollections.js';
 import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
 import { priceStream } from './PriceStream.js';
 import { oms } from './OMS.js';
@@ -113,7 +114,7 @@ export class PositionMonitor {
         }
         return;
       }
-      const q = query(collection(db, 'positions'), where('status', '==', 'OPEN'));
+      const q = query(collection(db, COLLECTIONS.POSITIONS), where('status', '==', 'OPEN'));
       const res = await safeGetDocs(q);
       if (res.success && res.docs) {
         const remote = res.docs.map(doc => doc.data() as MonitoredPosition);
@@ -295,7 +296,7 @@ export class PositionMonitor {
             const newSl = isLong ? Math.max(pos.sl || 0, candidate) : Math.min(pos.sl || 999999, candidate);
             if (isLong ? newSl > (pos.sl || 0) : newSl < (pos.sl || 999999)) {
               pos.sl = newSl;
-              safeUpdateDoc(doc(db, 'positions', pos.id), { sl: newSl }).catch(() => {});
+              safeUpdateDoc(doc(db, COLLECTIONS.POSITIONS, pos.id), { sl: newSl }).catch(() => {});
               writeLocalJson('positions.json', this.activePositions);
               this.notifyPositionListeners();
               telegramService.notifyTrailingStop(pos, oldSl, newSl, currentPrice).catch(() => {});
@@ -328,7 +329,7 @@ export class PositionMonitor {
              pos.sl = isLong ? Math.max(pos.sl || 0, pos.entry_price) : Math.min(pos.sl || 999999, pos.entry_price); // move SL to breakeven (if not already better)
              console.log(`🎯 [PositionMonitor] Aggressive 1:3 TP2 hit on ${pos.symbol}. Securing 60%.`);
              // Persist tp2Hit + breakeven SL to Firestore immediately to prevent re-trigger after refresh
-             safeUpdateDoc(doc(db, 'positions', pos.id), { tp2Hit: true, sl: pos.sl }).catch(() => {});
+             safeUpdateDoc(doc(db, COLLECTIONS.POSITIONS, pos.id), { tp2Hit: true, sl: pos.sl }).catch(() => {});
              oms.partialClosePosition(pos.id, currentPrice, 0.60, 'TP2_1_3_PARTIAL')
                .then(() => this.refreshOpenPositions())
                .catch(err => console.log('Partial error:', err));
@@ -345,7 +346,7 @@ export class PositionMonitor {
                 const oldSl = pos.sl || 0;
                 pos.sl = newSl;
                 pos.trailing_stop_active = 1;
-                safeUpdateDoc(doc(db, 'positions', pos.id), { sl: newSl, trailing_stop_active: 1, extremeSinceEntry: pos.extremeSinceEntry }).catch(() => {});
+                safeUpdateDoc(doc(db, COLLECTIONS.POSITIONS, pos.id), { sl: newSl, trailing_stop_active: 1, extremeSinceEntry: pos.extremeSinceEntry }).catch(() => {});
                 writeLocalJson('positions.json', this.activePositions);
                 this.notifyPositionListeners();
                 // C4 fix: Update exchange stop-loss to match trailed stop
@@ -371,7 +372,7 @@ export class PositionMonitor {
                 const oldSl = pos.sl || 999999;
                 pos.sl = newSl;
                 pos.trailing_stop_active = 1;
-                safeUpdateDoc(doc(db, 'positions', pos.id), { sl: newSl, trailing_stop_active: 1, extremeSinceEntry: pos.extremeSinceEntry }).catch(() => {});
+                safeUpdateDoc(doc(db, COLLECTIONS.POSITIONS, pos.id), { sl: newSl, trailing_stop_active: 1, extremeSinceEntry: pos.extremeSinceEntry }).catch(() => {});
                 writeLocalJson('positions.json', this.activePositions);
                 this.notifyPositionListeners();
                 // C4 fix: Update exchange stop-loss to match trailed stop
