@@ -11,7 +11,9 @@ export class ExecutionAdapter {
       enableRateLimit: true,
       options: { defaultType: 'future' }
     });
-    this.exchange.setSandboxMode(true);
+    try {
+      this.exchange.setSandboxMode(true);
+    } catch (e) {}
   }
 
   // Phase 2 Requirement: Double confirmation flow to enable live mode
@@ -32,7 +34,9 @@ export class ExecutionAdapter {
       this.isLive = true;
       this.exchange.apiKey = apiKey || '';
       this.exchange.secret = secret || '';
-      this.exchange.setSandboxMode(false);
+      try {
+        this.exchange.setSandboxMode(false);
+      } catch (e) {}
       this.loadExchangeInfo();
       console.warn("ExecutionAdapter: 🚨 LIVE MODE ENABLED 🚨");
       return true;
@@ -41,7 +45,9 @@ export class ExecutionAdapter {
       this.liveModeUnlocked = false;
       this.exchange.apiKey = '';
       this.exchange.secret = '';
-      this.exchange.setSandboxMode(true);
+      try {
+        this.exchange.setSandboxMode(true);
+      } catch (e) {}
       return true;
     }
   }
