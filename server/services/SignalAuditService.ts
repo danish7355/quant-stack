@@ -76,8 +76,8 @@ export async function writeSignalAudit(record: Omit<SignalAuditRecord, 'createdA
     // Persist to local jsonl file
     appendLocalJsonl('signal_audit.jsonl', fullRecord);
 
-    // Persist to Firestore if quota not exhausted
-    if (!isQuotaExhausted()) {
+    // Persist to Firestore only for actionable trade signals (ENTER), not every rejected coin scan
+    if (!isQuotaExhausted() && fullRecord.decision === 'ENTER') {
       safeSetDoc(doc(db, 'signal_audits', fullRecord.signalId), fullRecord).catch(() => {});
     }
   } catch (error) {

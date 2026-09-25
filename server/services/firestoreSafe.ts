@@ -40,6 +40,15 @@ export function isQuotaExhausted(): boolean {
   return Date.now() < quotaExhaustedUntil;
 }
 
+export function clearQuotaExhausted() {
+  quotaExhaustedUntil = 0;
+  try {
+    if (fs.existsSync(QUOTA_STATE_FILE)) {
+      fs.unlinkSync(QUOTA_STATE_FILE);
+    }
+  } catch (e) {}
+}
+
 export function isQuotaError(error: any): boolean {
   if (!error) return false;
   const msg = String(error?.message || error?.code || error);
@@ -47,7 +56,6 @@ export function isQuotaError(error: any): boolean {
     msg.includes('resource-exhausted') ||
     msg.includes('RESOURCE_EXHAUSTED') ||
     msg.includes('Quota limit exceeded') ||
-    msg.includes('Firestore timeout') ||
     error?.code === 'resource-exhausted'
   );
 }
@@ -242,5 +250,47 @@ export async function safeGetDocs(q: Query) {
       markQuotaExhausted();
     }
     return { success: false, docs: [], error };
+  }
+}
+
+/**
+ * Dedicated settings write with up to 3 retries and 10s timeout per attempt.
+ * Always attempts write, ensuring user settings and credentials reach Firestore
+ * even across high-latency cloud connections (Render) or during log quota cooldowns.
+ */
+export async function safeSetDocSettings<T extends Record<string, any>>(
+  ref: DocumentReference,
+  data: T,
+  options?: SetOptions
+): Promise<{ success: boolean; error?: any }> {
+  let lastError: any = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      if (options) {
+        await withTimeout(setDoc(ref, data, options), 10000, 'Firestore settings save timeout');
+      } else {
+        await withTimeout(setDoc(ref, data), 10000, 'Firestore settings save timeout');
+      }
+      return { success: true };
+    } catch (err: any) {
+      lastError = err;
+      if (attempt < 3) {
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+      }
+    }
+  }
+  console.warn(`[Firestore] safeSetDocSettings failed after 3 attempts for ${ref.path}:`, lastError?.message || lastError);
+  return { success: false, error: lastError };
+}
+
+/**
+ * Dedicated settings fetch with 10s timeout to survive cloud container cold-starts on Render.
+ */
+export async function safeGetDocSettings(ref: DocumentReference, timeoutMs = 10000) {
+  try {
+    const snap = await withTimeout(getDoc(ref), timeoutMs, 'Firestore settings load timeout');
+    return { success: true, exists: snap.exists(), data: snap.exists() ? snap.data() : null };
+  } catch (error: any) {
+    return { success: false, exists: false, data: null, error };
   }
 }

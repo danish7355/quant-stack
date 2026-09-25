@@ -4,7 +4,7 @@ import { db } from '../firebase.js';
 import { doc, getDoc, setDoc, collection, query, where, getDocs, deleteDoc } from 'firebase/firestore';
 import { oms } from './OMS.js';
 import { positionMonitor } from './PositionMonitor.js';
-import { isQuotaExhausted, safeSetDoc, safeDeleteDoc, safeGetDoc, readLocalJson, writeLocalJson } from './firestoreSafe.js';
+import { isQuotaExhausted, safeSetDoc, safeDeleteDoc, safeGetDoc, safeSetDocSettings, safeGetDocSettings, readLocalJson, writeLocalJson } from './firestoreSafe.js';
 
 import { telegramService } from './TelegramService.js';
 import { riskManager } from './RiskManager.js';
@@ -397,7 +397,7 @@ export class AutoTrader {
       const logsSnap = await getDocs(qLogs);
       
       let logsDeleted = 0;
-      for (const docSnap of logsSnap.docs) {
+      for (const docSnap of logsSnap.docs.slice(0, 10)) {
         await safeDeleteDoc(doc(db, 'trade_logs', docSnap.id));
         logsDeleted++;
       }
@@ -410,6 +410,7 @@ export class AutoTrader {
       
       let posDeleted = 0;
       for (const docSnap of posSnap.docs) {
+        if (posDeleted >= 10) break;
         const data = docSnap.data();
         if (data.time_close && data.time_close < cutoffDate) {
           await safeDeleteDoc(doc(db, 'positions', docSnap.id));
@@ -423,31 +424,102 @@ export class AutoTrader {
     }
   }
 
-  public async loadSettings(): Promise<ServerBotSettings> {
-    // Load local settings first for immediate resilience
-    const localSettings = readLocalJson<Partial<ServerBotSettings>>('settings.json', {});
-    if (localSettings && Object.keys(localSettings).length > 0) {
-      this.settings = { ...this.settings, ...localSettings };
+  /**
+   * Helper that merges incoming settings onto target while strictly preventing
+   * non-empty credentials from being erased by empty strings, null, undefined, or masked asterisks.
+   */
+  public mergeSettingsPreservingCredentials(
+    target: ServerBotSettings,
+    source: Partial<ServerBotSettings>,
+    forceClearCredentials = false
+  ): ServerBotSettings {
+    const updated = { ...target };
+    const credFields = ['telegramBotToken', 'telegramChatId', 'binanceApiKey', 'binanceApiSecret', 'githubPat'];
+
+    for (const [key, val] of Object.entries(source)) {
+      if (val === undefined || val === null) continue;
+
+      const isCred = credFields.includes(key);
+      if (isCred && !forceClearCredentials) {
+        if (typeof val === 'string') {
+          const trimmed = val.trim();
+          // Never allow empty strings, whitespace, or masked patterns to overwrite a valid credential
+          if (trimmed === '' || trimmed.includes('****') || trimmed.includes('••••')) {
+            continue;
+          }
+        }
+      }
+
+      (updated as any)[key] = val;
     }
 
-    if (!isQuotaExhausted()) {
-      try {
-        const snapRes = await safeGetDoc(doc(db, 'settings', 'bot_config'));
-        if (snapRes.success && snapRes.data) {
-          const data = snapRes.data as Partial<ServerBotSettings>;
-          // Merge data, keeping any existing valid credentials if firestore values are empty
-          const updated = { ...this.settings };
-          for (const [key, val] of Object.entries(data)) {
-            if (val !== undefined && val !== null) {
-              (updated as any)[key] = val;
-            }
-          }
-          this.settings = updated;
-          writeLocalJson('settings.json', this.settings);
-        }
-      } catch (e) {
-        console.warn('AutoTrader: Could not load settings from Firestore, using local settings.');
+    return updated;
+  }
+
+  public async loadSettings(): Promise<ServerBotSettings> {
+    // 1. Load local settings from disk (fast, immediate resilience)
+    const localSettings = readLocalJson<Partial<ServerBotSettings>>('settings.json', {});
+    const hasLocal = Boolean(localSettings && Object.keys(localSettings).length > 0);
+
+    if (hasLocal) {
+      this.settings = this.mergeSettingsPreservingCredentials(this.settings, localSettings);
+    }
+
+    // 2. Fetch remote settings from Firestore (canonical cloud source across Render deploys)
+    let remoteData: Partial<ServerBotSettings> | null = null;
+    try {
+      const snapRes = await safeGetDocSettings(doc(db, 'settings', 'bot_config'));
+      if (snapRes.success && snapRes.data) {
+        remoteData = snapRes.data as Partial<ServerBotSettings>;
       }
+    } catch (e) {
+      console.warn('AutoTrader: Could not reach Firestore for settings, using local fallback.');
+    }
+
+    if (remoteData && Object.keys(remoteData).length > 0) {
+      const localVersion = Number(this.settings.settingsVersion) || 0;
+      const remoteVersion = Number(remoteData.settingsVersion) || 0;
+      const localTime = this.settings.updatedAt ? new Date(this.settings.updatedAt).getTime() : 0;
+      const remoteTime = remoteData.updatedAt ? new Date(remoteData.updatedAt).getTime() : 0;
+
+      // Determine which source is strictly newer
+      const isRemoteNewer = remoteVersion > localVersion || (remoteVersion === localVersion && remoteTime > localTime);
+      const isLocalNewer = localVersion > remoteVersion || (localVersion === remoteVersion && localTime > remoteTime);
+
+      if (!hasLocal || isRemoteNewer) {
+        // Case A: Fresh Render deploy (no local file) OR Firestore has strictly newer version
+        console.log(`☁️ [AutoTrader] Adopting remote Firestore settings (v${remoteVersion}, updated ${remoteData.updatedAt || 'unknown'}).`);
+        this.settings = this.mergeSettingsPreservingCredentials(this.settings, remoteData);
+        // Cache to local disk
+        writeLocalJson('settings.json', this.settings);
+      } else if (isLocalNewer) {
+        // Case B: Local disk settings are strictly newer than Firestore
+        console.log(`💾 [AutoTrader] Local settings (v${localVersion}) are newer than Firestore (v${remoteVersion}). Syncing local to Firestore...`);
+        // Keep local settings and push them to Firestore so cloud stays up-to-date!
+        safeSetDocSettings(doc(db, 'settings', 'bot_config'), this.settings, { merge: true }).catch(() => {});
+      } else {
+        // Case C: Same version - merge any credentials that exist in one but not the other
+        this.settings = this.mergeSettingsPreservingCredentials(this.settings, remoteData);
+        writeLocalJson('settings.json', this.settings);
+      }
+    } else if (hasLocal) {
+      // Case D: Firestore was empty or unreachable, but local settings exist -> push local to Firestore
+      console.log(`💾 [AutoTrader] Initializing Firestore from local settings (v${this.settings.settingsVersion || 1})...`);
+      safeSetDocSettings(doc(db, 'settings', 'bot_config'), this.settings, { merge: true }).catch(() => {});
+    }
+
+    // 3. Fallback to process.env credentials if still missing (essential for Render env vars)
+    if (!this.settings.telegramBotToken && process.env.TELEGRAM_BOT_TOKEN) {
+      this.settings.telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
+    }
+    if (!this.settings.telegramChatId && process.env.TELEGRAM_CHAT_ID) {
+      this.settings.telegramChatId = process.env.TELEGRAM_CHAT_ID;
+    }
+    if (!this.settings.binanceApiKey && process.env.BINANCE_API_KEY) {
+      this.settings.binanceApiKey = process.env.BINANCE_API_KEY;
+    }
+    if (!this.settings.binanceApiSecret && process.env.BINANCE_API_SECRET) {
+      this.settings.binanceApiSecret = process.env.BINANCE_API_SECRET;
     }
 
     if (!this.settings.strategyBucket || this.settings.strategyBucket.length === 0) {
@@ -460,6 +532,7 @@ export class AutoTrader {
     this.syncRiskManagerSettings();
     positionMonitor.settings = this.settings;
 
+    console.log(`⚙️ [AutoTrader] Settings ready. Version: v${this.settings.settingsVersion || 1}, Strategy: ${this.settings.activeStrategy}, Telegram: ${this.settings.telegramBotToken ? 'Configured' : 'Missing'}`);
     return this.settings;
   }
 
@@ -491,18 +564,12 @@ export class AutoTrader {
 
   public async saveSettings(newSettings: Partial<ServerBotSettings>, source: 'FRONTEND' | 'API' | 'SYSTEM' = 'FRONTEND'): Promise<ServerBotSettings> {
     const before = { ...this.settings };
-    const updated = { ...this.settings };
-    for (const [k, v] of Object.entries(newSettings)) {
-      if (v !== undefined && v !== null) {
-        // Protect credentials from accidental erasure if new value is empty string but existing is set
-        const isCredential = k === 'telegramBotToken' || k === 'telegramChatId' || k === 'binanceApiKey' || k === 'binanceApiSecret';
-        if (isCredential && typeof v === 'string' && v.trim() === '' && !newSettings.forceClearCredentials) {
-          continue;
-        }
-        (updated as any)[k] = v;
-      }
-    }
-    this.settings = updated;
+    this.settings = this.mergeSettingsPreservingCredentials(
+      this.settings,
+      newSettings,
+      newSettings.forceClearCredentials === true
+    );
+
     if (newSettings.autoTradeEnabled !== undefined) {
       if (newSettings.autoTradeEnabled) {
         this.startLoop();
@@ -517,13 +584,18 @@ export class AutoTrader {
     this.syncRiskManagerSettings();
     positionMonitor.settings = this.settings;
 
-    // Always persist locally
+    // 1. Always persist locally
     writeLocalJson('settings.json', this.settings);
 
-    // Safely attempt persistence to Firestore
-    await safeSetDoc(doc(db, 'settings', 'bot_config'), this.settings, { merge: true });
+    // 2. Persist to Firestore with high-reliability settings writer (survives network lag on Render)
+    const firestoreRes = await safeSetDocSettings(doc(db, 'settings', 'bot_config'), this.settings, { merge: true });
+    if (firestoreRes.success) {
+      console.log(`✅ [AutoTrader] Settings v${this.settings.settingsVersion || 1} persisted to Firestore & local disk.`);
+    } else {
+      console.warn(`⚠️ [AutoTrader] Saved to local disk, but Firestore write deferred:`, firestoreRes.error?.message || firestoreRes.error);
+    }
 
-    // Record audit trail of changes
+    // 3. Record audit trail of changes
     recordSettingsAudit(before, this.settings, this.settings.settingsVersion || 1, source);
 
     return this.settings;
