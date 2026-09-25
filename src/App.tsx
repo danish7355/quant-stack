@@ -22,6 +22,7 @@ import {
   detectCompression, detectBreakout, scoreBreakout, applyTrendAndMomentumBonus, 
   calculateATR, calculateEMA, determineStopLoss, calculateVcbTargets
 } from './utils/strategies/volatilityCompression';
+import { evaluateTwoSidedCoilBreakout } from './utils/strategies/twoSidedCoilBreakout';
 import { evaluateSmc } from './utils/strategies/smcLiquidity';
 import { evaluateTrendPullbackDetailed } from './utils/strategies/trendPullback';
 import { formatPrice } from './utils/format';
@@ -406,6 +407,14 @@ export default function App() {
     const pairs = await fetchTopFuturesPairs();
     const finalCoinsList: CoinDetail[] = [];
 
+    // Pre-fetch BTC klines on the user's configured timeframe for strategy context filtering
+    let btcCandles: any[] = [];
+    try {
+      btcCandles = await fetchKlines('BTCUSDT', settingsRef.current.timeframe);
+    } catch (e) {
+      btcCandles = [];
+    }
+
     // Process pairs in concurrent batches of 6 for lightning-fast scan waves
     const BATCH_SIZE = 6;
     for (let i = 0; i < pairs.length; i += BATCH_SIZE) {
@@ -472,133 +481,77 @@ export default function App() {
                 finalStatus = results.status || 'RANGE';
                 finalReason = crSignal ? crSignal.reason : 'Scanning for climax exhaustion';
               }
-            } else if (settingsRef.current.activeStrategy === 'VOLATILITY_COMPRESSION') {
-              if (candles.length >= 50) {
-                const lastCandle = candles[candles.length - 1];
-                const previousCandles = candles.slice(0, -1);
-                const atrSeries = calculateATR(previousCandles, 14);
-                const atr = atrSeries[atrSeries.length - 1];
-                const atrAvg = atrSeries.slice(-50).reduce((a, b) => a + b, 0) / 50;
-                
-                const compression = detectCompression(previousCandles, atr, atrAvg, settingsRef.current);
-                const breakout = detectBreakout(lastCandle, compression, atr, settingsRef.current, candles);
-                
-                const closes = candles.map(c => c.close);
-                const ema9 = calculateEMA(closes, 9).pop() || 0;
-                const ema21 = calculateEMA(closes, 21).pop() || 0;
-                const ema50 = calculateEMA(closes, 50).pop() || 0;
-                const rsi = results.indicators?.rsi || 50;
+            } else if (settingsRef.current.activeStrategy === 'VOLATILITY_COMPRESSION' || settingsRef.current.activeStrategy === 'EARLY_COIL_BREAKOUT') {
+              if (candles.length >= 30) {
+                const coilSig = evaluateTwoSidedCoilBreakout(
+                  candles,
+                  btcCandles,
+                  {
+                    symbol: pair.symbol,
+                    timeframe: settingsRef.current.timeframe,
+                    minRrRatio: 5.0, // Strictly enforce genuine 1:5 reward-to-risk minimum
+                    aggressiveBreakoutMode: (settingsRef.current as any).coilAggressiveBreakout === true
+                  }
+                );
 
-                if (breakout && breakout.direction) {
-                  let vcbScore = scoreBreakout(breakout, settingsRef.current);
-                  vcbScore = applyTrendAndMomentumBonus(vcbScore, breakout.direction, ema9, ema21, ema50, rsi, settingsRef.current);
-                  
-                  finalScore = vcbScore;
-                  finalDirection = breakout.direction;
-                  finalStatus = vcbScore >= settingsRef.current.autoTradeThreshold ? 'STRONG_TREND' : 'WEAK_TREND';
-                  finalReason = breakout.isPreBlastCoil
-                    ? `VCB Pre-Blast Inception (RVOL: ${breakout.rvol.toFixed(1)}x, Squeeze: ${compression.isSqueezed ? 'YES' : 'ATR'})`
-                    : `VCB Breakout Inception (RVOL: ${breakout.rvol.toFixed(1)}x, Squeeze: ${compression.isSqueezed ? 'YES' : 'ATR'})`;
+                if (coilSig.status.startsWith('VALID')) {
+                  finalScore = coilSig.score;
+                  finalDirection = coilSig.side;
+                  finalStatus = 'STRONG_TREND';
+                  finalReason = `${coilSig.setup} (${coilSig.status}) - R:R 1:${coilSig.rrRatio.toFixed(1)}`;
+                  finalSl = coilSig.stop;
+                  finalTp1 = coilSig.target;
+                  finalTp2 = coilSig.target;
+                  finalTp3 = coilSig.target;
 
-                  finalSl = determineStopLoss(breakout.direction, compression, atr, settingsRef.current, candles, pair.price);
-                  const vcbRisk = Math.abs(pair.price - finalSl);
-                  const targets = calculateVcbTargets(pair.price, breakout.direction, vcbRisk, compression);
-                  finalTp1 = targets.tp1;
-                  finalTp2 = targets.tp2;
-                  finalTp3 = targets.tp3;
-                  
                   if (!loggedTriggerStatesRef.current.has(pair.symbol)) {
                     loggedTriggerStatesRef.current.add(pair.symbol);
-                    const riskPerUnit = Math.abs(pair.price - finalSl).toFixed(5);
-                    const tp1R = (Math.abs(finalTp1 - pair.price) / Math.abs(pair.price - finalSl)).toFixed(1);
-                    const msg = `[VCB PAPER TRADE — ${breakout.direction}]
-Symbol: ${pair.symbol}
-Setup Timeframe: ${settingsRef.current.timeframe}
-Status: TRIGGERED
-
-HTF Context: ${compression.priorTrend}
-Compression: ${compression.squeezeCount || 5}+ bars
-RH: ${compression.windowHigh} | RL: ${compression.windowLow}
-ATR: ${atr.toFixed(5)} | ATR Ratio: ${(compression.compressionRatio || 0).toFixed(2)}
-Volume: Trigger RVOL ${breakout.rvol.toFixed(2)}x
-
-Entry Mode: CONFIRMED_CLOSE
-Entry: ${pair.price}
-Stop-Loss: ${finalSl.toFixed(5)}
-Risk per Unit: ${riskPerUnit}
-
-TP1: ${finalTp1.toFixed(5)} (${tp1R}R, 40%)
-TP2: ${finalTp2.toFixed(5)} (3.0R, 40%)
-TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)
-
-Exposure Status: APPROVED\nReason Passed: ${finalReason}`;
-                    addTerminalLog(msg);
-                    addToast('info', 'New Signal Triggered', `VCB ${breakout.direction} on ${pair.symbol}`, { label: 'View Chart', onClick: () => { setSelectedSymbol(pair.symbol); setActiveTab('chart'); } });
+                    addTerminalLog(coilSig.formattedOutput);
+                    addToast('info', 'New Signal Triggered', `${coilSig.setup} ${coilSig.side} on ${pair.symbol} (1:${coilSig.rrRatio.toFixed(1)} RR)`, {
+                      label: 'View Chart',
+                      onClick: () => { setSelectedSymbol(pair.symbol); setActiveTab('chart'); }
+                    });
                     if (settingsRef.current.alertOnNewSignal !== false) {
-                      dispatchTelegramAlert(`📡 <b>NEW SIGNAL: ${pair.symbol}</b>\n\n<pre>${msg.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`);
+                      dispatchTelegramAlert(`📡 <b>NEW COIL SIGNAL: ${pair.symbol}</b>\n\n<pre>${coilSig.formattedOutput.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`);
                     }
                   }
-                } else if (compression.isCompressed) {
-                  let coilingScore = 48;
-                  if (compression.isSqueezed) coilingScore += 12 + Math.min(8, (compression.squeezeCount || 1) * 2);
-                  if (compression.hasVolumeContraction) coilingScore += 5;
-                  if (compression.hasPriorImpulse) coilingScore += 5;
-                  
-                  let coilingDir: 'LONG' | 'SHORT' | 'NEUTRAL' = 'NEUTRAL';
-                  if (ema9 > ema21 && ema21 > ema50) {
-                    coilingDir = 'LONG';
-                    coilingScore += 4;
-                  } else if (ema9 < ema21 && ema21 < ema50) {
-                    coilingDir = 'SHORT';
-                    coilingScore += 4;
-                  }
-
-                  finalScore = Math.min(74, Math.round(coilingScore));
-                  finalDirection = coilingDir;
+                } else if (coilSig.status.startsWith('WATCHLIST') || coilSig.status.startsWith('STATUS: WATCHLIST')) {
+                  finalScore = coilSig.score;
+                  finalDirection = 'NEUTRAL';
                   finalStatus = 'ARMED';
-                  finalReason = `VCB ARMED (${compression.isSqueezed ? `Squeeze ${compression.squeezeCount || 1}b` : 'ATR Contraction'}) - Awaiting Breakout`;
-                  
+                  finalReason = coilSig.status;
+
                   if (!loggedArmedStatesRef.current.has(pair.symbol)) {
                     loggedArmedStatesRef.current.add(pair.symbol);
-                    const msg = `[VCB ARMED — NO PAPER TRADE YET]
-Symbol: ${pair.symbol}
-Setup Timeframe: ${settingsRef.current.timeframe}
-Compression Bars: ${compression.squeezeCount || 5}+ bars
-RH: ${compression.windowHigh} | RL: ${compression.windowLow}
-Box Width: ${(compression.windowHigh - compression.windowLow).toFixed(5)}
-ATR: ${atr.toFixed(5)} | ATR Ratio: ${(compression.compressionRatio || 0).toFixed(2)}
-Volume: Contraction ${compression.hasVolumeContraction ? 'Yes' : 'No'}
-Potential Long Trigger: ${compression.windowHigh + atr * 0.15}
-Potential Short Trigger: ${compression.windowLow - atr * 0.15}
-Status: ARMED — WAIT FOR USER-CONFIGURED ENTRY RULE`;
-                    addTerminalLog(msg);
-                    addToast('info', 'Signal Armed', `VCB Armed on ${pair.symbol}`, { label: 'View Chart', onClick: () => { setSelectedSymbol(pair.symbol); setActiveTab('chart'); } });
+                    addTerminalLog(coilSig.formattedOutput);
+                    addToast('info', 'Coil Watchlist', `Coil detected on ${pair.symbol} — awaiting breakout`, {
+                      label: 'View Chart',
+                      onClick: () => { setSelectedSymbol(pair.symbol); setActiveTab('chart'); }
+                    });
                   }
                 } else {
-                  const compRatio = compression.compressionRatio || 1.0;
-                  const proximityScore = Math.max(0, Math.min(20, (1.2 - compRatio) * 25));
-                  finalScore = Math.max(18, Math.min(45, Math.round(20 + proximityScore + ((results.regime?.score || 30) / 100) * 15)));
-                  finalDirection = results.direction || 'NEUTRAL';
-                  finalStatus = results.status || 'RANGE';
-                  finalReason = `Awaiting Squeeze (ATR Ratio: ${(compRatio * 100).toFixed(0)}%)`;
+                  finalScore = coilSig.score;
+                  finalDirection = coilSig.side || 'NEUTRAL';
+                  finalStatus = 'RANGE';
+                  finalReason = coilSig.rejectionReason || coilSig.status;
                 }
 
                 vcbData = {
-                  isCompressed: compression.isCompressed,
-                  windowHigh: compression.windowHigh,
-                  windowLow: compression.windowLow,
-                  startTime: compression.startTime,
-                  endTime: compression.endTime,
-                  priorTrend: compression.priorTrend,
-                  priorImpulseMove: compression.priorImpulseMove,
-                  breakout: breakout ? {
-                    direction: breakout.direction as 'LONG' | 'SHORT',
-                    entryPrice: pair.price,
-                    sl: finalSl || 0,
-                    tp1: finalTp1 || 0,
-                    tp2: finalTp2 || 0,
-                    tp3: finalTp3 || 0,
-                    rvol: breakout.rvol,
+                  isCompressed: coilSig.coil.isCoil,
+                  windowHigh: coilSig.coil.coilHigh,
+                  windowLow: coilSig.coil.coilLow,
+                  startTime: candles[coilSig.coil.coilStartIndex]?.time || 0,
+                  endTime: candles[coilSig.coil.coilEndIndex]?.time || 0,
+                  priorTrend: coilSig.marketFilter,
+                  priorImpulseMove: coilSig.coil.higherLowsPreference ? 'BULLISH' : (coilSig.coil.lowerHighsPreference ? 'BEARISH' : 'NEUTRAL'),
+                  breakout: coilSig.status.startsWith('VALID') ? {
+                    direction: coilSig.side,
+                    entryPrice: coilSig.entry,
+                    sl: coilSig.stop,
+                    tp1: coilSig.target,
+                    tp2: coilSig.target,
+                    tp3: coilSig.target,
+                    rvol: 1.5,
                   } : undefined,
                 };
               }
@@ -829,6 +782,10 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
          }
          return false;
       }
+
+      if (settingsRef.current.activeStrategy === 'VOLATILITY_COMPRESSION' || settingsRef.current.activeStrategy === 'EARLY_COIL_BREAKOUT') {
+         return c.score >= settingsRef.current.autoTradeThreshold && (c.direction === 'LONG' || c.direction === 'SHORT') && c.status === 'STRONG_TREND' && !!c.sl && !!c.tp1;
+      }
       
       const allGatesPassed = c.statusReason === 'All gates passed';
       return allGatesPassed && c.score >= settingsRef.current.autoTradeThreshold && (c.direction === 'LONG' || c.direction === 'SHORT');
@@ -877,8 +834,8 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
          const riskPerUnit = (coin.crSignal as any).riskPerUnit || (coin.price * 0.01);
          riskAmt = balance * (settingsRef.current.accountRiskPct / 100); // use CR risk
          qty = riskAmt / riskPerUnit;
-      } else if (activeStrat === 'VOLATILITY_COMPRESSION') {
-         marketRegime = 'Consolidation Squeeze';
+      } else if (activeStrat === 'VOLATILITY_COMPRESSION' || activeStrat === 'EARLY_COIL_BREAKOUT') {
+         marketRegime = 'Two-Sided Coil Breakout';
          sl = (coin as any)?.sl || sl;
          tp1 = (coin as any)?.tp1 || tp1;
          tp2 = (coin as any)?.tp2 || tp2;

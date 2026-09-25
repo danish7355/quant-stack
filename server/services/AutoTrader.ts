@@ -23,6 +23,7 @@ import { evaluateTrendPullback, getHigherTimeframe } from '../../src/utils/strat
 import { evaluateSmc } from '../../src/utils/strategies/smcLiquidity.js';
 import { detectMacroRangeBreakout } from '../../src/utils/strategies/macroRange.js';
 import { evaluateEarlyCoilBreakout } from '../../src/utils/strategies/earlyCoilBreakout.js';
+import { evaluateTwoSidedCoilBreakout } from '../../src/utils/strategies/twoSidedCoilBreakout.js';
 import { evaluateRangeMeanReversion } from '../../src/utils/strategies/rangeMeanReversion.js';
 import { calculateRSI } from '../../src/utils/indicators.js';
 import {
@@ -2254,95 +2255,49 @@ export class AutoTrader {
     reason?: string;
     checklist?: VcbChecklistResult;
   } | null> {
-    if (candles.length < 35) return null;
+    if (candles.length < 30) return null;
     
-    // Pure closed candles breakout: trigger is strictly the last closed candle
     const lastClosedCandle = candles[candles.length - 1];
-    const previousCandles = candles.slice(0, -1);
-    
-    const atrSeries = calculateATR(previousCandles, 14);
-    const atr = atrSeries[atrSeries.length - 1] || currentPrice * 0.015;
-    const atrRecent = atrSeries.slice(-50);
-    const atrAvg = atrRecent.length > 0 ? atrRecent.reduce((a, b) => a + b, 0) / atrRecent.length : atr;
-    
-    const settingsObj: any = this.settings; 
-    
-    // Pure Setup + Volume Detection
-    const compression = detectCompression(previousCandles, atr, atrAvg, settingsObj);
-    const breakout = detectBreakout(lastClosedCandle, compression, atr, settingsObj, candles);
-    
-    if (!breakout) return null;
-    
-    // Score based on breakout metrics and volume expansion
-    let score = scoreBreakout(breakout, settingsObj);
-    
-    // Apply trend and momentum alignment bonus/penalty
-    const closes = candles.map(c => c.close);
-    const ema9 = calculateEMA(closes, 9).pop() || 0;
-    const ema21 = calculateEMA(closes, 21).pop() || 0;
-    const ema50 = calculateEMA(closes, 50).pop() || 0;
-    const rsi = calculateRSI(closes, 14).pop() || 50;
-    score = applyTrendAndMomentumBonus(score, breakout.direction as 'LONG'|'SHORT', ema9, ema21, ema50, rsi, settingsObj);
 
-    if (score < this.settings.autoTradeThreshold) return null;
-    
-    const sl = determineStopLoss(breakout.direction as 'LONG'|'SHORT', compression, atr, settingsObj, candles, currentPrice);
-    const risk = Math.abs(currentPrice - sl);
-    if (risk <= 0) return null;
-
-    // Asymmetric Volatility Expansion targets (10x-15% runner potential)
-    const { tp1, tp2, tp3 } = calculateVcbTargets(currentPrice, breakout.direction as 'LONG'|'SHORT', risk, compression);
-
-    // Fetch HTF candles for Checklist validation
-    const tradeTf = this.settings.timeframe || '15m';
-    const htf = getHigherTimeframe(tradeTf);
-    let htfCandles: any[] | null = null;
+    // Fetch BTC klines for context and relative strength filter in user's timeframe
+    let btcKlines: any[] = [];
     try {
-      htfCandles = await this.getKlines(symbol, htf);
-    } catch (e) {}
-
-    // Dedicated VCB Regime Filter Gate
-    const vcbMetrics = extractVcbRegimeMetrics(candles, htfCandles ? htfCandles.slice(0, -1) : null, this.settings);
-    if (!allowVCB(vcbMetrics, breakout.direction as 'LONG' | 'SHORT')) {
-      console.log(`🛡️ [VCB Regime Filter] ${symbol} blocked: VCB regime criteria not met (ATR ratio ${vcbMetrics.atrRatio?.toFixed(2) ?? 'N/A'}, RVOL ${vcbMetrics.volumeRatio.toFixed(2)}, ADX ${vcbMetrics.adx ?? 'N/A'})`);
-      return null;
+      btcKlines = await this.getKlines('BTCUSDT', this.settings.timeframe || '15m');
+    } catch (e) {
+      btcKlines = [];
     }
 
-    // VCB Strategy Final Gate Checklist ("Before Executing a VCB Trade - Quick Checklist")
-    const checklist = evaluateVcbChecklist(
+    // Evaluate strict Two-Sided Coil Breakout with structural 5R target and dynamic user timeframe
+    const coilSig = evaluateTwoSidedCoilBreakout(
       candles,
-      htfCandles ? htfCandles.slice(0, -1) : null,
-      breakout,
-      compression,
-      currentPrice,
-      sl,
-      tp1,
-      tp2,
-      atr,
-      this.settings
+      btcKlines,
+      {
+        symbol,
+        timeframe: this.settings.timeframe || '15m',
+        minRrRatio: 5.0, // Strictly enforce genuine 1:5 reward-to-risk minimum
+        aggressiveBreakoutMode: (this.settings as any).coilAggressiveBreakout === true
+      }
     );
 
-    // Final Gate: If checklist does not pass (score < minScore or mandatory gates failed), block entry
-    if (!checklist.passed) {
-      console.log(`🛡️ [VCB Checklist] ${symbol} rejected by final gate checklist: ${checklist.summary}`);
-      return null;
+    if (coilSig && coilSig.status.startsWith('VALID')) {
+      return {
+        direction: coilSig.side,
+        score: coilSig.score,
+        atr: coilSig.coil.atrAtCoil,
+        sl: coilSig.stop,
+        tp1: coilSig.target,
+        tp2: coilSig.target,
+        tp3: coilSig.target,
+        compressionHigh: coilSig.coilRange.high,
+        compressionLow: coilSig.coilRange.low,
+        signalTime: lastClosedCandle.time,
+        reason: `${coilSig.setup} [1:${coilSig.rrRatio.toFixed(1)} RR] (${coilSig.status})`
+      };
     }
-    
-    return {
-      direction: breakout.direction as 'LONG'|'SHORT',
-      score,
-      atr,
-      sl,
-      tp1,
-      tp2,
-      tp3,
-      compressionHigh: compression.windowHigh,
-      compressionLow: compression.windowLow,
-      signalTime: lastClosedCandle.time,
-      reason: `VCB Breakout Inception [Checklist: ${checklist.score}/${checklist.maxScore} ${checklist.recommendation}] (RVOL: ${breakout.rvol.toFixed(1)}x, Squeeze: ${compression.isSqueezed ? 'YES' : 'ATR'})`,
-      checklist
-    };
+
+    return null;
   }
+
 }
 
 export const autoTrader = new AutoTrader();

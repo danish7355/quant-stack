@@ -2,6 +2,20 @@ import { AppSettings } from '../../types';
 import { allowVCB, extractVcbRegimeMetrics, type VcbRegimeMetrics } from './strategyRegimeFilters.js';
 export { allowVCB, extractVcbRegimeMetrics };
 export type { VcbRegimeMetrics };
+export {
+  calculateMedian,
+  detectStrictCoil,
+  evaluateBreakoutQuality,
+  evaluateRetest,
+  findStructuralTarget,
+  formatCoilSignalOutput,
+  evaluateTwoSidedCoilBreakout,
+  type CoilDetectionResult,
+  type BreakoutQualityResult,
+  type RetestResult,
+  type TwoSidedCoilSignal,
+  type CoilStrategyOptions
+} from './twoSidedCoilBreakout.js';
 
 export interface Candle {
   open: number;
