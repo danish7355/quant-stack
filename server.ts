@@ -1,4 +1,8 @@
 import express from "express";
+import dns from "node:dns";
+try {
+  dns.setDefaultResultOrder("ipv4first");
+} catch (_) {}
 import path from "path";
 import fs from "fs";
 import expressWs from "express-ws";

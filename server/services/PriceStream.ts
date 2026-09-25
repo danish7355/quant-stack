@@ -1,4 +1,9 @@
 import WebSocket from 'ws';
+import dns from 'node:dns';
+
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch (_) {}
 
 export type PriceUpdateListener = (prices: Map<string, number>, batch: Array<{ s: string; p: number }>) => void;
 
@@ -114,7 +119,9 @@ export class PriceStream {
       // Fast-path: When WebSocket is silent or blocked, immediately stream REST ticks without delay
       if (timeSinceWsMessage > 1200 && timeSinceRestMessage >= 750) {
         try {
-          const res = await fetch('https://fapi.binance.com/fapi/v1/ticker/price');
+          const res = await fetch('https://fapi.binance.com/fapi/v1/ticker/price', {
+            signal: AbortSignal.timeout(2500)
+          });
           if (res.ok) {
             const data: any = await res.json();
             const batch: Array<{ s: string; p: number }> = [];
