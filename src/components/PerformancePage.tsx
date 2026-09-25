@@ -111,17 +111,15 @@ export default function PerformancePage({
     }
   });
 
-  // Sharpe Ratio (simplified, historical returns std dev vs risk free)
-  let sharpeRatio = 0;
-  if (totalTrades > 5) {
+  // Sharpe Ratio (historical returns std dev vs risk free)
+  let sharpeRatio: number | null = null;
+  if (totalTrades >= 5) {
     const returns = logs.map((l) => l.pctReturn);
     const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
     const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length;
     const stdDev = Math.sqrt(variance);
     // Sharpe = (Mean - RiskFree(0)) / StdDev
     sharpeRatio = stdDev === 0 ? 0 : mean / stdDev;
-  } else {
-    sharpeRatio = averagePnL > 0 ? 1.45 : averagePnL < 0 ? -0.85 : 0; // standard mock placeholder for low data counts
   }
 
   // Risk Reward Ratio average
@@ -215,10 +213,14 @@ export default function PerformancePage({
         <div className="bg-[#161B22] border border-[#30363D] rounded-xl p-5 flex flex-col justify-between">
           <span className="text-gray-500 text-[11px] font-bold uppercase tracking-wider">Sharpe Ratio</span>
           <div className="my-1.5 flex items-baseline space-x-1.5">
-            <span className="text-2xl font-black text-gray-200 font-mono">{sharpeRatio.toFixed(2)}</span>
+            <span className="text-2xl font-black text-gray-200 font-mono">
+              {sharpeRatio !== null ? sharpeRatio.toFixed(2) : 'N/A'}
+            </span>
             <span className="text-[10px] text-gray-400">Risk Adjusted</span>
           </div>
-          <span className="text-[10px] text-gray-500">Calculated over historical returns volatility</span>
+          <span className="text-[10px] text-gray-500">
+            {totalTrades >= 5 ? 'Calculated over historical returns volatility' : 'Requires ≥5 closed trades to calculate'}
+          </span>
         </div>
 
         {/* Max Drawdown */}

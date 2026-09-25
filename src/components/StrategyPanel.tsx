@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { AppSettings, StrategyBucketItem, MarketRegimeType } from '../types';
+import React, { useState, useMemo, useEffect } from 'react';
+import { AppSettings, StrategyBucketItem, MarketRegimeType, CoinDetail } from '../types';
 import { GATES_REGISTRY, GateImportance } from '../utils/gatesRegistry';
 import { DEFAULT_STRATEGY_BUCKET } from '../utils/strategyBucket';
 import { VcbChecklistPanel } from './VcbChecklistPanel';
@@ -9,6 +9,9 @@ interface StrategyPanelProps {
   settings: AppSettings;
   setSettings: (s: AppSettings) => void;
   globalFilterState?: { isPausing: boolean; reason: string | null };
+  coins?: CoinDetail[];
+  selectedSymbol?: string;
+  onSelectCoin?: (symbol: string) => void;
 }
 
 export const AVAILABLE_STRATEGIES: {
@@ -85,10 +88,119 @@ export const AVAILABLE_STRATEGIES: {
   },
 ];
 
-const StrategyPanel: React.FC<StrategyPanelProps> = ({ settings, setSettings, globalFilterState }) => {
+const StrategyPanel: React.FC<StrategyPanelProps> = ({ 
+  settings, 
+  setSettings, 
+  globalFilterState,
+  coins = [],
+  selectedSymbol,
+  onSelectCoin
+}) => {
   const [expandedGateId, setExpandedGateId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'checklist' | 'parameters' | 'gates' | 'bucket'>('checklist');
+  const [activeChecklistSymbol, setActiveChecklistSymbol] = useState<string>(selectedSymbol || coins[0]?.symbol || 'BTCUSDT');
+
+  useEffect(() => {
+    if (selectedSymbol) {
+      setActiveChecklistSymbol(selectedSymbol);
+    }
+  }, [selectedSymbol]);
+
+  const activeCoin = coins.find(c => c.symbol === activeChecklistSymbol) || coins[0];
+
+  const selectedCoinVcbChecklist = useMemo(() => {
+    if (!activeCoin) return null;
+    const minScoreRequired = settings.vcbChecklistMinScore ?? 8;
+    const inds = activeCoin.indicators;
+    const gates = activeCoin.gates;
+
+    const htfPass = inds ? (inds.emaFast > inds.emaSlow || inds.superTrend?.direction === 'uptrend') : true;
+    const locPass = gates ? Boolean(gates.g1) : true;
+    const compPass = activeCoin.status === 'ARMED' || activeCoin.status === 'RANGING' || (gates ? Boolean(gates.g2) : false);
+    const volPass = inds ? (inds.volumeRatio >= (settings.vcbBreakoutVolumeMin ?? 1.25)) : false;
+    const retestPass = activeCoin.score >= (settings.autoTradeThreshold ?? 60);
+    const rrPass = gates ? Boolean(gates.g4 !== false) : true;
+    const sessionPass = !globalFilterState?.isPausing;
+
+    const items = [
+      {
+        id: 'htf_bias',
+        name: 'Higher-timeframe bias & liquidity draw',
+        points: htfPass ? 1 : 0,
+        maxPoints: 1,
+        passed: htfPass,
+        detail: htfPass ? 'EMA 20/50 and HTF trend aligned with bias' : 'HTF structure not cleanly aligned',
+      },
+      {
+        id: 'location',
+        name: 'Location: discount/premium & key level',
+        points: locPass ? 2 : 0,
+        maxPoints: 2,
+        passed: locPass,
+        detail: gates?.g1Reason || (locPass ? 'Price positioned at structural boundary' : 'Price adrift in middle of range'),
+      },
+      {
+        id: 'compression',
+        name: 'Volatility compression (VCB / Coil)',
+        points: compPass ? 2 : 0,
+        maxPoints: 2,
+        passed: compPass,
+        detail: gates?.g2Reason || (compPass ? 'Tight compression / coil identified within ATR limits' : 'Volatility wide / no contraction detected'),
+      },
+      {
+        id: 'breakout_impulse',
+        name: 'Impulse breakout expansion',
+        points: volPass ? 2 : 0,
+        maxPoints: 2,
+        passed: volPass,
+        detail: inds ? `Volume ratio: ${inds.volumeRatio.toFixed(2)}x (min ${(settings.vcbBreakoutVolumeMin ?? 1.25).toFixed(2)}x)` : 'Volume expansion pending',
+      },
+      {
+        id: 'retest_confirmation',
+        name: 'Retest / Trigger confirmation',
+        points: retestPass ? 2 : 0,
+        maxPoints: 2,
+        passed: retestPass,
+        detail: `Composite setup score: ${activeCoin.score}/100 (threshold: ${settings.autoTradeThreshold ?? 60})`,
+      },
+      {
+        id: 'risk_reward',
+        name: 'Risk & R:R defined (≥5.0R for Coil)',
+        points: rrPass ? 2 : 0,
+        maxPoints: 2,
+        passed: rrPass,
+        detail: rrPass ? 'Target structure qualifies ≥3.0R (or ≥5.0R coil target)' : 'Target structure below threshold',
+      },
+      {
+        id: 'session_macro',
+        name: 'Session & macro market filter',
+        points: 0,
+        maxPoints: 0,
+        passed: sessionPass,
+        isMandatoryGate: true,
+        detail: sessionPass ? 'Global market macro regime tradable' : (globalFilterState?.reason || 'Macro filter lockout active'),
+      },
+    ];
+
+    const score = items.reduce((sum, it) => sum + it.points, 0);
+    const passed = score >= minScoreRequired && sessionPass;
+    const recommendation: 'EXECUTE' | 'WAIT' | 'SKIP' = passed ? 'EXECUTE' : score >= 6 ? 'WAIT' : 'SKIP';
+    const failedGates = items.filter(i => !i.passed).map(i => i.name);
+    const summary = `${score} / 11 pts – ${passed ? 'Setup fully qualified for breakout execution' : score >= 6 ? 'Setup developing; wait for volume surge or boundary retest' : 'Insufficient compression score; setup skipped'}`;
+
+    return {
+      symbol: activeCoin.symbol,
+      score,
+      maxScore: 11,
+      passed,
+      gatePassed: sessionPass,
+      failedGates,
+      summary,
+      recommendation,
+      items
+    };
+  }, [activeCoin, settings, globalFilterState]);
 
   const enabledStrategies: string[] = (settings.enabledStrategies && settings.enabledStrategies.length > 0)
     ? settings.enabledStrategies
@@ -350,7 +462,16 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({ settings, setSettings, gl
 
         {/* TAB 0: VCB STRATEGY CHECKLIST (PRIMARY GATE) */}
         {activeTab === 'checklist' && (
-          <VcbChecklistPanel settings={settings} onUpdateSetting={handleInputChange} />
+          <VcbChecklistPanel 
+            settings={settings} 
+            onUpdateSetting={handleInputChange}
+            selectedCoinVcbChecklist={selectedCoinVcbChecklist}
+            coins={coins}
+            onSelectSymbol={(sym) => {
+              setActiveChecklistSymbol(sym);
+              if (onSelectCoin) onSelectCoin(sym);
+            }}
+          />
         )}
 
         {/* TAB 1: STRATEGY REGISTRY & ACTIVATION */}

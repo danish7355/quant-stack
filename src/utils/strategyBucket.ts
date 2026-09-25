@@ -257,6 +257,7 @@ export function classifyBtcMacroRegime(
   const recent20Vol = closedVolumes.slice(-20);
   const avgVol20 = recent20Vol.reduce((a, b) => a + b, 0) / (recent20Vol.length || 1);
   const lastClosedVol = closedVolumes[closedVolumes.length - 1] || 0;
+  const currentVol = volumes[lastIdx] || 0;
   const isLiquidityFailure = avgVol20 > 0 && lastClosedVol < (avgVol20 * 0.20) && currentVol < (avgVol20 * 0.20);
 
   // --- RED: Safety Lockout triggers ---

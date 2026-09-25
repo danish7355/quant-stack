@@ -5,6 +5,7 @@ import {
   Sliders, Info, HelpCircle
 } from 'lucide-react';
 import { AppSettings } from '../types';
+import { formatPrice } from '../utils/format';
 
 interface VcbChecklistPanelProps {
   settings: AppSettings;
@@ -28,12 +29,16 @@ interface VcbChecklistPanelProps {
       isMandatoryGate?: boolean;
     }>;
   } | null;
+  coins?: Array<{ symbol: string; price: number }>;
+  onSelectSymbol?: (symbol: string) => void;
 }
 
 export const VcbChecklistPanel: React.FC<VcbChecklistPanelProps> = ({
   settings,
   onUpdateSetting,
-  selectedCoinVcbChecklist
+  selectedCoinVcbChecklist,
+  coins = [],
+  onSelectSymbol
 }) => {
   const minScore = settings.vcbChecklistMinScore ?? 8;
   const requireSweep = settings.vcbRequireSweep ?? true;
@@ -112,11 +117,28 @@ export const VcbChecklistPanel: React.FC<VcbChecklistPanelProps> = ({
             ? 'bg-emerald-950/20 border-emerald-500/50' 
             : 'bg-rose-950/20 border-rose-500/50'
         }`}>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="font-bold text-white text-sm">
-                Live Audit: {selectedCoinVcbChecklist.symbol || 'Latest Signal'}
+                Live Audit:
               </span>
+              {coins.length > 0 && onSelectSymbol ? (
+                <select
+                  value={selectedCoinVcbChecklist.symbol || ''}
+                  onChange={(e) => onSelectSymbol(e.target.value)}
+                  className="bg-[#0E1117] border border-[#30363D] text-emerald-400 font-bold text-xs rounded px-2 py-1 focus:outline-none focus:border-emerald-500 font-mono"
+                >
+                  {coins.map((c) => (
+                    <option key={c.symbol} value={c.symbol}>
+                      {c.symbol} (${formatPrice(c.price)})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="font-bold text-emerald-400 font-mono">
+                  {selectedCoinVcbChecklist.symbol || 'Latest Scanned Pair'}
+                </span>
+              )}
               <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                 selectedCoinVcbChecklist.passed 
                   ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' 

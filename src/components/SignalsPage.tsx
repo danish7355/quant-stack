@@ -1,16 +1,42 @@
 import React, { useState, useMemo } from 'react';
-import { Activity, XCircle, CheckCircle2, ShieldAlert, Clock, Filter, Layers, Database } from 'lucide-react';
+import { Activity, XCircle, CheckCircle2, ShieldAlert, Clock, Filter, Layers, Database, RefreshCw, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { SignalView } from '../types.js';
+import { useSignalAudit } from '../hooks/useSignalAudit';
 
 interface Props {
-  signals: SignalView[];
+  signals?: SignalView[];
   loading?: boolean;
   error?: string | null;
+  onRefresh?: () => void;
 }
 
-export function SignalsPage({ signals, loading = false, error = null }: Props) {
+export function SignalsPage({ signals: propSignals, loading: propLoading = false, error: propError = null, onRefresh }: Props) {
+  const audit = useSignalAudit(100);
   const [filterType, setFilterType] = useState<'ALL' | 'ENTER' | 'REJECT' | 'WATCH'>('ALL');
   const [searchSymbol, setSearchSymbol] = useState('');
+
+  // Fall back to live audit hook if parent passed empty or no signals
+  const signals: any[] = useMemo(() => {
+    if (propSignals && propSignals.length > 0) return propSignals;
+    return (audit.data || []).map(s => ({
+      id: s.signalId,
+      symbol: s.symbol,
+      regime: s.regime,
+      direction: s.direction,
+      confidence: s.confidence,
+      strategy: s.strategy,
+      decision: s.decision,
+      rejectionReasons: s.rejectionReasons || [],
+      entryPrice: s.entryPrice,
+      stopPrice: s.stopPrice,
+      riskReward: s.riskReward,
+      settingsVersion: s.settingsVersion,
+      createdAt: s.createdAt
+    }));
+  }, [propSignals, audit.data]);
+
+  const loading = propSignals && propSignals.length > 0 ? propLoading : audit.loading && signals.length === 0;
+  const error = propError || audit.error;
 
   const stats = useMemo(() => {
     const total = signals.length;
@@ -30,7 +56,12 @@ export function SignalsPage({ signals, loading = false, error = null }: Props) {
 
   const lastUpdated = signals.length > 0 && signals[0].createdAt
     ? new Date(signals[0].createdAt).toLocaleTimeString()
-    : 'N/A';
+    : (audit.lastUpdated ? audit.lastUpdated.toLocaleTimeString() : 'N/A');
+
+  const handleManualRefresh = () => {
+    if (onRefresh) onRefresh();
+    audit.refetch();
+  };
 
   return (
     <div className="p-6 h-full flex flex-col space-y-4">
@@ -99,6 +130,16 @@ export function SignalsPage({ signals, loading = false, error = null }: Props) {
           >
             Watch/Filtered: <strong className="font-mono">{stats.watch}</strong>
           </button>
+
+          <button
+            onClick={handleManualRefresh}
+            disabled={loading}
+            className="px-3 py-1.5 rounded-lg border border-[#30363D] bg-[#0E1117] text-gray-300 hover:text-white hover:border-gray-500 font-semibold transition flex items-center gap-1.5 disabled:opacity-50"
+            title="Refresh signal audit trail"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-400' : ''}`} />
+            <span>Refresh</span>
+          </button>
         </div>
       </div>
 
@@ -135,6 +176,7 @@ export function SignalsPage({ signals, loading = false, error = null }: Props) {
             <tr>
               <th className="px-4 py-3 font-medium">Time</th>
               <th className="px-4 py-3 font-medium">Symbol</th>
+              <th className="px-4 py-3 font-medium">Side</th>
               <th className="px-4 py-3 font-medium">Regime</th>
               <th className="px-4 py-3 font-medium">Strategy</th>
               <th className="px-4 py-3 font-medium">Score</th>
@@ -151,6 +193,19 @@ export function SignalsPage({ signals, loading = false, error = null }: Props) {
                 </td>
                 <td className="px-4 py-3 font-bold text-gray-200 font-mono">
                   {sig.symbol}
+                </td>
+                <td className="px-4 py-3 text-xs font-mono font-bold">
+                  {sig.direction === 'LONG' ? (
+                    <span className="text-emerald-400 flex items-center gap-1">
+                      <ArrowUpRight size={14} /> LONG
+                    </span>
+                  ) : sig.direction === 'SHORT' ? (
+                    <span className="text-rose-400 flex items-center gap-1">
+                      <ArrowDownRight size={14} /> SHORT
+                    </span>
+                  ) : (
+                    <span className="text-gray-500">—</span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-xs">
                   <span className="px-2 py-0.5 rounded bg-gray-800 border border-[#30363D] text-gray-300 text-[11px]">
@@ -199,7 +254,7 @@ export function SignalsPage({ signals, loading = false, error = null }: Props) {
             ))}
             {filteredSignals.length === 0 && !loading && (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-gray-500 space-y-2">
+                <td colSpan={9} className="px-4 py-12 text-center text-gray-500 space-y-2">
                   <Database className="w-8 h-8 mx-auto text-gray-600 mb-1" />
                   <p className="font-semibold text-gray-400">No signals match current filter</p>
                   <p className="text-xs">Signals evaluated by the scanner will appear here with gate pass/fail verdicts.</p>
@@ -208,7 +263,7 @@ export function SignalsPage({ signals, loading = false, error = null }: Props) {
             )}
             {loading && filteredSignals.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-gray-400">
+                <td colSpan={9} className="px-4 py-12 text-center text-gray-400">
                   <Activity className="w-6 h-6 animate-spin mx-auto text-indigo-400 mb-2" />
                   <p>Loading signal audit history...</p>
                 </td>

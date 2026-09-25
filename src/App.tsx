@@ -1483,6 +1483,19 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
   const currentCoinDetail = coins.find(c => c.symbol === selectedSymbol) || coins[0];
   const totalAccountValue = balance + positions.reduce((acc, p) => acc + p.allocatedBalance + p.unrealizedPnl, 0);
 
+  // Live dynamic risk & daily loss metrics
+  const totalOpenRiskDollars = positions.reduce((acc, p) => {
+    const lev = p.leverage || settings.leverage || 1;
+    const notional = (p.allocatedBalance || 0) * lev;
+    if (p.stopLoss && p.entryPrice && p.entryPrice > 0) {
+      const slDist = Math.abs(p.entryPrice - p.stopLoss) / p.entryPrice;
+      return acc + (notional * slDist);
+    }
+    return acc + (p.allocatedBalance || 0);
+  }, 0);
+  const openRiskPct = totalAccountValue > 0 ? (totalOpenRiskDollars / totalAccountValue) * 100 : 0;
+  const currentDailyLossPct = systemHealth?.dailyLossPct ?? 0;
+
   const TABS = [
     { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
     { id: 'scanner', label: 'Scanner', icon: List },
@@ -1565,8 +1578,8 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
             lastReconciliationAt: 'N/A',
             tradingBlocked: isStale
           }}
-          dailyLossPct={0}
-          openRiskPct={0}
+          dailyLossPct={currentDailyLossPct}
+          openRiskPct={openRiskPct}
           engineRunning={engineRunning}
           onToggleEngine={toggleEngine}
         />
@@ -1654,7 +1667,14 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
             />
           )}
           {activeTab === 'strategy' && (
-            <StrategyPanel settings={settings} setSettings={setSettings} globalFilterState={globalFilterState} />
+            <StrategyPanel 
+              settings={settings} 
+              setSettings={setSettings} 
+              globalFilterState={globalFilterState} 
+              coins={coins}
+              selectedSymbol={selectedSymbol}
+              onSelectCoin={setSelectedSymbol}
+            />
           )}
           {activeTab === 'gates' && (
             <GateManager
@@ -1732,15 +1752,23 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
           )}
 
           {activeTab === 'signals' && (
-             <SignalsPage signals={[]} />
+             <SignalsPage />
           )}
 
           {activeTab === 'health' && (
-             <SystemHealthPage initialHealth={systemHealth || undefined} />
+             <SystemHealthPage initialHealth={systemHealth || undefined} onRefresh={fetchHealth} />
           )}
 
           {activeTab === 'risk' && (
-             <RiskCenter />
+             <RiskCenter 
+               positions={positions}
+               balance={balance}
+               settings={settings}
+               systemHealth={systemHealth}
+               onFlattenAll={handleFlatten}
+               onManualClose={handleManualClose}
+               onOpenSettings={() => setActiveTab('settings')}
+             />
           )}
         </main>
       </div>

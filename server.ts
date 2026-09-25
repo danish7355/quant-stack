@@ -164,7 +164,9 @@ async function startServer() {
       globalFilterReason: autoTrader.getGlobalFilterBlockReason(),
       timestamp: new Date().toISOString(),
       activePositions: positionMonitor.getActivePositions().length,
-      telegramConfigured: telegramService.isConfigured()
+      telegramConfigured: telegramService.isConfigured(),
+      dailyLossPct: riskManager.getDailyLossPct(),
+      consecutiveLosses: riskManager.getConsecutiveLosses()
     });
   });
 

@@ -64,10 +64,27 @@ export function useSignalAudit(limitCount = 100) {
     };
   }, [limitCount]);
 
+  const refetch = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/signal_audit?limit=${limitCount}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      const json = await res.json();
+      setData(json);
+      setLastUpdated(new Date());
+      setError(null);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return {
     data,
     loading,
     error,
-    lastUpdated
+    lastUpdated,
+    refetch
   };
 }

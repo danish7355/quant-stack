@@ -238,6 +238,11 @@ export interface SystemHealth {
   blockReason?: string;
   globalFilterActive?: boolean;
   globalFilterReason?: string;
+  dailyLossPct?: number;
+  consecutiveLosses?: number;
+  activePositions?: number;
+  telegramConfigured?: boolean;
+  timestamp?: string;
 }
 
 export interface TargetView {
