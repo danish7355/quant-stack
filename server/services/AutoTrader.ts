@@ -645,7 +645,8 @@ export class AutoTrader {
         return fallback;
       }
 
-      const btcMacro = classifyBtcMacroRegime(btcKlines, btcPrice);
+      const closedBtcKlines = btcKlines.length > 1 ? btcKlines.slice(0, -1) : btcKlines;
+      const btcMacro = classifyBtcMacroRegime(closedBtcKlines, btcPrice);
       let finalRegime = btcMacro.regime;
       let finalLabel = btcMacro.label;
       let finalDetails = btcMacro.details;
@@ -658,7 +659,8 @@ export class AutoTrader {
         const ethKlines = await this.getKlines('ETHUSDT', this.settings.timeframe || '15m');
         ethPrice = priceStream.getPrice('ETHUSDT') || (ethKlines.length > 0 ? ethKlines[ethKlines.length - 1].close : 3500);
         if (ethKlines && ethKlines.length >= 30) {
-          const ethMacro = classifyBtcMacroRegime(ethKlines, ethPrice);
+          const closedEthKlines = ethKlines.length > 1 ? ethKlines.slice(0, -1) : ethKlines;
+          const ethMacro = classifyBtcMacroRegime(closedEthKlines, ethPrice);
           if (!ethMacro.isTradable || !btcMacro.isTradable) {
             finalRegime = 'UNCLEAR';
             isTradable = false;

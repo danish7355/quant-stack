@@ -251,10 +251,13 @@ export function classifyBtcMacroRegime(
   const avgWickRatio = calculateWickRatio(btcKlines, 15);
 
   // 5. Volume Liquidity check
-  const recent20Vol = volumes.slice(-20);
+  // Note: In live streaming, the last candle is in-progress with incomplete volume.
+  // Evaluate baseline volume using closed candles so a freshly opened bar does not trip a false lockout.
+  const closedVolumes = btcKlines.length > 1 ? volumes.slice(0, -1) : volumes;
+  const recent20Vol = closedVolumes.slice(-20);
   const avgVol20 = recent20Vol.reduce((a, b) => a + b, 0) / (recent20Vol.length || 1);
-  const currentVol = volumes[lastIdx] || 0;
-  const isLiquidityFailure = avgVol20 > 0 && currentVol < (avgVol20 * 0.20);
+  const lastClosedVol = closedVolumes[closedVolumes.length - 1] || 0;
+  const isLiquidityFailure = avgVol20 > 0 && lastClosedVol < (avgVol20 * 0.20) && currentVol < (avgVol20 * 0.20);
 
   // --- RED: Safety Lockout triggers ---
   // A. ADX 18-25 AND frequent direction changes OR many long wicks / fakeouts
@@ -400,10 +403,13 @@ export function classifyMarketRegime(
   const avgWickRatio = calculateWickRatio(klines, 15);
   const smaCrossings = countSmaCrossings(closes, sma200, 30);
 
-  const recent20Vol = volumes.slice(-20);
+  const closedVolumes = klines.length > 1 ? volumes.slice(0, -1) : volumes;
+  const recent20Vol = closedVolumes.slice(-20);
   const avgVol20 = recent20Vol.reduce((a, b) => a + b, 0) / (recent20Vol.length || 1);
   const currentVol = volumes[lastIdx] || 0;
-  const volumeRatio = avgVol20 > 0 ? (currentVol / avgVol20) : 1;
+  const lastClosedVol = closedVolumes[closedVolumes.length - 1] || 0;
+  const effectiveVol = Math.max(currentVol, lastClosedVol);
+  const volumeRatio = avgVol20 > 0 ? (effectiveVol / avgVol20) : 1;
 
   const isUptrend = ema9 > ema21 && ema21 > ema50 && currentPrice > ema21;
   const isDowntrend = ema9 < ema21 && ema21 < ema50 && currentPrice < ema21;
@@ -431,7 +437,7 @@ export function classifyMarketRegime(
   }
 
   // 2. DEAD_VOLUME (Non-tradable)
-  if (avgVol20 > 0 && currentVol < (avgVol20 * 0.15)) {
+  if (avgVol20 > 0 && lastClosedVol < (avgVol20 * 0.15) && currentVol < (avgVol20 * 0.15)) {
     return { regime: 'DEAD_VOLUME', label: 'Dead Volume / Illiquid', details: 'Volume collapsed below 15% of 20-period average', confidence: 0, macroColor: btcMacroColor, metrics };
   }
 
