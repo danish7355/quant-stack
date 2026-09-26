@@ -291,6 +291,21 @@ export const NUMERIC_BOUNDS: Record<string, { min: number; max: number; step?: n
   smcObLookback: { min: 10, max: 100, step: 5, label: 'SMC Order Block Lookback Bars' },
   smcAtrStopMult: { min: 0.5, max: 4.0, step: 0.1, label: 'SMC ATR Stop Multiplier' },
   smcRrRatio: { min: 1.5, max: 10.0, step: 0.5, label: 'SMC Take-Profit Risk:Reward Ratio' },
+  egpEma5Period: { min: 2, max: 20, step: 1, label: '5 EMA Fast Period' },
+  egpEma21Period: { min: 10, max: 50, step: 1, label: '5 EMA Slow Baseline Period' },
+  egpHtfEma50Period: { min: 20, max: 200, step: 5, label: '5 EMA HTF Trend EMA' },
+  egpHtfSlopeLookback: { min: 3, max: 30, step: 1, label: '5 EMA HTF Slope Lookback' },
+  egpMinPullbackBars: { min: 2, max: 15, step: 1, label: '5 EMA Min Pullback Bars' },
+  egpMinGapBodyPct: { min: 0.1, max: 0.99, step: 0.05, label: '5 EMA Min Gap Body Ratio' },
+  egpVolumeMultiplier: { min: 0.5, max: 5.0, step: 0.1, label: '5 EMA Gap Volume Multiplier' },
+  egpMaxDistToEma21Atr: { min: 0.2, max: 5.0, step: 0.1, label: '5 EMA Max Overextension (ATR)' },
+  egpAtrPeriod: { min: 5, max: 50, step: 1, label: '5 EMA ATR Period' },
+  egpMaxWickRatioForFail: { min: 0.1, max: 0.9, step: 0.05, label: '5 EMA Max Rejection Wick Ratio' },
+  egpTp1RMultiple: { min: 0.5, max: 5.0, step: 0.1, label: '5 EMA TP1 R Multiple' },
+  egpTp2RMultiple: { min: 1.0, max: 10.0, step: 0.1, label: '5 EMA TP2 R Multiple' },
+  egpTp3RMultiple: { min: 1.5, max: 15.0, step: 0.1, label: '5 EMA TP3 R Multiple' },
+  egpSlSwingLookback: { min: 3, max: 30, step: 1, label: '5 EMA SL Swing Lookback' },
+  egpSlAtrBuffer: { min: 0.05, max: 2.0, step: 0.05, label: '5 EMA SL ATR Buffer' },
 };
 
 export interface ValidationResult {
@@ -332,7 +347,7 @@ export function validateTradingSettings(input: unknown): ValidationResult {
   // Validate boolean flags
   const booleanKeys = [
     'autoTradeEnabled', 'useGlobalBtcFilter', 'timeBasedExitEnabled',
-    'crEnabled', 'useMtfAlignment', 'useVpvrFilter', 'useAtrTrailingStop',
+    'egpEnabled', 'crEnabled', 'useMtfAlignment', 'useVpvrFilter', 'useAtrTrailingStop',
     'vcbRequireSweep', 'vcbRequireRetest', 'vcbEnforceKillZone',
     'vcbRequireHtfStructure', 'vcbRequireFollowThroughOrRetest',
     'smcUseKillZone', 'smcStrictHtfRegime', 'tpbRequireVolume',

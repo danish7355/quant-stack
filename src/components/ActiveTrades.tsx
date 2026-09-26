@@ -57,10 +57,17 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
 
   const getStrategyBadge = (strat?: string) => {
     const s = (strat || 'BINANCE_COMPOSITE').toUpperCase();
-    if (s.includes('CLIMAX') || s === 'DELTA_CLIMAX' || s === 'EMA_GAP_PULLBACK') {
+    if (s.includes('EMA_GAP') || s === 'EMA_GAP_PULLBACK') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-950/50 text-teal-300 border border-teal-700/60 text-[10px] font-bold tracking-wide uppercase">
+          <Zap className="w-3 h-3 text-teal-400" /> 5 EMA Gap
+        </span>
+      );
+    }
+    if (s.includes('CLIMAX') || s === 'DELTA_CLIMAX') {
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-950/50 text-cyan-300 border border-cyan-700/60 text-[10px] font-bold tracking-wide uppercase">
-          <Zap className="w-3 h-3 text-cyan-400" /> Climax Reversal
+          <Zap className="w-3 h-3 text-cyan-400" /> Climax Reversal (Legacy)
         </span>
       );
     }
@@ -140,7 +147,7 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
               <span className="text-[#00e696]">
                 {activeStrategiesList.map(s => {
                   if (s === 'EMA_GAP_PULLBACK') return '5 EMA Gap';
-                  if ((s as string) === 'DELTA_CLIMAX') return 'Delta Climax';
+                  if ((s as string) === 'DELTA_CLIMAX') return 'Delta Climax (Legacy)';
                   if (s === 'VOLATILITY_COMPRESSION') return 'VCB';
                   if (s === 'TREND_PULLBACK') return 'Trend Pullback';
                   if (s === 'SMC_LIQUIDITY_SWEEP') return 'SMC';
@@ -156,7 +163,7 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
               <span className="text-gray-400">Bot Strategy:</span>
               <span className="text-[#00e696]">
                 {activeStrategiesList[0] === 'EMA_GAP_PULLBACK' ? '⚡ 5 EMA Gap Pullback'
-                  : (activeStrategiesList[0] as string) === 'DELTA_CLIMAX' ? '⚡ Delta Climax Reversal'
+                  : (activeStrategiesList[0] as string) === 'DELTA_CLIMAX' ? '⚡ Delta Climax (Legacy)'
                   : activeStrategiesList[0] === 'VOLATILITY_COMPRESSION' ? '💥 VCB Breakout'
                   : activeStrategiesList[0] === 'EARLY_COIL_BREAKOUT' ? '🔥 Early Coil Breakout'
                   : activeStrategiesList[0] === 'TREND_PULLBACK' ? '🎯 Trend Pullback'
@@ -222,7 +229,7 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
           <Clock className="w-8 h-8 mb-2 stroke-gray-600" />
           <p className="text-sm font-medium">No open positions at the moment</p>
           <span className="text-xs text-gray-500 mt-1 max-w-sm text-center leading-relaxed">
-            Scanning {settings?.coinCount || 100} Binance Futures pairs across <strong className="text-gray-400">{activeStrategiesList.length > 1 ? `${activeStrategiesList.length} Active Strategies` : (activeStrategiesList[0] === 'EMA_GAP_PULLBACK' ? '5 EMA Gap Pullback' : (activeStrategiesList[0] as string) === 'DELTA_CLIMAX' ? 'Delta Climax' : activeStrategiesList[0] === 'VOLATILITY_COMPRESSION' ? 'VCB Breakout' : activeStrategiesList[0] === 'TREND_PULLBACK' ? 'Trend Pullback' : activeStrategiesList[0] === 'SMC_LIQUIDITY_SWEEP' ? 'SMC Liquidity' : activeStrategiesList[0] || 'Autonomous')}</strong> fully-confirmed signals with tight invalidation Stop Loss and <strong className="text-indigo-400">1:3 Asymmetric Target</strong>.
+            Scanning {settings?.coinCount || 100} Binance Futures pairs across <strong className="text-gray-400">{activeStrategiesList.length > 1 ? `${activeStrategiesList.length} Active Strategies` : (activeStrategiesList[0] === 'EMA_GAP_PULLBACK' ? '5 EMA Gap Pullback' : (activeStrategiesList[0] as string) === 'DELTA_CLIMAX' ? 'Delta Climax (Legacy)' : activeStrategiesList[0] === 'VOLATILITY_COMPRESSION' ? 'VCB Breakout' : activeStrategiesList[0] === 'TREND_PULLBACK' ? 'Trend Pullback' : activeStrategiesList[0] === 'SMC_LIQUIDITY_SWEEP' ? 'SMC Liquidity' : activeStrategiesList[0] || 'Autonomous')}</strong> fully-confirmed signals with tight invalidation Stop Loss and <strong className="text-indigo-400">1:3 Asymmetric Target</strong>.
           </span>
         </div>
       ) : (

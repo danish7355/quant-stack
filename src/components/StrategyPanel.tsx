@@ -212,7 +212,8 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
 
   const handleInputChange = (field: keyof AppSettings, value: any) => {
     const nextSettings = { ...settings, [field]: value };
-    if (field === 'activeStrategy' && value === 'DELTA_CLIMAX') {
+    if (field === 'activeStrategy' && (value === 'EMA_GAP_PULLBACK' || value === 'DELTA_CLIMAX')) {
+      nextSettings.egpEnabled = true;
       nextSettings.crEnabled = true;
     }
     setSettings(nextSettings);
@@ -239,6 +240,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
       ...settings,
       enabledStrategies: nextEnabled,
       activeStrategy: (nextEnabled[0] || 'VOLATILITY_COMPRESSION') as any,
+      egpEnabled: nextEnabled.includes('EMA_GAP_PULLBACK'),
     };
     setSettings(nextSettings);
     fetch('/api/bot/settings', {
@@ -256,7 +258,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
       nextEnabled = [
         'VOLATILITY_COMPRESSION',
         'TREND_PULLBACK',
-        'DELTA_CLIMAX',
+        'EMA_GAP_PULLBACK',
         'SMC_LIQUIDITY_SWEEP',
         'BINANCE_COMPOSITE',
         'EARLY_COIL_BREAKOUT',
@@ -265,9 +267,9 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
     } else if (preset === 'VCB') {
       nextEnabled = ['VOLATILITY_COMPRESSION'];
     } else if (preset === 'TREND') {
-      nextEnabled = ['VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'EARLY_COIL_BREAKOUT'];
+      nextEnabled = ['VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'EMA_GAP_PULLBACK', 'EARLY_COIL_BREAKOUT'];
     } else if (preset === 'REVERSAL') {
-      nextEnabled = ['DELTA_CLIMAX', 'BINANCE_COMPOSITE', 'SMC_LIQUIDITY_SWEEP'];
+      nextEnabled = ['EMA_GAP_PULLBACK', 'BINANCE_COMPOSITE', 'SMC_LIQUIDITY_SWEEP'];
     } else if (preset === 'CLEAR') {
       nextEnabled = [];
     }
@@ -275,6 +277,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
       ...settings,
       enabledStrategies: nextEnabled,
       activeStrategy: (nextEnabled[0] || 'VOLATILITY_COMPRESSION') as any,
+      egpEnabled: nextEnabled.includes('EMA_GAP_PULLBACK'),
     };
     setSettings(nextSettings);
     fetch('/api/bot/settings', {

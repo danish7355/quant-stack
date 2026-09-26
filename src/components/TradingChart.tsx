@@ -167,7 +167,8 @@ export default function TradingChart({ coin, activePosition }: TradingChartProps
       }
       
       const isLong = activePosition.direction === 'LONG';
-      const stratLabel = activePosition.strategy === 'DELTA_CLIMAX' ? 'CLIMAX' :
+      const stratLabel = activePosition.strategy === 'EMA_GAP_PULLBACK' ? '5 EMA GAP' :
+        activePosition.strategy === 'DELTA_CLIMAX' ? 'CLIMAX' :
         activePosition.strategy === 'VOLATILITY_COMPRESSION' ? 'VCB' :
         activePosition.strategy === 'TREND_PULLBACK' ? 'PULLBACK' :
         activePosition.strategy === 'SMC_LIQUIDITY_SWEEP' ? 'SMC' :

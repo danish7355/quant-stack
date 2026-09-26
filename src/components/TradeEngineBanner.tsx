@@ -448,6 +448,11 @@ export function TradeEngineBanner({
                     <strong className="text-purple-400">SMC:</strong> Liquidity Sweep + MSS + FVG Retest • 1:{settings.smcRrRatio ?? 3.0} R:R Target
                   </p>
                 )}
+                {evaluation.activeStrategies.some(s => s.id === 'EMA_GAP_PULLBACK') && (
+                  <p>
+                    <strong className="text-teal-400">5 EMA Gap:</strong> HTF 50 EMA Trend Filter • Pullback Confirmation • Anti-Overextension Guard
+                  </p>
+                )}
                 {evaluation.activeStrategies.some(s => s.id === 'DELTA_CLIMAX') && (
                   <p>
                     <strong className="text-amber-400">Delta Climax:</strong> Capitulation Vol Spike • 3-Bar Exhaustion Reversal

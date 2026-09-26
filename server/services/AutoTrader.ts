@@ -926,7 +926,7 @@ export class AutoTrader {
              structuralRR: (signal as any).structuralRR
            });
         } else {
-           this.logScanResult(symbol, 'NEUTRAL', false, 'Failed Technical Gates (Climax/VCB/Composite)', currentPrice, 0, 0, 0);
+           this.logScanResult(symbol, 'NEUTRAL', false, 'Failed Technical Gates (5 EMA Gap/VCB/Composite)', currentPrice, 0, 0, 0);
         }
         
         if (signal && signal.score >= this.settings.autoTradeThreshold) {

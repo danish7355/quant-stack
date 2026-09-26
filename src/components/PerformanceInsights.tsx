@@ -152,7 +152,7 @@ export default function PerformanceInsights({ logs }: PerformanceInsightsProps) 
           key: 'TRENDING_REGIME',
           name: 'Trending Market Regime',
           condition: 'Trending',
-          desc: 'Directional momentum & EMA value pullbacks (Trend Pullback & Composite)',
+          desc: 'Directional momentum & EMA value pullbacks (Trend Pullback, 5 EMA Gap & Composite)',
           diag: 'Performance depends strongly on macro trend strength vs sideways chop.',
           rec: 'Filter with ADX > 22 or 1H EMA alignment to prevent false breaks.',
         },
@@ -195,7 +195,7 @@ export default function PerformanceInsights({ logs }: PerformanceInsightsProps) 
 
       filteredLogs.forEach((trade) => {
         const cond = getMarketConditionForStrategy(trade.strategy);
-        if (cond === 'Trending') groups['TRENDING_REGIME'].trades.push(trade);
+        if (cond === 'Trending' || cond === 'Trend Continuation / 5 EMA Gap') groups['TRENDING_REGIME'].trades.push(trade);
         else if (cond === 'Ranging / Consolidation') groups['RANGING_REGIME'].trades.push(trade);
         else if (cond === 'Mean-Reversion / Climax') groups['REVERSAL_REGIME'].trades.push(trade);
         else groups['UNSPECIFIED_REGIME'].trades.push(trade);
