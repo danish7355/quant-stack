@@ -279,7 +279,7 @@ export function TradeEngineBanner({
   const isLive = settings.tradingMode === 'LIVE';
   const modeLabel = isLive ? 'LIVE BINANCE FUTURES' : (settings.binanceTestnet ? 'BINANCE TESTNET' : 'PAPER TRADING / DEMO');
   const timeframe = settings.timeframe || '15m';
-  const coinCount = settings.coinCount || 30;
+  const coinCount = settings.coinCount || 100;
   const scanInterval = settings.scanInterval || 15;
 
   // ==========================================

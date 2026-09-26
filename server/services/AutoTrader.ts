@@ -878,8 +878,11 @@ export class AutoTrader {
         this.globalFilterBlockReason = null;
       }
 
-      // 1. Fetch top volume futures tickers (supports up to 100 coins)
-      const scanLimit = Math.min(Math.max(this.settings.coinCount || 25, 5), 100);
+      // 1. Fetch top volume futures tickers (supports up to 100 coins adhering to user settings)
+      const userCoinCount = typeof this.settings.coinCount === 'number' && this.settings.coinCount > 0
+        ? this.settings.coinCount
+        : 100;
+      const scanLimit = Math.min(Math.max(userCoinCount, 5), 100);
       const topSymbols = await this.getTopVolumeSymbols(scanLimit);
       
       for (const symbol of topSymbols) {
@@ -930,8 +933,16 @@ export class AutoTrader {
 
           const currentTotal = positionMonitor.getActivePositions().length + this.pendingSymbols.size;
           if (!this.settings.bypassMaxPositions && currentTotal >= this.settings.maxConcurrentTrades) {
-            console.log(`⏸️ [AutoTrader] Max concurrent trades reached (${currentTotal}/${this.settings.maxConcurrentTrades}). Waiting for exits.`);
-            break;
+            this.logScanResult(symbol, signal.direction, false, `Risk Manager: Max concurrent trades reached (${currentTotal}/${this.settings.maxConcurrentTrades})`, currentPrice, signal.sl, signal.tp1, signal.score, {
+              strategy: (signal as any).strategy || this.settings.activeStrategy,
+              marketRegime: (signal as any).marketRegime,
+              macroColor: (signal as any).macroColor,
+              regimeConfidence: (signal as any).regimeConfidence,
+              tradeQuality: (signal as any).tradeQuality,
+              strategyPriority: (signal as any).strategyPriority,
+              structuralRR: (signal as any).structuralRR
+            });
+            continue;
           }
 
           // Correlation filter (Section 8)
@@ -1244,7 +1255,7 @@ export class AutoTrader {
     } catch(e) {}
   }
 
-  private async getTopVolumeSymbols(limit: number = 10): Promise<string[]> {
+  private async getTopVolumeSymbols(limit: number = 100): Promise<string[]> {
     try {
       // 1. If scanOnlyWatchlist is enabled and customWatchlist is configured, prioritize user-defined symbols
       if (this.settings.scanOnlyWatchlist && this.settings.customWatchlist) {
@@ -1254,35 +1265,62 @@ export class AutoTrader {
           .filter(s => s.length > 0)
           .map(s => s.endsWith('USDT') ? s : `${s}USDT`);
         if (customSymbols.length > 0) {
-          return customSymbols;
+          return customSymbols.slice(0, limit);
         }
       }
 
       const res = await fetch('https://fapi.binance.com/fapi/v1/ticker/24hr');
       if (!res.ok) {
         await res.text().catch(() => {});
-        return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT'];
+        return this.getFallbackSymbols(limit);
       }
       const data: any = await res.json();
 
-      // Enforce strict liquidity guardrails: exclude illiquid/low-cap pairs below min24hVolume (default $25M)
+      // Enforce liquidity guardrails: exclude illiquid/low-cap pairs below min24hVolume (default $10M)
       const minVolume = (this.settings.min24hVolume && this.settings.min24hVolume > 0)
         ? this.settings.min24hVolume
-        : 25000000;
+        : 10000000;
 
       // Reliable symbol prioritization: BTC, ETH, SOL, XRP have verified real-time tracking
       const prioritySymbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT'];
-      const usdtPairs = data
-        .filter((d: any) => d.symbol.endsWith('USDT') && !d.symbol.includes('_'))
+      const rawUsdtPairs = Array.isArray(data)
+        ? data
+            .filter((d: any) => d.symbol && d.symbol.endsWith('USDT') && !d.symbol.includes('_') && /^[A-Z0-9]+USDT$/.test(d.symbol))
+            .sort((a: any, b: any) => parseFloat(b.quoteVolume || 0) - parseFloat(a.quoteVolume || 0))
+        : [];
+
+      // Filter by minVolume first
+      let usdtPairs = rawUsdtPairs
         .filter((d: any) => parseFloat(d.quoteVolume || '0') >= minVolume)
-        .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
         .map((d: any) => d.symbol);
 
+      // If volume filter returned fewer coins than requested limit, backfill from highest remaining volume pairs
+      if (usdtPairs.length < limit) {
+        const backfill = rawUsdtPairs.map((d: any) => d.symbol);
+        usdtPairs = Array.from(new Set([...usdtPairs, ...backfill]));
+      }
+
       const orderedSymbols = Array.from(new Set([...prioritySymbols, ...usdtPairs])).slice(0, limit);
-      return orderedSymbols.length > 0 ? orderedSymbols : prioritySymbols;
+      return orderedSymbols.length > 0 ? orderedSymbols : this.getFallbackSymbols(limit);
     } catch (e) {
-      return ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT'];
+      return this.getFallbackSymbols(limit);
     }
+  }
+
+  private getFallbackSymbols(limit: number = 100): string[] {
+    const list = [
+      'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'ZECUSDT', 'XRPUSDT', 'NEARUSDT', 'SUIUSDT', 'ENAUSDT', 'PHAUSDT', 'DOGEUSDT',
+      'UNIUSDT', 'HYPEUSDT', 'ONDOUSDT', 'LINKUSDT', 'WLDUSDT', '1000PEPEUSDT', 'LTCUSDT', 'BNBUSDT', 'ADAUSDT', 'TAOUSDT',
+      'AVAXUSDT', 'BCHUSDT', 'AAVEUSDT', 'PUMPUSDT', 'QNTUSDT', 'ARKUSDT', 'ARBUSDT', 'SAGAUSDT', 'XLMUSDT', 'FILUSDT',
+      'TRUMPUSDT', 'SEIUSDT', 'RAREUSDT', 'AEROUSDT', 'PENGUUSDT', 'FETUSDT', 'INJUSDT', 'LDOUSDT', 'DOTUSDT', 'DASHUSDT',
+      'LSKUSDT', 'APTUSDT', 'ETCUSDT', 'OPUSDT', 'GRASSUSDT', 'ZROUSDT', 'JTOUSDT', 'ICPUSDT', '1000SHIBUSDT', 'VIRTUALUSDT',
+      'XMRUSDT', 'HBARUSDT', 'JUPUSDT', 'POLUSDT', 'TIAUSDT', 'PENDLEUSDT', 'WIFUSDT', 'FTMUSDT', 'KASUSDT', '1000BONKUSDT',
+      '1000FLOKIUSDT', 'ATOMUSDT', 'STXUSDT', 'ALGOUSDT', 'RUNEUSDT', 'GRTUSDT', 'THETAUSDT', 'GALAUSDT', 'SANDUSDT', 'MANAUSDT',
+      'AXSUSDT', 'CHZUSDT', 'CRVUSDT', 'DYDXUSDT', 'MKRUSDT', 'SNXUSDT', 'COMPUSDT', 'BLURUSDT', 'ORDIUSDT', 'BOMEUSDT',
+      'MEMEUSDT', 'NOTUSDT', 'STRKUSDT', 'ZKUSDT', 'IOUSDT', 'REZUSDT', 'BBUSDT', 'LISTAUSDT', 'TNSRUSDT', 'OMNIUSDT',
+      'PYTHUSDT', 'DRIFTUSDT', 'BLASTUSDT', 'POPCATUSDT', 'MEWUSDT', 'NEIROUSDT', 'EIGENUSDT', 'SCRUSDT', 'PNUTUSDT', 'ACTUSDT'
+    ];
+    return list.slice(0, limit);
   }
 
   private async getKlines(symbol: string, timeframe: string): Promise<any[]> {

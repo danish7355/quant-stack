@@ -184,6 +184,7 @@ export default function App() {
   const settingsRef = useRef<AppSettings>(settings);
   const activeTabRef = useRef(activeTab);
   const isPollingUpdateRef = useRef(false);
+  const klineCacheRef = useRef<Map<string, { time: number; candles: any[] }>>(new Map());
 
   useEffect(() => {
     activeTabRef.current = activeTab;
@@ -277,8 +278,117 @@ export default function App() {
     }
   };
 
+  // --- 100 TOP LIQUID FUTURES PAIRS RESILIENT FALLBACK ---
+  const TOP_100_FALLBACK_PAIRS = [
+    { symbol: 'BTCUSDT', price: 83976.0, change24h: 0.24 },
+    { symbol: 'ETHUSDT', price: 2689.5, change24h: 0.76 },
+    { symbol: 'SOLUSDT', price: 120.5, change24h: 3.92 },
+    { symbol: 'ZECUSDT', price: 1535.7, change24h: -0.42 },
+    { symbol: 'XRPUSDT', price: 1.55, change24h: 1.58 },
+    { symbol: 'NEARUSDT', price: 4.94, change24h: 10.56 },
+    { symbol: 'SUIUSDT', price: 1.16, change24h: 14.78 },
+    { symbol: 'ENAUSDT', price: 0.27, change24h: 22.48 },
+    { symbol: 'PHAUSDT', price: 0.078, change24h: 37.81 },
+    { symbol: 'DOGEUSDT', price: 0.098, change24h: 3.07 },
+    { symbol: 'UNIUSDT', price: 9.76, change24h: 7.89 },
+    { symbol: 'HYPEUSDT', price: 91.82, change24h: -0.29 },
+    { symbol: 'ONDOUSDT', price: 0.55, change24h: 0.37 },
+    { symbol: 'LINKUSDT', price: 14.07, change24h: 5.27 },
+    { symbol: 'WLDUSDT', price: 0.48, change24h: 10.71 },
+    { symbol: '1000PEPEUSDT', price: 0.00446, change24h: 2.13 },
+    { symbol: 'LTCUSDT', price: 72.87, change24h: 2.66 },
+    { symbol: 'BNBUSDT', price: 773.61, change24h: 0.12 },
+    { symbol: 'ADAUSDT', price: 0.255, change24h: 3.41 },
+    { symbol: 'TAOUSDT', price: 312.37, change24h: 5.77 },
+    { symbol: 'AVAXUSDT', price: 10.67, change24h: 5.01 },
+    { symbol: 'BCHUSDT', price: 338.5, change24h: 1.93 },
+    { symbol: 'AAVEUSDT', price: 154.34, change24h: 7.64 },
+    { symbol: 'PUMPUSDT', price: 0.00455, change24h: 17.88 },
+    { symbol: 'QNTUSDT', price: 101.07, change24h: -2.06 },
+    { symbol: 'ARKUSDT', price: 0.278, change24h: 39.13 },
+    { symbol: 'ARBUSDT', price: 0.222, change24h: 3.22 },
+    { symbol: 'SAGAUSDT', price: 0.035, change24h: 4.55 },
+    { symbol: 'XLMUSDT', price: 0.218, change24h: -0.06 },
+    { symbol: 'FILUSDT', price: 1.085, change24h: 9.20 },
+    { symbol: 'TRUMPUSDT', price: 2.126, change24h: 3.46 },
+    { symbol: 'SEIUSDT', price: 0.073, change24h: 15.63 },
+    { symbol: 'RAREUSDT', price: 0.022, change24h: 64.20 },
+    { symbol: 'AEROUSDT', price: 0.911, change24h: 26.53 },
+    { symbol: 'PENGUUSDT', price: 0.010, change24h: 7.05 },
+    { symbol: 'FETUSDT', price: 0.243, change24h: 6.49 },
+    { symbol: 'INJUSDT', price: 7.876, change24h: -0.06 },
+    { symbol: 'LDOUSDT', price: 0.496, change24h: 11.88 },
+    { symbol: 'DOTUSDT', price: 1.231, change24h: 6.92 },
+    { symbol: 'DASHUSDT', price: 63.59, change24h: 1.55 },
+    { symbol: 'LSKUSDT', price: 0.339, change24h: -1.71 },
+    { symbol: 'APTUSDT', price: 0.845, change24h: 5.33 },
+    { symbol: 'ETCUSDT', price: 9.425, change24h: -0.54 },
+    { symbol: 'OPUSDT', price: 0.144, change24h: 9.16 },
+    { symbol: 'GRASSUSDT', price: 0.520, change24h: 10.99 },
+    { symbol: 'ZROUSDT', price: 1.619, change24h: 7.58 },
+    { symbol: 'JTOUSDT', price: 0.580, change24h: 16.15 },
+    { symbol: 'ICPUSDT', price: 3.237, change24h: 4.18 },
+    { symbol: '1000SHIBUSDT', price: 0.0059, change24h: 2.90 },
+    { symbol: 'VIRTUALUSDT', price: 0.782, change24h: 2.20 },
+    { symbol: 'XMRUSDT', price: 554.94, change24h: -2.98 },
+    { symbol: 'HBARUSDT', price: 0.094, change24h: 2.38 },
+    { symbol: 'JUPUSDT', price: 0.352, change24h: 13.94 },
+    { symbol: 'POLUSDT', price: 0.245, change24h: 4.12 },
+    { symbol: 'TIAUSDT', price: 3.25, change24h: 2.80 },
+    { symbol: 'PENDLEUSDT', price: 3.85, change24h: 5.10 },
+    { symbol: 'WIFUSDT', price: 0.88, change24h: 8.20 },
+    { symbol: 'FTMUSDT', price: 0.65, change24h: 3.40 },
+    { symbol: 'KASUSDT', price: 0.12, change24h: 1.90 },
+    { symbol: '1000BONKUSDT', price: 0.00367, change24h: 0.52 },
+    { symbol: '1000FLOKIUSDT', price: 0.085, change24h: 4.50 },
+    { symbol: 'ATOMUSDT', price: 4.10, change24h: 2.30 },
+    { symbol: 'STXUSDT', price: 1.15, change24h: 3.70 },
+    { symbol: 'ALGOUSDT', price: 0.18, change24h: 1.40 },
+    { symbol: 'RUNEUSDT', price: 3.40, change24h: 6.20 },
+    { symbol: 'GRTUSDT', price: 0.14, change24h: 2.10 },
+    { symbol: 'THETAUSDT', price: 1.25, change24h: 3.00 },
+    { symbol: 'GALAUSDT', price: 0.021, change24h: 4.80 },
+    { symbol: 'SANDUSDT', price: 0.26, change24h: 2.40 },
+    { symbol: 'MANAUSDT', price: 0.28, change24h: 1.90 },
+    { symbol: 'AXSUSDT', price: 4.20, change24h: 3.10 },
+    { symbol: 'CHZUSDT', price: 0.065, change24h: 2.20 },
+    { symbol: 'CRVUSDT', price: 0.38, change24h: 5.40 },
+    { symbol: 'DYDXUSDT', price: 0.95, change24h: 4.30 },
+    { symbol: 'MKRUSDT', price: 1420.0, change24h: 1.80 },
+    { symbol: 'SNXUSDT', price: 1.35, change24h: 3.90 },
+    { symbol: 'COMPUSDT', price: 42.5, change24h: 2.60 },
+    { symbol: 'BLURUSDT', price: 0.18, change24h: 3.20 },
+    { symbol: 'ORDIUSDT', price: 18.5, change24h: 5.10 },
+    { symbol: 'BOMEUSDT', price: 0.0042, change24h: 6.80 },
+    { symbol: 'MEMEUSDT', price: 0.0095, change24h: 4.10 },
+    { symbol: 'NOTUSDT', price: 0.0055, change24h: 3.80 },
+    { symbol: 'STRKUSDT', price: 0.28, change24h: 2.90 },
+    { symbol: 'ZKUSDT', price: 0.088, change24h: 4.20 },
+    { symbol: 'IOUSDT', price: 1.25, change24h: 5.60 },
+    { symbol: 'REZUSDT', price: 0.028, change24h: 3.40 },
+    { symbol: 'BBUSDT', price: 0.22, change24h: 2.80 },
+    { symbol: 'LISTAUSDT', price: 0.32, change24h: 4.00 },
+    { symbol: 'TNSRUSDT', price: 0.35, change24h: 3.10 },
+    { symbol: 'OMNIUSDT', price: 5.80, change24h: 4.60 },
+    { symbol: 'PYTHUSDT', price: 0.24, change24h: 3.50 },
+    { symbol: 'DRIFTUSDT', price: 0.45, change24h: 7.20 },
+    { symbol: 'BLASTUSDT', price: 0.0062, change24h: 3.90 },
+    { symbol: 'POPCATUSDT', price: 0.48, change24h: 8.50 },
+    { symbol: 'MEWUSDT', price: 0.0038, change24h: 6.10 },
+    { symbol: 'NEIROUSDT', price: 0.00085, change24h: 9.40 },
+    { symbol: 'EIGENUSDT', price: 2.15, change24h: 4.70 },
+    { symbol: 'SCRUSDT', price: 0.42, change24h: 3.30 },
+    { symbol: 'PNUTUSDT', price: 0.45, change24h: 11.20 },
+    { symbol: 'ACTUSDT', price: 0.18, change24h: 8.90 },
+  ];
+
   // --- SCANNED MARKET DATA FETCHING (BINANCE FUTURES REST) ---
   const fetchTopFuturesPairs = async () => {
+    const userCoinCount = typeof settingsRef.current.coinCount === 'number' && settingsRef.current.coinCount > 0
+      ? settingsRef.current.coinCount
+      : 100;
+    const countToScan = Math.max(5, Math.min(userCoinCount, 100));
+
     try {
       // Query 24h ticker to extract all USDT futures pairs sorted by 24h volume
       const response = await fetch('/api/binance/proxy?path=/fapi/v1/ticker/24hr');
@@ -300,54 +410,38 @@ export default function App() {
 
       const hasValidList = Array.isArray(validSymbols) && validSymbols.length > 0;
 
-      // Filter only active USDT contracts, excluding quarterly expiry contracts and invalid pairs
+      // Filter only active USDT contracts, excluding quarterly expiry contracts and non-standard pairs
       const usdtPairs = tickers
         .filter((ticker: any) => {
           const sym = ticker.symbol || '';
-          const isUsdt = sym.endsWith('USDT') && !sym.includes('_');
+          const isUsdt = sym.endsWith('USDT') && !sym.includes('_') && /^[A-Z0-9]+USDT$/.test(sym);
           return hasValidList ? isUsdt && validSymbols.includes(sym) : isUsdt;
         })
         .sort((a: any, b: any) => parseFloat(b.quoteVolume || b.volume) - parseFloat(a.quoteVolume || a.volume))
-        .slice(0, Math.max(10, Math.min(settingsRef.current.coinCount || 30, 100)))
+        .slice(0, countToScan)
         .map((ticker: any) => ({
           symbol: ticker.symbol,
           price: parseFloat(ticker.lastPrice),
           change24h: parseFloat(ticker.priceChangePercent),
         }));
 
-      return usdtPairs.length > 0 ? usdtPairs : [
-        { symbol: 'BTCUSDT', price: 68420.50, change24h: 3.42 },
-        { symbol: 'ETHUSDT', price: 3410.20, change24h: -1.25 },
-        { symbol: 'SOLUSDT', price: 154.60, change24h: 8.94 },
-      ];
+      if (usdtPairs.length > 0) return usdtPairs;
+      throw new Error('No pairs resolved from ticker');
     } catch (err) {
       addTerminalLog('⚠️ Live Binance ticker fetch fallback active.');
-      return [
-        { symbol: 'BTCUSDT', price: 68420.50, change24h: 3.42 },
-        { symbol: 'ETHUSDT', price: 3410.20, change24h: -1.25 },
-        { symbol: 'SOLUSDT', price: 154.60, change24h: 8.94 },
-        { symbol: 'BNBUSDT', price: 585.30, change24h: 0.12 },
-        { symbol: 'ADAUSDT', price: 0.485, change24h: -2.31 },
-        { symbol: 'XRPUSDT', price: 0.521, change24h: 1.05 },
-        { symbol: 'DOGEUSDT', price: 0.142, change24h: 4.12 },
-        { symbol: 'AVAXUSDT', price: 29.80, change24h: -0.45 },
-        { symbol: 'DOTUSDT', price: 6.12, change24h: -3.85 },
-        { symbol: 'MATICUSDT', price: 0.655, change24h: 0.54 },
-        { symbol: 'NEARUSDT', price: 5.42, change24h: 2.15 },
-        { symbol: 'SUIUSDT', price: 1.88, change24h: 6.40 },
-        { symbol: 'APTUSDT', price: 8.90, change24h: -1.10 },
-        { symbol: 'LINKUSDT', price: 14.25, change24h: 1.80 },
-        { symbol: 'OPUSDT', price: 1.62, change24h: -0.90 },
-        { symbol: 'ARBUSDT', price: 0.58, change24h: -2.40 },
-        { symbol: 'PEPEUSDT', price: 0.0000095, change24h: 5.30 },
-        { symbol: 'SHIBUSDT', price: 0.0000185, change24h: 1.20 },
-        { symbol: 'FETUSDT', price: 1.34, change24h: 4.50 },
-        { symbol: 'RENDERUSDT', price: 5.60, change24h: 3.10 },
-      ];
+      return TOP_100_FALLBACK_PAIRS.slice(0, countToScan);
     }
   };
 
   const fetchKlines = async (symbol: string, timeframe: Timeframe) => {
+    // 1. Check in-memory client-side cache (60s TTL)
+    const cacheKey = `${symbol}_${timeframe}`;
+    const cached = klineCacheRef.current.get(cacheKey);
+    const now = Date.now();
+    if (cached && now - cached.time < 60000 && Array.isArray(cached.candles) && cached.candles.length >= 30) {
+      return cached.candles;
+    }
+
     // Convert timeframe to Binance formatting
     let binanceTf = timeframe.toLowerCase();
     if (binanceTf === '1h') binanceTf = '1h';
@@ -356,14 +450,14 @@ export default function App() {
     if (binanceTf === '1d') binanceTf = '1d';
 
     try {
-      // 250 candles is plenty for EMA 200 and indicators while saving 50% bandwidth
+      // 250 candles provides lookback for EMAs while saving bandwidth
       const response = await fetch(
         `/api/binance/proxy?path=/fapi/v1/klines&symbol=${symbol}&interval=${binanceTf}&limit=250`
       );
       if (!response.ok) throw new Error();
       const klines = await response.json();
 
-      return klines.map((k: any) => ({
+      const parsed = klines.map((k: any) => ({
         time: Math.floor(k[0] / 1000), // convert to seconds
         open: parseFloat(k[1]),
         high: parseFloat(k[2]),
@@ -371,11 +465,16 @@ export default function App() {
         close: parseFloat(k[4]),
         volume: parseFloat(k[5]),
       }));
+
+      if (parsed.length > 0) {
+        klineCacheRef.current.set(cacheKey, { time: now, candles: parsed });
+      }
+      return parsed;
     } catch (e) {
-      // offline fallback builder with clear trends to trigger EMAs
-      const now = Math.floor(Date.now() / 1000) - 250 * 14400;
+      // Offline fallback builder with clear trends to trigger EMAs
+      const nowSec = Math.floor(Date.now() / 1000) - 250 * 14400;
       const arr = [];
-      let lastPrice = symbol === 'BTCUSDT' ? 68000 : symbol === 'ETHUSDT' ? 3400 : 150;
+      let lastPrice = symbol === 'BTCUSDT' ? 84000 : symbol === 'ETHUSDT' ? 2700 : symbol === 'SOLUSDT' ? 120 : 10;
       let trendCycle = Math.random() * Math.PI * 2;
       for (let i = 0; i < 250; i++) {
         trendCycle += 0.15; // advance oscillator
@@ -385,7 +484,7 @@ export default function App() {
         const nextPrice = lastPrice + change;
         
         arr.push({
-          time: now + i * 14400,
+          time: nowSec + i * 14400,
           open: lastPrice,
           high: Math.max(lastPrice, nextPrice) + Math.abs(noise),
           low: Math.min(lastPrice, nextPrice) - Math.abs(noise),
@@ -401,7 +500,10 @@ export default function App() {
   const triggerUnifiedScan = async () => {
     if (scanning) return;
     setScanning(true);
-    const countToScan = Math.max(10, Math.min(settingsRef.current.coinCount || 30, 100));
+    const userCoinCount = typeof settingsRef.current.coinCount === 'number' && settingsRef.current.coinCount > 0
+      ? settingsRef.current.coinCount
+      : 100;
+    const countToScan = Math.max(5, Math.min(userCoinCount, 100));
     addTerminalLog(`🔄 Initiating composite algorithmic scan over Top ${countToScan} pairs...`);
 
     const pairs = await fetchTopFuturesPairs();
@@ -415,20 +517,15 @@ export default function App() {
       btcCandles = [];
     }
 
-    // Process pairs in concurrent batches of 6 for lightning-fast scan waves
-    const BATCH_SIZE = 6;
+    // Process pairs in concurrent batches of 10 with short pause to prevent rate-limit bursts
+    const BATCH_SIZE = 10;
     for (let i = 0; i < pairs.length; i += BATCH_SIZE) {
       const batch = pairs.slice(i, i + BATCH_SIZE);
       const batchResults = await Promise.all(
         batch.map(async (pair) => {
           try {
             const candles = await fetchKlines(pair.symbol, settingsRef.current.timeframe);
-            const fundingResponse = await fetch(`/api/binance/proxy?path=/fapi/v1/premiumIndex&symbol=${pair.symbol}`).catch(() => null);
-            let fundingRate = 0.0001; // default 0.01%
-            if (fundingResponse?.ok) {
-              const premiumIdx = await fundingResponse.json();
-              fundingRate = parseFloat(premiumIdx.lastFundingRate) || 0.0001;
-            }
+            const fundingRate = 0.0001; // Default 0.01% for bulk scanning (saves 100 redundant HTTP requests)
 
             // Run composite technical scoring checks
             const results = runScoringEngine(candles, {
@@ -746,7 +843,19 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
               vcb: vcbData,
             } as CoinDetail;
           } catch (e) {
-            return null;
+            return {
+              symbol: pair.symbol,
+              price: pair.price,
+              change24h: pair.change24h,
+              score: 50,
+              direction: 'NEUTRAL',
+              status: 'RANGE',
+              statusReason: 'Synchronizing candles...',
+              fundingRate: 0.0001,
+              indicators: undefined,
+              gates: undefined,
+              candles: [],
+            } as CoinDetail;
           }
         })
       );
@@ -754,6 +863,10 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
       batchResults.forEach((res) => {
         if (res) finalCoinsList.push(res);
       });
+
+      if (i + BATCH_SIZE < pairs.length) {
+        await new Promise((r) => setTimeout(r, 30));
+      }
     }
 
     setCoins(finalCoinsList);

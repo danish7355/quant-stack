@@ -61,6 +61,37 @@ try {
   console.warn('[SignalAuditService] Could not preload signal_audit.jsonl:', err);
 }
 
+let writeCountSinceCheck = 0;
+const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB max
+
+function pruneSignalAuditFileIfNeeded() {
+  try {
+    const jsonlPath = path.join(process.cwd(), 'data', 'signal_audit.jsonl');
+    if (!fs.existsSync(jsonlPath)) return;
+    const stat = fs.statSync(jsonlPath);
+    if (stat.size > MAX_FILE_SIZE_BYTES) {
+      const readSize = Math.min(stat.size, 1024 * 1024); // read last 1MB (~2000 lines)
+      const buffer = Buffer.alloc(readSize);
+      const fd = fs.openSync(jsonlPath, 'r');
+      try {
+        fs.readSync(fd, buffer, 0, readSize, stat.size - readSize);
+      } finally {
+        fs.closeSync(fd);
+      }
+      const chunk = buffer.toString('utf8');
+      const lines = chunk.split('\n').filter(Boolean);
+      const validLines = stat.size > readSize ? lines.slice(1) : lines;
+      const recentLines = validLines.slice(-1000); // keep last 1000 lines
+      const tmpPath = jsonlPath + '.tmp';
+      fs.writeFileSync(tmpPath, recentLines.join('\n') + '\n', 'utf8');
+      fs.copyFileSync(tmpPath, jsonlPath);
+      try { fs.unlinkSync(tmpPath); } catch (_) {}
+    }
+  } catch (e) {
+    console.warn('[SignalAuditService] Error pruning audit file:', e);
+  }
+}
+
 export async function writeSignalAudit(record: Omit<SignalAuditRecord, 'createdAt'>) {
   try {
     const fullRecord: SignalAuditRecord = {
@@ -76,6 +107,12 @@ export async function writeSignalAudit(record: Omit<SignalAuditRecord, 'createdA
 
     // Persist to local jsonl file
     appendLocalJsonl('signal_audit.jsonl', fullRecord);
+
+    writeCountSinceCheck++;
+    if (writeCountSinceCheck >= 200) {
+      writeCountSinceCheck = 0;
+      pruneSignalAuditFileIfNeeded();
+    }
 
     // Persist to Firestore only for actionable trade signals (ENTER), not every rejected coin scan
     if (!isQuotaExhausted() && fullRecord.decision === 'ENTER') {

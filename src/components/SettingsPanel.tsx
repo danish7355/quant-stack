@@ -780,7 +780,7 @@ export default function SettingsPanel({
                 </div>
                 <LocalNumberInput
                   value={settings.coinCount}
-                  onChange={(v: any) => handleInputChange('coinCount', Math.max(10, Math.min(v || 10, 100)))}
+                  onChange={(v: any) => handleInputChange('coinCount', Math.max(5, Math.min(v || 100, 100)))}
                   className="w-16 bg-[#0E1117] border border-[#30363D] rounded p-1.5 text-right font-mono text-sm font-semibold text-gray-400 focus:outline-none focus:border-indigo-500"
                 />
               </div>
