@@ -26,6 +26,7 @@ import { detectMacroRangeBreakout } from '../../src/utils/strategies/macroRange.
 import { evaluateEarlyCoilBreakout } from '../../src/utils/strategies/earlyCoilBreakout.js';
 import { evaluateTwoSidedCoilBreakout } from '../../src/utils/strategies/twoSidedCoilBreakout.js';
 import { evaluateRangeMeanReversion } from '../../src/utils/strategies/rangeMeanReversion.js';
+import { evaluateEmaGapPullback } from '../../src/utils/strategies/emaGapPullback.js';
 import { calculateRSI } from '../../src/utils/indicators.js';
 import {
   allowVCB,
@@ -1381,7 +1382,7 @@ export class AutoTrader {
     const reward3 = Math.abs(rawSignal.tp3 - currentPrice);
     const structuralRR = reward3 / risk;
     
-    const minRR = (rawSignal.strategy === 'DELTA_CLIMAX' || rawSignal.strategy === 'BINANCE_COMPOSITE' || classification.regime.startsWith('EXHAUSTION') || classification.regime === 'RANGING') ? 2.5 : 3.0;
+    const minRR = (rawSignal.strategy === 'EMA_GAP_PULLBACK' || rawSignal.strategy === 'BINANCE_COMPOSITE' || classification.regime.startsWith('EXHAUSTION') || classification.regime === 'RANGING') ? 2.5 : 3.0;
     if (structuralRR < minRR) {
       return null; // structural target doesn't offer adequate R:R. Stand aside in cash!
     }
@@ -1446,11 +1447,24 @@ export class AutoTrader {
     compressionHigh?: number;
     compressionLow?: number;
   } | null> {
-    // 1. Climax Reversal algorithm
-    if (strat === 'DELTA_CLIMAX') {
-      const sig = this.evaluateClimaxReversal(klines, currentPrice);
-      if (!sig) return null;
-      return { ...sig, strategy: 'DELTA_CLIMAX', marketRegime: 'Exhaustion Climax' };
+    // 1. 5 EMA Gap Pullback algorithm
+    if (strat === 'EMA_GAP_PULLBACK') {
+      const htfCandles = await this.getKlines(symbol, '1h');
+      const sig = evaluateEmaGapPullback(klines, htfCandles, currentPrice, this.settings as any);
+      if (!sig || sig.status !== 'confirmed') return null;
+      return {
+        direction: sig.direction!,
+        score: sig.score || 90,
+        atr: sig.atr || (currentPrice * 0.01),
+        sl: sig.stop!,
+        tp1: sig.tp1!,
+        tp2: sig.tp2!,
+        tp3: sig.tp3!,
+        signalTime: sig.signalTime,
+        reason: sig.reason,
+        strategy: 'EMA_GAP_PULLBACK',
+        marketRegime: '5 EMA Trend Continuation'
+      };
     }
     
     // 2. Volatility Compression Breakout (VCB) Strategy - Primary canonical strategy
@@ -1861,10 +1875,21 @@ export class AutoTrader {
         }
       }
 
-      if (candidate.id === 'DELTA_CLIMAX' && (currentRegime.startsWith('EXHAUSTION') || currentRegime === 'RANGING')) {
-        const climaxSignal = this.evaluateClimaxReversal(closedKlines, currentPrice);
-        if (climaxSignal && (!candidate.direction || climaxSignal.direction === candidate.direction)) {
-          pendingSignal = { ...climaxSignal };
+      if (candidate.id === 'EMA_GAP_PULLBACK' && currentRegime.startsWith('TRENDING')) {
+        const htfCandles = await this.getKlines(symbol, '1h');
+        const egpSignal = evaluateEmaGapPullback(closedKlines, htfCandles, currentPrice, this.settings as any);
+        if (egpSignal && egpSignal.status === 'confirmed' && (!candidate.direction || egpSignal.direction === candidate.direction)) {
+          pendingSignal = {
+            direction: egpSignal.direction!,
+            score: egpSignal.score || 90,
+            atr: egpSignal.atr || (currentPrice * 0.01),
+            sl: egpSignal.stop!,
+            tp1: egpSignal.tp1!,
+            tp2: egpSignal.tp2!,
+            tp3: egpSignal.tp3!,
+            signalTime: egpSignal.signalTime,
+            reason: egpSignal.reason,
+          };
         }
       }
 
@@ -1970,8 +1995,8 @@ export class AutoTrader {
           gateResults.stopStructurallyValid = 'PASS';
         }
 
-        // 5. Structural Risk-to-Reward Gate (>= 3.0 required, or >= 2.5 for DELTA_CLIMAX / Mean Reversion)
-        const minRR = (candidate.id === 'DELTA_CLIMAX' || candidate.id === 'BINANCE_COMPOSITE' || candidate.id === 'RANGE_MEAN_REVERSION' || currentRegime.startsWith('EXHAUSTION') || currentRegime === 'RANGING') ? 2.5 : 3.0;
+        // 5. Structural Risk-to-Reward Gate (>= 3.0 required, or >= 2.5 for EMA_GAP_PULLBACK / Mean Reversion)
+        const minRR = (candidate.id === 'EMA_GAP_PULLBACK' || candidate.id === 'BINANCE_COMPOSITE' || candidate.id === 'RANGE_MEAN_REVERSION' || currentRegime.startsWith('EXHAUSTION') || currentRegime === 'RANGING') ? 2.5 : 3.0;
         const reward3 = Math.abs(pendingSignal.tp3 - currentPrice);
         const structuralRR = risk > 0 ? (reward3 / risk) : 0;
         if (structuralRR < minRR) {
@@ -2095,154 +2120,7 @@ export class AutoTrader {
     };
   }
 
-  private evaluateClimaxReversal(candles: any[], currentPrice: number): {
-    direction: 'LONG' | 'SHORT';
-    score: number;
-    atr: number;
-    sl: number;
-    tp1: number;
-    tp2: number;
-    tp3: number;
-    signalTime?: number;
-  } | null {
-    if (!candles || candles.length < 35) return null;
 
-    const lookback = 20;
-    const lastIdx = candles.length - 1;
-    const cClosed = candles[lastIdx];
-    const cPrev = candles[lastIdx - 1];
-
-    // Compute ATR over last 14 closed candles
-    let atrSum = 0;
-    for (let i = lastIdx - 13; i <= lastIdx; i++) {
-      if (i <= 0) continue;
-      const h = candles[i].high;
-      const l = candles[i].low;
-      const prevC = candles[i - 1].close;
-      atrSum += Math.max(h - l, Math.abs(h - prevC), Math.abs(l - prevC));
-    }
-    const atr = Math.max(atrSum / 14, currentPrice * 0.01);
-
-    // 20-period average volume
-    const volSlice = candles.slice(Math.max(0, lastIdx - lookback), lastIdx);
-    const avgVol = volSlice.reduce((s, c) => s + (c.volume || 0), 0) / (volSlice.length || 1);
-
-    // Recent Swing High / Low over last 25 bars (excluding the trigger candle itself)
-    const recentCandles = candles.slice(Math.max(0, lastIdx - 25), lastIdx);
-    const highestHigh = recentCandles.length > 0 ? Math.max(...recentCandles.map(c => c.high)) : cClosed.high;
-    const lowestLow = recentCandles.length > 0 ? Math.min(...recentCandles.map(c => c.low)) : cClosed.low;
-
-    // Pure Setup Check: Statistical Overextension from EMA50
-    // A climax reversal ONLY occurs after extreme exhaustion away from mean value (>= 1.6 ATR)
-    const closes = candles.map(c => c.close);
-    const ema50Series = calculateEMA(closes, 50);
-    const ema50 = ema50Series[lastIdx] || currentPrice;
-
-    const isBullOverextended = (highestHigh - ema50) >= (1.6 * atr);
-    const isBearOverextended = (ema50 - lowestLow) >= (1.6 * atr);
-
-    if (!isBullOverextended && !isBearOverextended) {
-      return null; // Not an exhaustion climax - price is near equilibrium
-    }
-
-    const getWicks = (c: any) => {
-      const tot = c.high - c.low;
-      if (tot === 0) return { upper: 0, lower: 0 };
-      const top = Math.max(c.open, c.close);
-      const bot = Math.min(c.open, c.close);
-      return {
-        upper: (c.high - top) / tot,
-        lower: (bot - c.low) / tot
-      };
-    };
-
-    // ==========================================
-    // PATTERN 1: SINGLE-BAR CLIMAX PIN BAR REJECTION (Fast Inception)
-    // ==========================================
-    const isSingleVol = cClosed.volume >= avgVol * 1.75;
-    const singleWicks = getWicks(cClosed);
-
-    // Bearish Pin Bar at Peak
-    if (isBullOverextended && isSingleVol && cClosed.high >= highestHigh * 0.998 && singleWicks.upper >= 0.38 && currentPrice < cClosed.high) {
-      const sl = cClosed.high + (atr * 0.20);
-      const risk = Math.abs(currentPrice - sl);
-      if (risk <= atr * 1.2) {
-        return {
-          signalTime: cClosed.time,
-          direction: 'SHORT',
-          score: 95,
-          atr,
-          sl,
-          tp1: Math.max(0.0001, currentPrice - 1.5 * risk),
-          tp2: Math.max(0.0001, currentPrice - 3.0 * risk),
-          tp3: Math.max(0.0001, currentPrice - 5.0 * risk)
-        };
-      }
-    }
-
-    // Bullish Hammer at Trough
-    if (isBearOverextended && isSingleVol && cClosed.low <= lowestLow * 1.002 && singleWicks.lower >= 0.38 && currentPrice > cClosed.low) {
-      const sl = cClosed.low - (atr * 0.20);
-      const risk = Math.abs(currentPrice - sl);
-      if (risk <= atr * 1.2) {
-        return {
-          signalTime: cClosed.time,
-          direction: 'LONG',
-          score: 95,
-          atr,
-          sl,
-          tp1: currentPrice + 1.5 * risk,
-          tp2: currentPrice + 3.0 * risk,
-          tp3: currentPrice + 5.0 * risk
-        };
-      }
-    }
-
-    // ==========================================
-    // PATTERN 2: TWO-BAR CLIMAX + IMMEDIATE REVERSAL
-    // ==========================================
-    const c1 = cPrev;
-    const c2 = cClosed;
-    const isC1Vol = c1.volume >= avgVol * 1.6;
-
-    // Bearish Two-Bar Reversal (Climax pump then reversal bar)
-    if (isBullOverextended && isC1Vol && c1.high >= highestHigh * 0.995 && c2.close < c2.open && (c2.close < c1.open || getWicks(c2).upper >= 0.35)) {
-      const sl = Math.max(c1.high, c2.high) + (atr * 0.20);
-      const risk = Math.abs(currentPrice - sl);
-      if (risk <= atr * 1.3) {
-        return {
-          signalTime: c2.time,
-          direction: 'SHORT',
-          score: 95,
-          atr,
-          sl,
-          tp1: Math.max(0.0001, currentPrice - 1.5 * risk),
-          tp2: Math.max(0.0001, currentPrice - 3.0 * risk),
-          tp3: Math.max(0.0001, currentPrice - 5.0 * risk)
-        };
-      }
-    }
-
-    // Bullish Two-Bar Reversal (Capitulation dump then reversal bar)
-    if (isBearOverextended && isC1Vol && c1.low <= lowestLow * 1.005 && c2.close > c2.open && (c2.close > c1.open || getWicks(c2).lower >= 0.35)) {
-      const sl = Math.min(c1.low, c2.low) - (atr * 0.20);
-      const risk = Math.abs(currentPrice - sl);
-      if (risk <= atr * 1.3) {
-        return {
-          signalTime: c2.time,
-          direction: 'LONG',
-          score: 95,
-          atr,
-          sl,
-          tp1: currentPrice + 1.5 * risk,
-          tp2: currentPrice + 3.0 * risk,
-          tp3: currentPrice + 5.0 * risk
-        };
-      }
-    }
-
-    return null;
-  }
 
   private async evaluateVolatilityCompression(symbol: string, candles: any[], currentPrice: number): Promise<{
     direction: 'LONG' | 'SHORT';

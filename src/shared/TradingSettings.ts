@@ -38,8 +38,8 @@ export interface TradingSettings {
   equitySnapshots?: { time: string; balance: number }[];
 
   // Execution & Strategy Engine
-  activeStrategy: 'BINANCE_COMPOSITE' | 'DELTA_CLIMAX' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'AUTO_REGIME' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL';
-  enabledStrategies?: ('BINANCE_COMPOSITE' | 'DELTA_CLIMAX' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL')[];
+  activeStrategy: 'BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'AUTO_REGIME' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL';
+  enabledStrategies?: ('BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL')[];
   strategyBucket?: StrategyBucketItem[];
   tradeFrequency: 'LOW' | 'MEDIUM' | 'HIGH';
   autoTradeThreshold: number;      // Confidence score threshold (50 - 100)
@@ -111,23 +111,23 @@ export interface TradingSettings {
 
   forceClearCredentials?: boolean;
 
-  // Climax Reversal Strategy
-  crEnabled: boolean;
-  crClimaxLookback: number;
-  crEmaFast: number;
-  crEmaContext: number;
-  crEmaBaseline: number;
-  crAtrPeriod: number;
-  crMinOverextensionAtr: number;
-  crMinAtrVsAverage: number;
-  crAtrAveragePeriod: number;
-  crMinRejectionWickRatio: number;
-  crMinClimaxRangeRatio: number;
-  crMinStopDistanceAtr: number;
-  crMinRewardRisk: number;
-  crVolumeSpikeMultiplier?: number;
-  crMinWickRatio?: number;
-  crMinAtrDistance?: number;
+  // 5 EMA Gap Pullback Strategy
+  egpEnabled: boolean;
+  egpEma5Period: number;
+  egpEma21Period: number;
+  egpHtfEma50Period: number;
+  egpHtfSlopeLookback: number;
+  egpMinPullbackBars: number;
+  egpMinGapBodyPct: number;
+  egpVolumeMultiplier: number;
+  egpMaxDistToEma21Atr: number;
+  egpAtrPeriod: number;
+  egpMaxWickRatioForFail: number;
+  egpTp1RMultiple: number;
+  egpTp2RMultiple: number;
+  egpTp3RMultiple: number;
+  egpSlSwingLookback: number;
+  egpSlAtrBuffer: number;
 
   // Volatility Compression Breakout (VCB) Strategy
   vcbCompressionLookback: number;
@@ -508,19 +508,22 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   alertOnDailyLossLimit: true,
   alertOnRangingDetected: false,
 
-  crEnabled: false,
-  crClimaxLookback: 20,
-  crEmaFast: 5,
-  crEmaContext: 55,
-  crEmaBaseline: 200,
-  crAtrPeriod: 14,
-  crMinOverextensionAtr: 2.0,
-  crMinAtrVsAverage: 1.0,
-  crAtrAveragePeriod: 50,
-  crMinRejectionWickRatio: 0.45,
-  crMinClimaxRangeRatio: 1.3,
-  crMinStopDistanceAtr: 0.5,
-  crMinRewardRisk: 1.5,
+  egpEnabled: true,
+  egpEma5Period: 5,
+  egpEma21Period: 21,
+  egpHtfEma50Period: 50,
+  egpHtfSlopeLookback: 10,
+  egpMinPullbackBars: 3,
+  egpMinGapBodyPct: 0.60,
+  egpVolumeMultiplier: 1.5,
+  egpMaxDistToEma21Atr: 1.0,
+  egpAtrPeriod: 14,
+  egpMaxWickRatioForFail: 0.50,
+  egpTp1RMultiple: 1.0,
+  egpTp2RMultiple: 1.5,
+  egpTp3RMultiple: 2.5,
+  egpSlSwingLookback: 10,
+  egpSlAtrBuffer: 0.2,
 
   vcbCompressionLookback: 10,
   vcbCompressionAtrRatioMax: 0.70,

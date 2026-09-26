@@ -69,6 +69,7 @@ export interface CoinDetail {
   };
   regime?: any;
   wmPattern: 'W_READY' | 'M_READY' | 'W_CONFIRMED' | 'M_CONFIRMED' | 'W_FORMING' | 'M_FORMING' | 'NONE';
+  egpSignal?: any;
   crSignal?: any;
   candles: {
     time: number; // UTC timestamp in seconds

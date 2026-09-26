@@ -15,7 +15,7 @@ interface StrategyPanelProps {
 }
 
 export const AVAILABLE_STRATEGIES: {
-  id: 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'DELTA_CLIMAX' | 'SMC_LIQUIDITY_SWEEP' | 'BINANCE_COMPOSITE' | 'EARLY_COIL_BREAKOUT' | 'MACRO_RANGE_BREAKOUT';
+  id: 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'EMA_GAP_PULLBACK' | 'SMC_LIQUIDITY_SWEEP' | 'BINANCE_COMPOSITE' | 'EARLY_COIL_BREAKOUT' | 'MACRO_RANGE_BREAKOUT';
   name: string;
   shortName: string;
   type: string;
@@ -42,12 +42,12 @@ export const AVAILABLE_STRATEGIES: {
     icon: Target,
   },
   {
-    id: 'DELTA_CLIMAX',
-    name: 'Delta Climax Exhaustion Reversal',
-    shortName: 'Delta Climax',
-    type: 'Exhaustion Reversal',
-    badgeBg: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
-    description: 'Detects extreme capitulation volume, overextended ATR beyond baseline, and multi-bar candle reversal triggers.',
+    id: 'EMA_GAP_PULLBACK',
+    name: '5 EMA Gap Pullback (Trend Continuation)',
+    shortName: '5 EMA Gap',
+    type: 'Trend Continuation',
+    badgeBg: 'bg-teal-500/20 text-teal-300 border-teal-500/40',
+    description: 'Trades high-quality 5 EMA gap candles after structured pullbacks with HTF 50 EMA trend alignment and anti-overextension filter.',
     icon: Zap,
   },
   {
@@ -626,8 +626,8 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                         {strat.id === 'TREND_PULLBACK' && (
                           <span className="text-gray-400 font-mono">5 Pillars</span>
                         )}
-                        {strat.id === 'DELTA_CLIMAX' && (
-                          <span className="text-gray-400 font-mono">3-Candle</span>
+                        {strat.id === 'EMA_GAP_PULLBACK' && (
+                          <span className="text-gray-400 font-mono">7 Gates</span>
                         )}
                       </div>
                     </div>
@@ -854,8 +854,8 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                         {strat.id === 'TREND_PULLBACK' && (
                           <span className="text-gray-400 font-mono">5 Pillars</span>
                         )}
-                        {strat.id === 'DELTA_CLIMAX' && (
-                          <span className="text-gray-400 font-mono">3-Candle</span>
+                        {strat.id === 'EMA_GAP_PULLBACK' && (
+                          <span className="text-gray-400 font-mono">7 Gates</span>
                         )}
                       </div>
                     </div>
@@ -1054,17 +1054,17 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
               </div>
             </div>
 
-            {/* Climax Reversal Parameters */}
+            {/* 5 EMA Gap Pullback Parameters */}
             <div className="bg-[#161B22] rounded-xl p-6 border border-[#30363D] space-y-4">
               <div>
-                <h3 className="text-base font-bold text-white">Delta Climax Reversal Parameters</h3>
-                <p className="text-xs text-gray-400 mt-0.5">Exhaustion spike & capitulation mean-reversion algorithm.</p>
+                <h3 className="text-base font-bold text-white">5 EMA Gap Pullback Parameters</h3>
+                <p className="text-xs text-gray-400 mt-0.5">HTF-aligned trend continuation on structured pullbacks with 5 EMA gap candle confirmation.</p>
               </div>
               <div className="space-y-1">
-                <InputRow label="Climax Volume Spike Multiplier" desc="Current volume vs 20-period SMA required for climax confirmation" value={settings.crVolumeSpikeMultiplier ?? 2.0} onChange={(v: any) => handleInputChange('crVolumeSpikeMultiplier', v)} step={0.1} min={1.2} max={5.0} />
-                <InputRow label="Minimum Wick Ratio" desc="Wick size relative to total candle range" value={settings.crMinWickRatio ?? 0.4} onChange={(v: any) => handleInputChange('crMinWickRatio', v)} step={0.05} min={0.2} max={0.8} />
-                <InputRow label="Minimum Overextension (x ATR)" desc="Distance from 50 EMA measured in multiples of ATR" value={settings.crMinAtrDistance ?? 1.8} onChange={(v: any) => handleInputChange('crMinAtrDistance', v)} step={0.1} min={1.0} max={4.0} />
-                <InputRow label="Minimum Risk-to-Reward Ratio" desc="Expected minimum profit multiple vs risk distance" value={settings.crMinRewardRisk ?? 2.5} onChange={(v: any) => handleInputChange('crMinRewardRisk', v)} step={0.1} min={1.5} max={5.0} />
+                <InputRow label="Min Pullback Bars" desc="Minimum candles pulling back toward 5 EMA (flag/wedge structure)" value={settings.egpMinPullbackBars ?? 3} onChange={(v: any) => handleInputChange('egpMinPullbackBars', v)} step={1} min={2} max={10} />
+                <InputRow label="Gap Candle Volume Multiplier" desc="Current volume vs 20-period SMA required for gap confirmation" value={settings.egpVolumeMultiplier ?? 1.5} onChange={(v: any) => handleInputChange('egpVolumeMultiplier', v)} step={0.1} min={1.1} max={4.0} />
+                <InputRow label="Max Overextension (x ATR from 21 EMA)" desc="Maximum allowable distance from 21 EMA in ATR multiples" value={settings.egpMaxDistToEma21Atr ?? 1.0} onChange={(v: any) => handleInputChange('egpMaxDistToEma21Atr', v)} step={0.1} min={0.5} max={3.0} />
+                <InputRow label="Min Gap Body Ratio" desc="Minimum percentage of gap candle body beyond 5 EMA" value={settings.egpMinGapBodyPct ?? 0.60} onChange={(v: any) => handleInputChange('egpMinGapBodyPct', v)} step={0.05} min={0.4} max={0.95} />
               </div>
             </div>
 

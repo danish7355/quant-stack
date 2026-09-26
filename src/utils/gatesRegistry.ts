@@ -11,7 +11,7 @@ export interface GateDefinition {
   id: string;
   key: string;
   name: string;
-  strategy: 'BINANCE_COMPOSITE' | 'DELTA_CLIMAX' | 'RISK_ENGINE' | 'VOLATILITY_COMPRESSION';
+  strategy: 'BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'RISK_ENGINE' | 'VOLATILITY_COMPRESSION';
   category: 'REGIME' | 'TREND' | 'VOLATILITY' | 'MOMENTUM' | 'VOLUME' | 'STRUCTURE' | 'RISK' | 'LIQUIDITY';
   importance: GateImportance;
   importanceScore: number; // 0-100%
@@ -165,103 +165,103 @@ export const GATES_REGISTRY: GateDefinition[] = [
     defaultEnabled: true,
   },
 
-  // --- DELTA CLIMAX REVERSAL GATES ---
+  // --- 5 EMA GAP PULLBACK GATES ---
   {
-    id: 'CR_climaxRange',
-    key: 'cr_climaxRange',
-    name: 'CR1: Climax Candle Range Gate',
-    strategy: 'DELTA_CLIMAX',
-    category: 'VOLATILITY',
-    importance: 'CRITICAL',
-    importanceScore: 95,
-    isMandatory: true,
-    description: 'Validates that Candle 1 is an abnormal, outsized expansion bar (>= 1.3x average range) signifying capitulation or exhaustion.',
-    formulaOrCondition: 'C1 Range >= Min Climax Ratio (1.3x) * 20-SMA Range',
-    riskIfBypassed: 'Attempting reversals on normal standard candles that are merely part of standard continuation.',
-    defaultEnabled: true,
-  },
-  {
-    id: 'CR_overextension',
-    key: 'cr_overextension',
-    name: 'CR2: Baseline Overextension Gate',
-    strategy: 'DELTA_CLIMAX',
+    id: 'EGP_htfTrend',
+    key: 'egp_htfTrend',
+    name: 'EGP1: HTF Trend Alignment Gate',
+    strategy: 'EMA_GAP_PULLBACK',
     category: 'TREND',
-    importance: 'CRITICAL',
-    importanceScore: 96,
-    isMandatory: true,
-    description: 'Checks distance between C1 Close and EMA Baseline OR Fast EMA is at least 2.0x ATR, proving extreme price overstretch.',
-    formulaOrCondition: '|C1 Close - EMA Baseline/Fast| >= Min Overextension ATR (2.0x) * ATR',
-    riskIfBypassed: 'Entering mean-reversion trades before the market has reached true statistical overextension.',
-    defaultEnabled: true,
-  },
-  {
-    id: 'CR_volatility',
-    key: 'cr_volatility',
-    name: 'CR3: Volatility Expansion Gate',
-    strategy: 'DELTA_CLIMAX',
-    category: 'VOLATILITY',
-    importance: 'HIGH',
-    importanceScore: 85,
-    isMandatory: true,
-    description: 'Confirms market volatility is currently elevated (ATR >= 1.0x of 50-period ATR average), ensuring active price momentum.',
-    formulaOrCondition: 'ATR >= Min ATR Multiplier (1.0x) * 50-period ATR SMA',
-    riskIfBypassed: 'Trading in dead low-volatility regimes where mean reversion takes days or flatlines.',
-    defaultEnabled: true,
-  },
-  {
-    id: 'CR_rejectionWick',
-    key: 'cr_rejectionWick',
-    name: 'CR4: Rejection Pin Wick Gate',
-    strategy: 'DELTA_CLIMAX',
-    category: 'STRUCTURE',
     importance: 'CRITICAL',
     importanceScore: 98,
     isMandatory: true,
-    description: 'Verifies Candle 2 forms a dominant rejection wick (>= 45% of total bar range) showing decisive absorption at the extreme.',
-    formulaOrCondition: 'C2 Rejection Wick Ratio >= Min Rejection Wick (45%)',
-    riskIfBypassed: 'High risk of getting steamrolled by trend continuation without proof of counter-party absorption.',
+    description: 'Validates Higher-Timeframe (1H) trend alignment: Longs only above 50 EMA with upslope, Shorts only below 50 EMA with downslope.',
+    formulaOrCondition: 'LONG: Price > EMA50(1H) AND slope(EMA50, 10) > 0 | SHORT: Price < EMA50(1H) AND slope < 0',
+    riskIfBypassed: 'Counter-trend entries that get steamrolled by the dominant HTF trend.',
     defaultEnabled: true,
   },
   {
-    id: 'CR_triggerBreakout',
-    key: 'cr_triggerBreakout',
-    name: 'CR5: C3 Confirmation Trigger Gate',
-    strategy: 'DELTA_CLIMAX',
+    id: 'EGP_pullbackStructure',
+    key: 'egp_pullbackStructure',
+    name: 'EGP2: Pullback Structure Gate',
+    strategy: 'EMA_GAP_PULLBACK',
     category: 'STRUCTURE',
     importance: 'CRITICAL',
-    importanceScore: 99,
+    importanceScore: 95,
     isMandatory: true,
-    description: 'Requires Candle 3 to break beyond the Candle 2 trigger level (below C2 low for Short, above C2 high for Long).',
-    formulaOrCondition: 'SHORT: C3 Close < C2 Low | LONG: C3 Close > C2 High',
-    riskIfBypassed: 'Catching falling knives or standing in front of strong runaway trends before confirmation.',
+    description: 'Requires at least 3 candles pulling back toward 5 EMA in a structured flag/wedge pattern (not a V-spike).',
+    formulaOrCondition: 'Pullback bars >= 3 AND max single bar range < 2x avg pullback range',
+    riskIfBypassed: 'Chasing impulsive moves without proper pullback structure, leading to poor entry prices.',
     defaultEnabled: true,
   },
   {
-    id: 'CR_stopDistance',
-    key: 'cr_stopDistance',
-    name: 'CR6: Minimum Stop Distance Gate',
-    strategy: 'DELTA_CLIMAX',
-    category: 'RISK',
-    importance: 'MEDIUM',
-    importanceScore: 70,
+    id: 'EGP_gapCandle',
+    key: 'egp_gapCandle',
+    name: 'EGP3: Gap Candle Quality Gate',
+    strategy: 'EMA_GAP_PULLBACK',
+    category: 'STRUCTURE',
+    importance: 'CRITICAL',
+    importanceScore: 96,
     isMandatory: true,
-    description: 'Guarantees the stop loss distance is at least 0.5x ATR to avoid placing unrealistically tight stops clipped by normal noise.',
-    formulaOrCondition: 'Risk Per Unit >= Min Stop Distance (0.5x) * ATR',
-    riskIfBypassed: 'Premature stop-outs triggered by standard intra-candle micro fluctuations.',
+    description: 'Validates that the gap candle body closes mostly beyond 5 EMA (>= 60% body outside), confirming genuine price displacement.',
+    formulaOrCondition: 'Body % beyond EMA5 >= 60%',
+    riskIfBypassed: 'Entering on weak candles that barely gap the EMA, highly prone to immediate reversal.',
     defaultEnabled: true,
   },
   {
-    id: 'CR_rewardRisk',
-    key: 'cr_rewardRisk',
-    name: 'CR7: Structural Target RR Gate',
-    strategy: 'DELTA_CLIMAX',
+    id: 'EGP_volumeSurge',
+    key: 'egp_volumeSurge',
+    name: 'EGP4: Volume Confirmation Gate',
+    strategy: 'EMA_GAP_PULLBACK',
+    category: 'VOLUME',
+    importance: 'HIGH',
+    importanceScore: 88,
+    isMandatory: true,
+    description: 'Confirms the gap candle has elevated volume (>= 1.5x 20-period average), proving institutional participation.',
+    formulaOrCondition: 'Gap Candle Volume >= 1.5 × 20-SMA Volume',
+    riskIfBypassed: 'Trading low-conviction gaps that are noise rather than genuine breakout continuation.',
+    defaultEnabled: true,
+  },
+  {
+    id: 'EGP_overextension',
+    key: 'egp_overextension',
+    name: 'EGP5: Anti-Overextension Gate',
+    strategy: 'EMA_GAP_PULLBACK',
     category: 'RISK',
+    importance: 'HIGH',
+    importanceScore: 90,
+    isMandatory: true,
+    description: 'Rejects entries when price is too far from 21 EMA (distance > 1 ATR), preventing chasing extended moves with huge SL gaps.',
+    formulaOrCondition: '|Close - EMA21| <= 1.0 × ATR(14)',
+    riskIfBypassed: 'Entering overextended moves where stop loss distance is unreasonably large and mean-reversion risk is high.',
+    defaultEnabled: true,
+  },
+  {
+    id: 'EGP_failedBreakout',
+    key: 'egp_failedBreakout',
+    name: 'EGP6: Failed Breakout Filter',
+    strategy: 'EMA_GAP_PULLBACK',
+    category: 'STRUCTURE',
     importance: 'HIGH',
     importanceScore: 85,
     isMandatory: true,
-    description: 'Checks that the distance to the nearest prior swing high/low structure target provides >= 1.5x reward relative to stop loss risk.',
-    formulaOrCondition: 'Structure Target Distance / Risk >= Min RR (1.5x)',
-    riskIfBypassed: 'Entering trades where take-profit is immediately blocked by major opposing swing structure.',
+    description: 'Checks that the follow-through candle after the gap holds beyond 5 EMA. If it wicks hard and closes back inside, the breakout has failed.',
+    formulaOrCondition: 'Next candle must NOT close back inside EMA5 with rejection wick >= 50%',
+    riskIfBypassed: 'Entering on fakeout gap candles that immediately reverse (the 3-4 candle trap described in crypto markets).',
+    defaultEnabled: true,
+  },
+  {
+    id: 'EGP_rewardRisk',
+    key: 'egp_rewardRisk',
+    name: 'EGP7: Reward/Risk Gate',
+    strategy: 'EMA_GAP_PULLBACK',
+    category: 'RISK',
+    importance: 'MEDIUM',
+    importanceScore: 75,
+    isMandatory: true,
+    description: 'Validates that TP3 provides at least 1.5R reward relative to stop loss risk, ensuring positive mathematical expectancy.',
+    formulaOrCondition: 'TP3 Distance / Risk >= 1.5R',
+    riskIfBypassed: 'Entering trades with insufficient reward to compensate for the probability of stop loss hits.',
     defaultEnabled: true,
   },
 
@@ -511,35 +511,27 @@ export function evaluateDetailedCoinGates(
           break;
         }
       }
-    } else if (def.strategy === 'DELTA_CLIMAX') {
-      const cr = coin.crSignal;
-      if (cr) {
-        if (cr.status === 'confirmed') {
+    } else if (def.strategy === 'EMA_GAP_PULLBACK') {
+      const egp = coin.egpSignal;
+      if (egp) {
+        if (egp.status === 'confirmed') {
           passed = true;
-          measuredValue = `CR Signal Confirmed (${cr.direction})`;
-        } else if (cr.status === 'pending') {
-          if (def.key === 'cr_triggerBreakout') {
+          measuredValue = `EGP Signal Confirmed (${egp.direction})`;
+        } else if (egp.status === 'pullback_forming') {
+          if (def.key === 'egp_gapCandle' || def.key === 'egp_failedBreakout') {
             passed = false;
-            measuredValue = `Pending C3 Trigger Breakout`;
+            measuredValue = `Pullback forming — awaiting gap candle`;
           } else {
             passed = true;
-            measuredValue = `Setup Formed (Pending C3)`;
+            measuredValue = `Pullback forming (${egp.pullbackBars || '?'} bars)`;
           }
-        } else if (cr.status === 'rejected') {
-          if (cr.reason === 'stop_too_tight' && def.key === 'cr_stopDistance') {
-            passed = false;
-            measuredValue = `Stop distance too tight`;
-          } else if (cr.reason === 'poor_reward_risk' && def.key === 'cr_rewardRisk') {
-            passed = false;
-            measuredValue = `Reward/risk below ${settings.crMinRewardRisk || 1.5}x`;
-          } else {
-            passed = false;
-            measuredValue = `Rejected: ${cr.reason || 'CR Criteria'}`;
-          }
+        } else if (egp.status === 'rejected') {
+          passed = false;
+          measuredValue = `Rejected: ${egp.reason || 'EGP Criteria'}`;
         }
       } else {
         passed = false;
-        measuredValue = `No Climax Reversal Pattern Detected`;
+        measuredValue = `No 5 EMA Gap Pullback Pattern Detected`;
       }
     } else if (def.strategy === 'RISK_ENGINE') {
       switch (def.key) {

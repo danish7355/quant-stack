@@ -63,6 +63,14 @@ export function getStrategyDisplayName(strategyKey?: string): {
         badgeBg: 'bg-blue-500/20 text-blue-300 border-blue-500/40',
         description: 'Controlled pullback to rising/falling moving averages with ADX trend strength and structural retest.'
       };
+    case 'EMA_GAP_PULLBACK':
+      return {
+        name: '5 EMA Gap Pullback Continuation',
+        shortName: '5 EMA Gap',
+        tag: 'PULLBACK',
+        badgeBg: 'bg-teal-500/20 text-teal-300 border-teal-500/40',
+        description: '5 EMA gap candle breakout following structured pullback with HTF 50 EMA trend alignment and anti-overextension guard.'
+      };
     case 'DELTA_CLIMAX':
       return {
         name: 'Delta Climax Reversal',

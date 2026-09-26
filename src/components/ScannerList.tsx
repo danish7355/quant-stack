@@ -68,8 +68,9 @@ export default function ScannerList({
 
       let matchSignal = true;
       if (signalFilter !== 'ALL') {
-        const coinDir = coin.crSignal && coin.crSignal.status === 'confirmed' 
-          ? coin.crSignal.direction 
+        const sig = coin.egpSignal || coin.crSignal;
+        const coinDir = sig && sig.status === 'confirmed' 
+          ? sig.direction 
           : coin.direction;
         matchSignal = coinDir === signalFilter;
       }
@@ -359,9 +360,10 @@ export default function ScannerList({
                 const scoreValue = Math.abs(coin.score);
                 const isHighVol = (coin.indicators?.volumeRatio || 0) > 1.5;
 
+                const activeSig = coin.egpSignal || coin.crSignal;
                 // Highlight active trigger triggers
                 let qualifiesAutoTrade = scoreValue >= autoTradeThreshold && coin.status !== 'RANGE' && coin.status !== 'RANGING' && coin.status !== 'UNSAFE';
-                if (coin.crSignal && coin.crSignal.status === 'confirmed') {
+                if (activeSig && activeSig.status === 'confirmed') {
                   qualifiesAutoTrade = true;
                 }
                 let pulseClass = '';
@@ -375,7 +377,7 @@ export default function ScannerList({
                     : 'hover:bg-gray-800/40';
                 }
 
-                const allPassed = coin.statusReason === 'All gates passed' || (coin.statusReason && coin.statusReason.includes('Climax Reversal'));
+                const allPassed = coin.statusReason === 'All gates passed' || (coin.statusReason && (coin.statusReason.includes('5 EMA Gap') || coin.statusReason.includes('Climax Reversal') || coin.statusReason.includes('EMA_GAP_PULLBACK') || coin.statusReason.includes('DELTA_CLIMAX')));
 
                 return (
                   <tr
@@ -413,9 +415,9 @@ export default function ScannerList({
 
                     {/* 5. Direction */}
                     <td className="py-2.5 px-4 text-center">
-                      {coin.crSignal && coin.crSignal.status === 'confirmed' ? (
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border ${coin.crSignal.direction === 'LONG' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'}`}>
-                          CR {coin.crSignal.direction}
+                      {activeSig && activeSig.status === 'confirmed' ? (
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border ${activeSig.direction === 'LONG' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'}`}>
+                          {coin.egpSignal ? '5EMA' : 'CR'} {activeSig.direction}
                         </span>
                       ) : getSignalBadge(coin.direction)}
                     </td>
@@ -477,9 +479,9 @@ export default function ScannerList({
                         <span className="px-1.5 py-0.5 bg-indigo-500/20 text-indigo-300 rounded font-bold">
                           {coin.wmPattern}
                         </span>
-                      ) : coin.crSignal ? (
-                        <span className={`px-1.5 py-0.5 rounded font-bold ${coin.crSignal.status === 'confirmed' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-gray-800 text-gray-400'}`}>
-                          {coin.crSignal.status}
+                      ) : activeSig ? (
+                        <span className={`px-1.5 py-0.5 rounded font-bold ${activeSig.status === 'confirmed' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-gray-800 text-gray-400'}`}>
+                          {activeSig.status}
                         </span>
                       ) : (
                         <span className="text-gray-600">-</span>

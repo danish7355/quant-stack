@@ -340,6 +340,8 @@ export class TelegramService {
     let stratName = '📊 Composite 10-Gate';
     if (pos.strategy === 'TREND_PULLBACK') {
       stratName = '🎯 Trend Pullback (EMA Reversion)';
+    } else if (pos.strategy === 'EMA_GAP_PULLBACK') {
+      stratName = '📊 5 EMA Gap Pullback';
     } else if (pos.strategy === 'DELTA_CLIMAX') {
       stratName = '⚡ Climax Reversal';
     } else if (pos.strategy === 'VOLATILITY_COMPRESSION') {
@@ -420,6 +422,8 @@ export class TelegramService {
     let stratName = '📊 Composite 10-Gate';
     if (pos.strategy === 'TREND_PULLBACK') {
       stratName = '🎯 Trend Pullback';
+    } else if (pos.strategy === 'EMA_GAP_PULLBACK') {
+      stratName = '📊 5 EMA Gap Pullback';
     } else if (pos.strategy === 'DELTA_CLIMAX') {
       stratName = '⚡ Climax Reversal';
     } else if (pos.strategy === 'VOLATILITY_COMPRESSION') {

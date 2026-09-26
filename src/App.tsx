@@ -17,7 +17,7 @@ import PerformancePage from './components/PerformancePage';
 import StrategyPanel from './components/StrategyPanel';
 import GateManager from './components/GateManager';
 import { runScoringEngine } from './utils/indicators';
-import { findCRSetup } from './utils/strategies/climaxReversal';
+import { findEmaGapSetup } from './utils/strategies/emaGapPullback';
 import { 
   detectCompression, detectBreakout, scoreBreakout, applyTrendAndMomentumBonus, 
   calculateATR, calculateEMA, determineStopLoss, calculateVcbTargets
@@ -449,9 +449,9 @@ export default function App() {
               fibLookback: settingsRef.current.fibLookback,
             });
 
-            let crSignal = null;
-            if (settingsRef.current.activeStrategy === 'DELTA_CLIMAX') {
-              crSignal = findCRSetup(candles, settingsRef.current);
+            let egpSignal = null;
+            if (settingsRef.current.activeStrategy === 'EMA_GAP_PULLBACK') {
+              egpSignal = findEmaGapSetup(candles, btcCandles, settingsRef.current);
             }
 
             let finalScore = results.score;
@@ -464,22 +464,22 @@ export default function App() {
             let finalTp3: number | undefined;
             let vcbData: any = undefined;
 
-            if (settingsRef.current.activeStrategy === 'DELTA_CLIMAX') {
-              if (crSignal && crSignal.status === 'confirmed') {
-                finalScore = 95;
-                finalDirection = crSignal.direction || 'NEUTRAL';
+            if (settingsRef.current.activeStrategy === 'EMA_GAP_PULLBACK') {
+              if (egpSignal && egpSignal.status === 'confirmed') {
+                finalScore = egpSignal.score || 85;
+                finalDirection = egpSignal.direction || 'NEUTRAL';
                 finalStatus = 'STRONG_TREND';
-                finalReason = 'Climax Reversal (' + (crSignal.reason || 'Confirmed') + ')';
-              } else if (crSignal && (crSignal.status === 'forming' || crSignal.status === 'exhaustion')) {
-                finalScore = 65;
-                finalDirection = crSignal.direction || 'NEUTRAL';
+                finalReason = '5 EMA Gap (' + (egpSignal.reason || 'Confirmed') + ')';
+              } else if (egpSignal && egpSignal.status === 'pullback_forming') {
+                finalScore = 55;
+                finalDirection = egpSignal.direction || 'NEUTRAL';
                 finalStatus = 'TRANSITION';
-                finalReason = 'Climax Forming (' + (crSignal.reason || 'Volume Exhaustion') + ')';
+                finalReason = 'Pullback Forming (' + (egpSignal.reason || 'Awaiting gap candle') + ')';
               } else {
                 finalScore = Math.max(20, Math.min(48, Math.round((results.regime?.score || 30) * 0.4 + 15)));
                 finalDirection = results.direction || 'NEUTRAL';
                 finalStatus = results.status || 'RANGE';
-                finalReason = crSignal ? crSignal.reason : 'Scanning for climax exhaustion';
+                finalReason = egpSignal ? egpSignal.reason : 'Scanning for 5 EMA gap pullback';
               }
             } else if (settingsRef.current.activeStrategy === 'VOLATILITY_COMPRESSION' || settingsRef.current.activeStrategy === 'EARLY_COIL_BREAKOUT') {
               if (candles.length >= 30) {
@@ -737,7 +737,7 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
               indicators: results.indicators,
               gates: results.gates,
               wmPattern: results.wmPattern,
-              crSignal,
+              egpSignal,
               candles,
               sl: finalSl,
               tp1: finalTp1,
@@ -776,8 +776,8 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
       if (hasActive || pendingOrdersRef.current.has(c.symbol)) return false;
       
       // Use active strategy to determine triggers
-      if (settingsRef.current.activeStrategy === 'DELTA_CLIMAX') {
-         if (c.crSignal && c.crSignal.status === 'confirmed') {
+      if (settingsRef.current.activeStrategy === 'EMA_GAP_PULLBACK') {
+         if (c.egpSignal && c.egpSignal.status === 'confirmed') {
             return true;
          }
          return false;
@@ -819,20 +819,20 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
       let activeStrat = settingsRef.current.activeStrategy || 'BINANCE_COMPOSITE';
       let marketRegime: string | undefined = undefined;
       let isAutoRegime = activeStrat === 'AUTO_REGIME';
-      let sl = (coin.crSignal as any)?.stop;
-      let tp1 = (coin.crSignal as any)?.tp1;
-      let tp2 = (coin.crSignal as any)?.tp2;
-      let tp3 = (coin.crSignal as any)?.tp3;
+      let sl = (coin.egpSignal as any)?.stop;
+      let tp1 = (coin.egpSignal as any)?.tp1;
+      let tp2 = (coin.egpSignal as any)?.tp2;
+      let tp3 = (coin.egpSignal as any)?.tp3;
 
-      if (activeStrat === 'DELTA_CLIMAX' && coin.crSignal && coin.crSignal.status === 'confirmed') {
-         marketRegime = 'Exhaustion Climax';
-         finalDirection = coin.crSignal.direction;
-         finalScore = 100; // Force high score since it's a dedicated signal
-         finalAtr = (coin.crSignal as any).atr || finalAtr;
+      if (activeStrat === 'EMA_GAP_PULLBACK' && coin.egpSignal && coin.egpSignal.status === 'confirmed') {
+         marketRegime = '5 EMA Trend Continuation';
+         finalDirection = coin.egpSignal.direction;
+         finalScore = coin.egpSignal.score || 95;
+         finalAtr = (coin.egpSignal as any).atr || finalAtr;
          
-         // In CR strategy, risk is calculated per unit.
-         const riskPerUnit = (coin.crSignal as any).riskPerUnit || (coin.price * 0.01);
-         riskAmt = balance * (settingsRef.current.accountRiskPct / 100); // use CR risk
+         // In 5 EMA Gap strategy, risk is calculated per unit.
+         const riskPerUnit = (coin.egpSignal as any).riskPerUnit || (coin.price * 0.01);
+         riskAmt = balance * (settingsRef.current.accountRiskPct / 100);
          qty = riskAmt / riskPerUnit;
       } else if (activeStrat === 'VOLATILITY_COMPRESSION' || activeStrat === 'EARLY_COIL_BREAKOUT') {
          marketRegime = 'Two-Sided Coil Breakout';

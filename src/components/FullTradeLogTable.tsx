@@ -379,6 +379,7 @@ export default function FullTradeLogTable({ logs }: FullTradeLogTableProps) {
           >
             <option value="ALL">All Strategies</option>
             <option value="BINANCE_COMPOSITE">10-Gate Scanner</option>
+            <option value="EMA_GAP_PULLBACK">5 EMA Gap Pullback</option>
             <option value="DELTA_CLIMAX">Climax Reversal</option>
             <option value="VOLATILITY_COMPRESSION">VCB Breakout</option>
             <option value="TREND_PULLBACK">Trend Pullback</option>
@@ -486,7 +487,11 @@ export default function FullTradeLogTable({ logs }: FullTradeLogTableProps) {
                       {/* Strategy & Frequency Badges */}
                       <td className="py-3 pr-4">
                         <div className="flex flex-col gap-1">
-                          {strat === 'DELTA_CLIMAX' ? (
+                          {strat === 'EMA_GAP_PULLBACK' ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-cyan-950/50 text-cyan-300 border border-cyan-700/50 text-[9.5px] font-bold w-fit">
+                              <Zap className="w-2.5 h-2.5 text-cyan-400" /> 5EMA Gap
+                            </span>
+                          ) : strat === 'DELTA_CLIMAX' ? (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-cyan-950/50 text-cyan-300 border border-cyan-700/50 text-[9.5px] font-bold w-fit">
                               <Zap className="w-2.5 h-2.5 text-cyan-400" /> Climax Reversal
                             </span>

@@ -170,6 +170,7 @@ describe('TradeEngineBanner - Strategy & Trade Engine Active Evaluation', () => 
     expect(getStrategyDisplayName('VOLATILITY_COMPRESSION').name).toBe('Volatility Compression Breakout (VCB)');
     expect(getStrategyDisplayName('SMC_LIQUIDITY_SWEEP').name).toBe('Smart Money Concepts (SMC Liquidity Sweep)');
     expect(getStrategyDisplayName('TREND_PULLBACK').name).toBe('Trend Pullback Continuation');
+    expect(getStrategyDisplayName('EMA_GAP_PULLBACK').name).toBe('5 EMA Gap Pullback Continuation');
     expect(getStrategyDisplayName('DELTA_CLIMAX').name).toBe('Delta Climax Reversal');
     expect(getStrategyDisplayName('EARLY_COIL_BREAKOUT').name).toBe('Early Coil Breakout');
     expect(getStrategyDisplayName('AUTO_REGIME').name).toBe('Autonomous Multi-Regime Auto-Selector');
@@ -201,7 +202,7 @@ describe('TradeEngineBanner - Strategy & Trade Engine Active Evaluation', () => 
   it('evaluates multi-strategy configuration and displays all 4 active strategies', () => {
     const multiSettings: AppSettings = {
       ...baseSettings,
-      enabledStrategies: ['VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'DELTA_CLIMAX', 'SMC_LIQUIDITY_SWEEP']
+      enabledStrategies: ['VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'EMA_GAP_PULLBACK', 'SMC_LIQUIDITY_SWEEP']
     };
 
     const status = evaluateEngineStatus(
@@ -220,22 +221,22 @@ describe('TradeEngineBanner - Strategy & Trade Engine Active Evaluation', () => 
     expect(status.activeStrategies.map(s => s.id)).toEqual([
       'VOLATILITY_COMPRESSION',
       'TREND_PULLBACK',
-      'DELTA_CLIMAX',
+      'EMA_GAP_PULLBACK',
       'SMC_LIQUIDITY_SWEEP'
     ]);
     expect(status.strategyTag).toBe('4 ACTIVE');
     expect(status.strategyName).toContain('4 Strategies');
     expect(status.strategyName).toContain('VCB Breakout');
     expect(status.strategyName).toContain('Trend Pullback');
-    expect(status.strategyName).toContain('Delta Climax');
+    expect(status.strategyName).toContain('5 EMA Gap');
     expect(status.strategyName).toContain('SMC Liquidity');
-    expect(status.primaryReason).toContain('Trading Engine is ACTIVE and executing 4 strategies (VCB Breakout, Trend Pullback, Delta Climax, SMC Liquidity)');
+    expect(status.primaryReason).toContain('Trading Engine is ACTIVE and executing 4 strategies (VCB Breakout, Trend Pullback, 5 EMA Gap, SMC Liquidity)');
   });
 
   it('displays configured multi-strategy information when trading is stopped', () => {
     const multiSettings: AppSettings = {
       ...baseSettings,
-      enabledStrategies: ['VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'DELTA_CLIMAX', 'SMC_LIQUIDITY_SWEEP']
+      enabledStrategies: ['VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'EMA_GAP_PULLBACK', 'SMC_LIQUIDITY_SWEEP']
     };
 
     const status = evaluateEngineStatus(

@@ -35,7 +35,7 @@ export type GroupingMode = 'STRATEGY' | 'REGIME' | 'COMBINED';
 interface SetupEVMetrics {
   id: string;
   name: string;
-  marketCondition: 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Unspecified';
+  marketCondition: 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Trend Continuation / 5 EMA Gap' | 'Unspecified';
   description: string;
   totalTrades: number;
   wins: number;
@@ -59,11 +59,12 @@ interface SetupEVMetrics {
 }
 
 // Map each known strategy to its typical market condition
-export function getMarketConditionForStrategy(strategy?: string): 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Unspecified' {
+export function getMarketConditionForStrategy(strategy?: string): 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Trend Continuation / 5 EMA Gap' | 'Unspecified' {
   const s = (strategy || '').toUpperCase();
-  if (s === 'TREND_PULLBACK' || s.includes('PULLBACK')) return 'Trending';
+  if ((s === 'TREND_PULLBACK' || s.includes('PULLBACK')) && s !== 'EMA_GAP_PULLBACK') return 'Trending';
   if (s === 'BINANCE_COMPOSITE' || s.includes('COMPOSITE')) return 'Trending';
   if (s === 'VOLATILITY_COMPRESSION' || s.includes('COMPRESSION') || s === 'VCB') return 'Ranging / Consolidation';
+  if (s === 'EMA_GAP_PULLBACK') return 'Trend Continuation / 5 EMA Gap';
   if (s === 'DELTA_CLIMAX' || s.includes('CLIMAX')) return 'Mean-Reversion / Climax';
   return 'Unspecified';
 }
@@ -90,7 +91,7 @@ export default function PerformanceInsights({ logs }: PerformanceInsightsProps) 
         const stratKey = (trade.strategy || 'UNSPECIFIED').toUpperCase();
         if (!groups[stratKey]) {
           let displayName = stratKey;
-          let cond: 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Unspecified' = 'Unspecified';
+          let cond: 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Trend Continuation / 5 EMA Gap' | 'Unspecified' = 'Unspecified';
           let desc = 'Trades without strategy tag';
           let diag = 'Review strategy mapping';
           let rec = 'Track strategy parameter in order placement.';
@@ -101,6 +102,12 @@ export default function PerformanceInsights({ logs }: PerformanceInsightsProps) 
             desc = 'EMA 21/50 trend continuation on dynamic value pullbacks';
             diag = 'Win rate has been hurt by false pullbacks in ranging markets and illiquid tokens.';
             rec = 'Enforce $25M+ 24h volume filter and volume exhaustion checks.';
+          } else if (stratKey === 'EMA_GAP_PULLBACK') {
+            displayName = '5 EMA Gap Pullback';
+            cond = 'Trend Continuation / 5 EMA Gap';
+            desc = '5 EMA momentum gap pullback continuation in strong trends';
+            diag = 'High win rate setup following established EMA trend alignment.';
+            rec = 'Trail stop along 5 EMA and lock profit at structural targets.';
           } else if (stratKey === 'DELTA_CLIMAX') {
             displayName = 'Delta Climax';
             cond = 'Mean-Reversion / Climax';
@@ -576,6 +583,8 @@ export default function PerformanceInsights({ logs }: PerformanceInsightsProps) 
                             ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
                             : setup.marketCondition === 'Mean-Reversion / Climax'
                             ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+                            : setup.marketCondition === 'Trend Continuation / 5 EMA Gap'
+                            ? 'bg-teal-500/10 text-teal-400 border border-teal-500/20'
                             : 'bg-gray-800 text-gray-400'
                         }`}
                       >

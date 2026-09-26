@@ -243,8 +243,8 @@ export default function GateManager({
           </button>
           <button
             onClick={() => {
-              setSelectedStrategy('DELTA_CLIMAX');
-              const next: AppSettings = { ...settings, activeStrategy: 'DELTA_CLIMAX', crEnabled: true };
+              setSelectedStrategy('EMA_GAP_PULLBACK');
+              const next: AppSettings = { ...settings, activeStrategy: 'EMA_GAP_PULLBACK', egpEnabled: true };
               setSettings(next);
               fetch('/api/bot/settings', {
                 method: 'POST',
@@ -253,13 +253,13 @@ export default function GateManager({
               }).catch(console.error);
             }}
             className={`px-3 py-1.5 rounded text-[11px] font-bold transition flex items-center gap-1.5 ${
-              selectedStrategy === 'DELTA_CLIMAX'
+              selectedStrategy === 'EMA_GAP_PULLBACK'
                 ? 'bg-blue-600 text-white shadow-sm'
                 : 'text-gray-400 hover:text-gray-200 hover:bg-[#21262D]'
             }`}
           >
             <Activity className="w-3.5 h-3.5" />
-            <span>Climax Reversal (7 Gates)</span>
+            <span>5 EMA Gap Pullback (7 Gates)</span>
           </button>
           <button
             onClick={() => {

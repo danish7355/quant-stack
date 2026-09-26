@@ -12,7 +12,7 @@ describe('Multi-Strategy Activation & Arbitration Engine', () => {
 
     it('sanitizes multiple enabled strategies and synchronizes activeStrategy', () => {
       const input = {
-        enabledStrategies: ['VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'DELTA_CLIMAX'],
+        enabledStrategies: ['VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'EMA_GAP_PULLBACK'],
         accountRiskPct: 1.5,
         leverage: 5,
       };
@@ -22,7 +22,7 @@ describe('Multi-Strategy Activation & Arbitration Engine', () => {
       expect(result.sanitized.enabledStrategies).toEqual([
         'VOLATILITY_COMPRESSION',
         'TREND_PULLBACK',
-        'DELTA_CLIMAX'
+        'EMA_GAP_PULLBACK'
       ]);
       expect(result.sanitized.activeStrategy).toBe('VOLATILITY_COMPRESSION');
     });
@@ -76,7 +76,7 @@ describe('Multi-Strategy Activation & Arbitration Engine', () => {
     it('evaluates gates for all enabled strategies simultaneously', () => {
       const settings: any = {
         ...CANONICAL_DEFAULT_SETTINGS,
-        enabledStrategies: ['BINANCE_COMPOSITE', 'DELTA_CLIMAX'],
+        enabledStrategies: ['BINANCE_COMPOSITE', 'EMA_GAP_PULLBACK'],
         activeStrategy: 'BINANCE_COMPOSITE'
       };
 
@@ -87,7 +87,7 @@ describe('Multi-Strategy Activation & Arbitration Engine', () => {
         .map(g => g.def.id);
       
       const climaxGateIds = evaluation.evaluatedGates
-        .filter(g => g.def.strategy === 'DELTA_CLIMAX')
+        .filter(g => g.def.strategy === 'EMA_GAP_PULLBACK')
         .map(g => g.def.id);
 
       const riskGateIds = evaluation.evaluatedGates
@@ -105,14 +105,14 @@ describe('Multi-Strategy Activation & Arbitration Engine', () => {
       const candidateSignals = [
         { strategy: 'TREND_PULLBACK', direction: 'LONG', score: 78, sl: 98, tp1: 104, tp3: 112 },
         { strategy: 'VOLATILITY_COMPRESSION', direction: 'LONG', score: 92, sl: 99, tp1: 105, tp3: 115 },
-        { strategy: 'DELTA_CLIMAX', direction: 'LONG', score: 85, sl: 97, tp1: 103, tp3: 110 }
+        { strategy: 'EMA_GAP_PULLBACK', direction: 'LONG', score: 85, sl: 97, tp1: 103, tp3: 110 }
       ];
 
       candidateSignals.sort((a, b) => b.score - a.score);
 
       expect(candidateSignals[0].strategy).toBe('VOLATILITY_COMPRESSION');
       expect(candidateSignals[0].score).toBe(92);
-      expect(candidateSignals[1].strategy).toBe('DELTA_CLIMAX');
+      expect(candidateSignals[1].strategy).toBe('EMA_GAP_PULLBACK');
       expect(candidateSignals[2].strategy).toBe('TREND_PULLBACK');
     });
 
@@ -139,7 +139,7 @@ describe('Multi-Strategy Activation & Arbitration Engine', () => {
       const ids = AVAILABLE_STRATEGIES.map(s => s.id);
       expect(ids).toContain('VOLATILITY_COMPRESSION');
       expect(ids).toContain('TREND_PULLBACK');
-      expect(ids).toContain('DELTA_CLIMAX');
+      expect(ids).toContain('EMA_GAP_PULLBACK');
       expect(ids).toContain('SMC_LIQUIDITY_SWEEP');
       expect(ids).toContain('BINANCE_COMPOSITE');
       expect(ids).toContain('EARLY_COIL_BREAKOUT');
