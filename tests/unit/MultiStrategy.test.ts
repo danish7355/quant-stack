@@ -135,16 +135,18 @@ describe('Multi-Strategy Activation & Arbitration Engine', () => {
   });
 
   describe('Strategy Catalog Definition', () => {
-    it('includes all 7 canonical strategies in AVAILABLE_STRATEGIES', () => {
+    it('includes all 9 canonical strategies in AVAILABLE_STRATEGIES', () => {
       const ids = AVAILABLE_STRATEGIES.map(s => s.id);
       expect(ids).toContain('VOLATILITY_COMPRESSION');
       expect(ids).toContain('TREND_PULLBACK');
+      expect(ids).toContain('TREND_PULLBACK_RETEST');
       expect(ids).toContain('EMA_GAP_PULLBACK');
+      expect(ids).toContain('EMA5_PA_VOLUME_V1');
       expect(ids).toContain('SMC_LIQUIDITY_SWEEP');
       expect(ids).toContain('BINANCE_COMPOSITE');
       expect(ids).toContain('EARLY_COIL_BREAKOUT');
       expect(ids).toContain('MACRO_RANGE_BREAKOUT');
-      expect(AVAILABLE_STRATEGIES.length).toBe(7);
+      expect(AVAILABLE_STRATEGIES.length).toBe(9);
     });
   });
 });

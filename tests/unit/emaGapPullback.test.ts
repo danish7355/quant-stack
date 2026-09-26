@@ -7,6 +7,7 @@ import {
   detectPullback,
   detectGapCandle,
   detectFailedBreakout,
+  checkReal3RRoom,
   calculateLevels,
   evaluateEmaGapPullback
 } from '../../src/utils/strategies/emaGapPullback';
@@ -329,3 +330,44 @@ describe('5 EMA Gap Pullback Strategy Engine', () => {
     });
   });
 });
+
+  describe('Institutional Filters', () => {
+    it('rejects gap candle when strictGap is true and candle touches EMA5', () => {
+      const candle = { open: 100, close: 103, high: 105, low: 99, volume: 2000 };
+      const ema5 = 102; // candle high touches EMA5 (102) but not strictly above
+      const avgVol20 = 1500;
+      const ema21 = 100;
+      const atr = 4;
+      const res = detectGapCandle(candle, ema5, avgVol20, ema21, atr, 'LONG', 0.6, 1.5, 1.0, true, 5.0);
+      expect(res.isValid).toBe(false);
+      expect(res.reason).toContain('strict');
+    });
+    it('rejects gap candle when signal range exceeds maxSignalRangeAtr', () => {
+      const candle = { open: 100, close: 108, high: 109, low: 99, volume: 3000 };
+      const ema5 = 95;
+      const avgVol20 = 1500;
+      const ema21 = 94;
+      const atr = 2;
+      // candle range = high - low = 10, 10/2 = 5 ATR > max 2.0
+      const res = detectGapCandle(candle, ema5, avgVol20, ema21, atr, 'LONG', 0.6, 1.5, 1.0, false, 2.0);
+      expect(res.isValid).toBe(false);
+      expect(res.reason).toContain('range');
+    });
+    it('rejects pullback when exceeds maxBars', () => {
+      const candles = [];
+      for (let i = 0; i < 10; i++) {
+        candles.push({ time: 0 + i, open: 100 + i, high: 101 + i, low: 99 + i, close: 100 + i, volume: 1000 });
+      }
+      const ema5 = calcEma(candles.map(c => c.close), 5);
+      const res = detectPullback(candles, ema5, 'LONG', 5); // maxBars 5, we have 10
+      expect(res.isValid).toBe(false);
+    });
+    it('rejects when Real 3R room not sufficient', () => {
+      const entry = 100;
+      const stop = 95;
+      const direction = 'LONG' as const;
+      const htfCandles = [{ time:0, open:0, high:101, low:94, close:100, volume:0 }];
+      const result = checkReal3RRoom(entry, stop, direction, htfCandles, 3.0);
+      expect(result.hasRoom).toBe(false);
+    });
+  });

@@ -39,24 +39,30 @@ export interface GlobalMarketRegime {
 
 export const DEFAULT_STRATEGY_BUCKET: StrategyBucketItem[] = [
   { id: 'TREND_PULLBACK', name: 'Trend EMA Pullback', description: 'Confirmed pullback to dynamic value area in directional trend', priority: 1, enabled: true },
+  { id: 'TREND_PULLBACK_RETEST', name: 'Trend Pullback Retest', description: 'Full state-machine: trend → pullback → retest → confirmation → entry', priority: 1, enabled: true },
   { id: 'VOLATILITY_COMPRESSION', name: 'VCB Breakout', description: 'Volatility compression breakout with volume confirmation', priority: 2, enabled: true },
   { id: 'EARLY_COIL_BREAKOUT', name: 'Early Coil Breakout', description: 'Fractal compression breakout with structural trigger', priority: 2, enabled: true },
   { id: 'BINANCE_COMPOSITE', name: 'Range Mean Reversion', description: 'Bollinger Band extreme & RSI re-entry inside verified range', priority: 1, enabled: true },
   { id: 'SMC_LIQUIDITY_SWEEP', name: 'LSR Liquidity Sweep', description: 'Protected structure sweep and institutional FVG retest', priority: 2, enabled: true },
+  { id: 'EMA5_PA_VOLUME_V1', name: 'EMA 5 PA + Volume', description: '5m EMA5 price action gap expansion with volume confirmation & 15m structure', priority: 1, enabled: true },
   { id: 'EMA_GAP_PULLBACK', name: '5 EMA Gap Pullback', description: 'HTF-aligned trend pullback continuation via 5 EMA gap candle', priority: 2, enabled: true },
   { id: 'MACRO_RANGE_BREAKOUT', name: 'Macro Box Breakout', description: 'Macro accumulation breakout beyond multi-day range', priority: 3, enabled: true }
 ];
 
 export const strategyBucketMap: Record<MarketRegimeType, StrategyBucketItem[]> = {
   TRENDING_UP: [
+    { id: 'EMA5_PA_VOLUME_V1', name: 'EMA 5 PA + Volume', description: 'Long EMA5 early price action expansion', priority: 1, direction: 'LONG', enabled: true },
     { id: 'TREND_PULLBACK', name: 'Trend EMA Pullback', description: 'Long pullback to EMA21/50 zone', priority: 1, direction: 'LONG', enabled: true },
+    { id: 'TREND_PULLBACK_RETEST', name: 'Trend Pullback Retest', description: 'Long: full trend → pullback → retest → confirmation state machine', priority: 1, direction: 'LONG', enabled: true },
     { id: 'EMA_GAP_PULLBACK', name: '5 EMA Gap Pullback', description: 'Long pullback continuation via 5 EMA gap', priority: 2, direction: 'LONG', enabled: true },
     { id: 'VOLATILITY_COMPRESSION', name: 'VCB Breakout', description: 'Long continuation breakout', priority: 2, direction: 'LONG', enabled: true },
     { id: 'EARLY_COIL_BREAKOUT', name: 'Early Coil Breakout', description: 'Long early coil breakout', priority: 2, direction: 'LONG', enabled: true },
     { id: 'SMC_LIQUIDITY_SWEEP', name: 'LSR Liquidity Sweep', description: 'Long liquidity sweep of local lows', priority: 3, direction: 'LONG', enabled: true }
   ],
   TRENDING_DOWN: [
+    { id: 'EMA5_PA_VOLUME_V1', name: 'EMA 5 PA + Volume', description: 'Short EMA5 early price action expansion', priority: 1, direction: 'SHORT', enabled: true },
     { id: 'TREND_PULLBACK', name: 'Trend EMA Pullback', description: 'Short pullback to EMA21/50 zone', priority: 1, direction: 'SHORT', enabled: true },
+    { id: 'TREND_PULLBACK_RETEST', name: 'Trend Pullback Retest', description: 'Short: full trend → pullback → retest → confirmation state machine', priority: 1, direction: 'SHORT', enabled: true },
     { id: 'EMA_GAP_PULLBACK', name: '5 EMA Gap Pullback', description: 'Short pullback continuation via 5 EMA gap', priority: 2, direction: 'SHORT', enabled: true },
     { id: 'VOLATILITY_COMPRESSION', name: 'VCB Breakout', description: 'Short breakdown expansion', priority: 2, direction: 'SHORT', enabled: true },
     { id: 'EARLY_COIL_BREAKOUT', name: 'Early Coil Breakout', description: 'Short early coil breakdown', priority: 2, direction: 'SHORT', enabled: true },

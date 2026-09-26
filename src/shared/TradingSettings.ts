@@ -38,8 +38,8 @@ export interface TradingSettings {
   equitySnapshots?: { time: string; balance: number }[];
 
   // Execution & Strategy Engine
-  activeStrategy: 'BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'AUTO_REGIME' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL';
-  enabledStrategies?: ('BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL')[];
+  activeStrategy: 'BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'AUTO_REGIME' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL';
+  enabledStrategies?: ('BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL')[];
   strategyBucket?: StrategyBucketItem[];
   tradeFrequency: 'LOW' | 'MEDIUM' | 'HIGH';
   autoTradeThreshold: number;      // Confidence score threshold (50 - 100)
@@ -128,6 +128,29 @@ export interface TradingSettings {
   egpTp3RMultiple: number;
   egpSlSwingLookback: number;
   egpSlAtrBuffer: number;
+  egpExecutionModel?: 'MODEL_A_NEXT_OPEN' | 'MODEL_B_RETEST_LIMIT';
+  egpMaxSignalRangeAtr?: number;
+  egpMinCloseLocation?: number;
+  egpMinStopDistanceAtr?: number;
+  egpMaxStopDistanceAtr?: number;
+  egpRequireReal3RRoom?: boolean;
+  egpStrictGapOnly?: boolean;
+
+  // EMA 5 Price Action Gap + Volume Strategy (EMA5_PA_VOLUME_V1)
+  ema5PaEnabled?: boolean;
+  ema5PaVersion?: 'A' | 'B' | 'C' | 'D';
+  ema5PaMinVolumeRatio?: number;
+  ema5PaMinGapRangeRatio?: number;
+  ema5PaMaxGapRangeRatio?: number;
+  ema5PaMaxEmaCrosses?: number;
+  ema5PaMinBodyRatio?: number;
+  ema5PaMinClosePosition?: number;
+  ema5PaMaxSetupRangeRatio?: number;
+  ema5PaMaxStopRangeRatio?: number;
+  ema5PaRiskReward?: number;
+  ema5PaBreakevenEnabled?: boolean;
+  ema5PaRequireStructureBreak?: boolean;
+  ema5PaEntryMode?: 'MOMENTUM' | 'RETEST';
 
   // Volatility Compression Breakout (VCB) Strategy
   vcbCompressionLookback: number;
@@ -205,6 +228,32 @@ export interface TradingSettings {
   tpbAllowShorts?: boolean;
   tpbAllowBroadStop?: boolean;
 
+  // Trend Pullback RETEST Strategy (TREND_PULLBACK_RETEST)
+  tprEnabled?: boolean;
+  tprEmaFast?: number;            // EMA Fast period (default 20)
+  tprEmaSlow?: number;            // EMA Slow period (default 50)
+  tprEmaHtf?: number;             // Optional HTF EMA (default 200)
+  tprAtrPeriod?: number;          // ATR period (default 14)
+  tprAdxPeriod?: number;          // ADX period (default 14)
+  tprRsiPeriod?: number;          // RSI period (default 14)
+  tprMinAdx?: number;             // Min ADX to consider trending (default 20)
+  tprMinTrendScore?: number;      // Min trend quality score 1-6 (default 5)
+  tprMaxPullbackAtr?: number;     // Max pullback depth in ATR units (default 1.5)
+  tprMaxPullbackCandles?: number; // Setup timeout candles for pullback (default 10)
+  tprRetestToleranceAtr?: number; // Retest zone tolerance in ATR (default 0.20)
+  tprMinConfBodyRatio?: number;   // Min confirmation candle body ratio (default 0.40)
+  tprMaxChaseAtr?: number;        // Chase filter: max dist from EMA post-conf (default 0.75)
+  tprMaxConfCandleAtr?: number;   // Extreme candle filter: max conf range (default 2.0)
+  tprMinEmaGapAtrRatio?: number;  // EMA separation filter (default 0.20)
+  tprSlAtrMultiple?: number;      // SL = emaFast ± slAtrMultiple * ATR (default 1.5)
+  tprRrRatio?: number;            // TP2 R:R ratio (default 2.0)
+  tprTrailingEnabled?: boolean;
+  tprBreakevenEnabled?: boolean;
+  tprCooldownCandles?: number;    // Cooldown after exit (default 5)
+  tprSetupTimeout?: number;       // Max candles in pending state (default 10)
+  tprAllowLongs?: boolean;
+  tprAllowShorts?: boolean;
+
   // SMC High-Probability Strategy Settings
   smcHtfResolution?: string;
   smcStructureLen?: number;
@@ -264,6 +313,22 @@ export const NUMERIC_BOUNDS: Record<string, { min: number; max: number; step?: n
   tpbMaxStopDistanceAtr: { min: 1.0, max: 6.0, step: 0.1, label: 'Trend Pullback Max Stop Distance (ATR)' },
   tpbMaxSpreadAtr: { min: 0.05, max: 1.0, step: 0.05, label: 'Trend Pullback Max Spread (ATR)' },
   tpbMinScore: { min: 5, max: 10, step: 1, label: 'Trend Pullback Min Confirmation Score' },
+  tprEmaFast: { min: 5, max: 100, step: 1, label: 'TPR Fast EMA Period' },
+  tprEmaSlow: { min: 20, max: 200, step: 5, label: 'TPR Slow EMA Period' },
+  tprEmaHtf: { min: 50, max: 500, step: 10, label: 'TPR HTF EMA Period' },
+  tprMinAdx: { min: 10, max: 50, step: 1, label: 'TPR Min ADX' },
+  tprMinTrendScore: { min: 1, max: 6, step: 1, label: 'TPR Min Trend Quality Score' },
+  tprMaxPullbackAtr: { min: 0.3, max: 4.0, step: 0.1, label: 'TPR Max Pullback Depth (ATR)' },
+  tprMaxPullbackCandles: { min: 3, max: 30, step: 1, label: 'TPR Max Pullback Candles' },
+  tprRetestToleranceAtr: { min: 0.05, max: 1.0, step: 0.05, label: 'TPR Retest Tolerance (ATR)' },
+  tprMinConfBodyRatio: { min: 0.20, max: 0.80, step: 0.05, label: 'TPR Min Confirmation Body Ratio' },
+  tprMaxChaseAtr: { min: 0.20, max: 2.0, step: 0.05, label: 'TPR Max Chase Distance (ATR)' },
+  tprMaxConfCandleAtr: { min: 0.5, max: 5.0, step: 0.1, label: 'TPR Max Confirmation Candle Range (ATR)' },
+  tprMinEmaGapAtrRatio: { min: 0.05, max: 1.0, step: 0.05, label: 'TPR Min EMA Separation (ATR ratio)' },
+  tprSlAtrMultiple: { min: 0.5, max: 4.0, step: 0.1, label: 'TPR SL ATR Multiple' },
+  tprRrRatio: { min: 1.0, max: 5.0, step: 0.1, label: 'TPR Risk/Reward Ratio' },
+  tprCooldownCandles: { min: 1, max: 20, step: 1, label: 'TPR Cooldown Candles' },
+  tprSetupTimeout: { min: 3, max: 30, step: 1, label: 'TPR Setup Timeout Candles' },
   vcbChecklistMinScore: { min: 5, max: 11, step: 1, label: 'VCB Checklist Min Score' },
   vcbMinRrRatio: { min: 1.5, max: 5.0, step: 0.1, label: 'VCB Min Risk-to-Reward Ratio' },
   vcbHtfAdxMin: { min: 10, max: 40, step: 1, label: 'VCB HTF Min ADX' },
@@ -306,6 +371,19 @@ export const NUMERIC_BOUNDS: Record<string, { min: number; max: number; step?: n
   egpTp3RMultiple: { min: 1.5, max: 15.0, step: 0.1, label: '5 EMA TP3 R Multiple' },
   egpSlSwingLookback: { min: 3, max: 30, step: 1, label: '5 EMA SL Swing Lookback' },
   egpSlAtrBuffer: { min: 0.05, max: 2.0, step: 0.05, label: '5 EMA SL ATR Buffer' },
+  egpMaxSignalRangeAtr: { min: 0.8, max: 2.5, step: 0.1, label: '5 EMA Max Signal Candle Range (ATR)' },
+  egpMinCloseLocation: { min: 0.55, max: 0.90, step: 0.05, label: '5 EMA Min Close Location Value' },
+  egpMinStopDistanceAtr: { min: 0.20, max: 1.00, step: 0.05, label: '5 EMA Min Stop Distance (ATR)' },
+  egpMaxStopDistanceAtr: { min: 1.00, max: 3.00, step: 0.1, label: '5 EMA Max Stop Distance (ATR)' },
+  ema5PaMinVolumeRatio: { min: 0.5, max: 5.0, step: 0.05, label: 'EMA 5 PA Min Volume Ratio' },
+  ema5PaMinGapRangeRatio: { min: 0.05, max: 0.80, step: 0.05, label: 'EMA 5 PA Min Gap/Range Ratio' },
+  ema5PaMaxGapRangeRatio: { min: 0.50, max: 2.50, step: 0.05, label: 'EMA 5 PA Max Gap/Range Ratio' },
+  ema5PaMaxEmaCrosses: { min: 1, max: 10, step: 1, label: 'EMA 5 PA Max EMA Crosses' },
+  ema5PaMinBodyRatio: { min: 0.20, max: 0.90, step: 0.05, label: 'EMA 5 PA Min Body Ratio' },
+  ema5PaMinClosePosition: { min: 0.40, max: 0.95, step: 0.05, label: 'EMA 5 PA Min Close Position' },
+  ema5PaMaxSetupRangeRatio: { min: 1.0, max: 5.0, step: 0.1, label: 'EMA 5 PA Max Setup Range Ratio' },
+  ema5PaMaxStopRangeRatio: { min: 1.0, max: 5.0, step: 0.1, label: 'EMA 5 PA Max Stop Range Ratio' },
+  ema5PaRiskReward: { min: 1.0, max: 5.0, step: 0.1, label: 'EMA 5 PA Risk Reward Ratio' },
 };
 
 export interface ValidationResult {
@@ -356,7 +434,9 @@ export function validateTradingSettings(input: unknown): ValidationResult {
     'allowFractionalContracts', 'killSwitchActive',
     'alertOnNewSignal', 'alertOnTradeExecuted', 'alertOnTpHit', 'alertOnSlHit',
     'alertOnTsMoved', 'alertOnDailyLossLimit', 'alertOnRangingDetected',
-    'alertSilentMode', 'binanceTestnet', 'scanOnlyWatchlist'
+    'alertSilentMode', 'binanceTestnet', 'scanOnlyWatchlist', 'egpRequireReal3RRoom',
+    'egpStrictGapOnly', 'ema5PaEnabled', 'ema5PaBreakevenEnabled', 'ema5PaRequireStructureBreak',
+    'tprEnabled', 'tprTrailingEnabled', 'tprBreakevenEnabled', 'tprAllowLongs', 'tprAllowShorts'
   ];
   for (const bKey of booleanKeys) {
     if (raw[bKey] !== undefined) {
@@ -365,6 +445,14 @@ export function validateTradingSettings(input: unknown): ValidationResult {
   }
 
   // Validate enums
+  if (raw.egpExecutionModel !== undefined) {
+    if (['MODEL_A_NEXT_OPEN', 'MODEL_B_RETEST_LIMIT'].includes(raw.egpExecutionModel)) {
+      sanitized.egpExecutionModel = raw.egpExecutionModel;
+    } else {
+      errors.push(`Invalid egpExecutionModel: ${raw.egpExecutionModel}`);
+    }
+  }
+
   if (raw.tradingMode !== undefined) {
     if (['PAPER', 'TESTNET', 'LIVE'].includes(raw.tradingMode)) {
       sanitized.tradingMode = raw.tradingMode;
@@ -539,6 +627,28 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   egpTp3RMultiple: 2.5,
   egpSlSwingLookback: 10,
   egpSlAtrBuffer: 0.2,
+  egpExecutionModel: 'MODEL_A_NEXT_OPEN',
+  egpMaxSignalRangeAtr: 1.2,
+  egpMinCloseLocation: 0.70,
+  egpMinStopDistanceAtr: 0.50,
+  egpMaxStopDistanceAtr: 1.50,
+  egpRequireReal3RRoom: true,
+  egpStrictGapOnly: false,
+
+  ema5PaEnabled: true,
+  ema5PaVersion: 'C',
+  ema5PaMinVolumeRatio: 1.10,
+  ema5PaMinGapRangeRatio: 0.20,
+  ema5PaMaxGapRangeRatio: 1.00,
+  ema5PaMaxEmaCrosses: 3,
+  ema5PaMinBodyRatio: 0.50,
+  ema5PaMinClosePosition: 0.65,
+  ema5PaMaxSetupRangeRatio: 2.0,
+  ema5PaMaxStopRangeRatio: 2.0,
+  ema5PaRiskReward: 1.5,
+  ema5PaBreakevenEnabled: true,
+  ema5PaRequireStructureBreak: false,
+  ema5PaEntryMode: 'MOMENTUM',
 
   vcbCompressionLookback: 10,
   vcbCompressionAtrRatioMax: 0.70,
@@ -594,6 +704,31 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   tpbAllowLongs: true,
   tpbAllowShorts: true,
   tpbAllowBroadStop: false,
+
+  tprEnabled: true,
+  tprEmaFast: 20,
+  tprEmaSlow: 50,
+  tprEmaHtf: 200,
+  tprAtrPeriod: 14,
+  tprAdxPeriod: 14,
+  tprRsiPeriod: 14,
+  tprMinAdx: 20,
+  tprMinTrendScore: 5,
+  tprMaxPullbackAtr: 1.5,
+  tprMaxPullbackCandles: 10,
+  tprRetestToleranceAtr: 0.20,
+  tprMinConfBodyRatio: 0.40,
+  tprMaxChaseAtr: 0.75,
+  tprMaxConfCandleAtr: 2.0,
+  tprMinEmaGapAtrRatio: 0.20,
+  tprSlAtrMultiple: 1.5,
+  tprRrRatio: 2.0,
+  tprTrailingEnabled: true,
+  tprBreakevenEnabled: true,
+  tprCooldownCandles: 5,
+  tprSetupTimeout: 10,
+  tprAllowLongs: true,
+  tprAllowShorts: true,
 
   rmrMaxAdx: 22,
   rmrMaxAtrRatio: 1.25,

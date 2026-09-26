@@ -35,7 +35,7 @@ export type GroupingMode = 'STRATEGY' | 'REGIME' | 'COMBINED';
 interface SetupEVMetrics {
   id: string;
   name: string;
-  marketCondition: 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Trend Continuation / 5 EMA Gap' | 'Unspecified';
+  marketCondition: 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Trend Continuation / 5 EMA Gap' | 'Trend Continuation / Pullback Retest' | 'Unspecified';
   description: string;
   totalTrades: number;
   wins: number;
@@ -59,11 +59,13 @@ interface SetupEVMetrics {
 }
 
 // Map each known strategy to its typical market condition
-export function getMarketConditionForStrategy(strategy?: string): 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Trend Continuation / 5 EMA Gap' | 'Unspecified' {
+export function getMarketConditionForStrategy(strategy?: string): 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Trend Continuation / 5 EMA Gap' | 'Trend Continuation / Pullback Retest' | 'Unspecified' {
   const s = (strategy || '').toUpperCase();
-  if ((s === 'TREND_PULLBACK' || s.includes('PULLBACK')) && s !== 'EMA_GAP_PULLBACK') return 'Trending';
+  if ((s === 'TREND_PULLBACK' || s.includes('PULLBACK')) && s !== 'EMA_GAP_PULLBACK' && s !== 'TREND_PULLBACK_RETEST') return 'Trending';
+  if (s === 'TREND_PULLBACK_RETEST') return 'Trend Continuation / Pullback Retest';
   if (s === 'BINANCE_COMPOSITE' || s.includes('COMPOSITE')) return 'Trending';
   if (s === 'VOLATILITY_COMPRESSION' || s.includes('COMPRESSION') || s === 'VCB') return 'Ranging / Consolidation';
+  if (s === 'EMA5_PA_VOLUME_V1') return 'Trend Continuation / 5 EMA Gap';
   if (s === 'EMA_GAP_PULLBACK') return 'Trend Continuation / 5 EMA Gap';
   if (s === 'DELTA_CLIMAX' || s.includes('CLIMAX')) return 'Mean-Reversion / Climax';
   return 'Unspecified';
@@ -91,7 +93,7 @@ export default function PerformanceInsights({ logs }: PerformanceInsightsProps) 
         const stratKey = (trade.strategy || 'UNSPECIFIED').toUpperCase();
         if (!groups[stratKey]) {
           let displayName = stratKey;
-          let cond: 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Trend Continuation / 5 EMA Gap' | 'Unspecified' = 'Unspecified';
+          let cond: 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Trend Continuation / 5 EMA Gap' | 'Trend Continuation / Pullback Retest' | 'Unspecified' = 'Unspecified';
           let desc = 'Trades without strategy tag';
           let diag = 'Review strategy mapping';
           let rec = 'Track strategy parameter in order placement.';
@@ -102,6 +104,18 @@ export default function PerformanceInsights({ logs }: PerformanceInsightsProps) 
             desc = 'EMA 21/50 trend continuation on dynamic value pullbacks';
             diag = 'Win rate has been hurt by false pullbacks in ranging markets and illiquid tokens.';
             rec = 'Enforce $25M+ 24h volume filter and volume exhaustion checks.';
+          } else if (stratKey === 'TREND_PULLBACK_RETEST') {
+            displayName = 'Pullback Retest';
+            cond = 'Trend Continuation / Pullback Retest';
+            desc = '5-stage state-machine trend pullback retest with confirmed rejection & confirmation candle';
+            diag = 'Strict state-machine filters fakeouts and sideways chop before entry.';
+            rec = 'Enforce 2.0R target and breakeven at 1R.';
+          } else if (stratKey === 'EMA5_PA_VOLUME_V1') {
+            displayName = 'EMA 5 PA + Volume';
+            cond = 'Trend Continuation / 5 EMA Gap';
+            desc = '5 EMA Price Action Gap + Volume expansion setup with 15m structure confirmation';
+            diag = 'Pure price action momentum entry without lagging indicator lag.';
+            rec = 'Maintain 1.5R minimum target and dynamic breakeven protection.';
           } else if (stratKey === 'EMA_GAP_PULLBACK') {
             displayName = '5 EMA Gap Pullback';
             cond = 'Trend Continuation / 5 EMA Gap';
@@ -126,6 +140,24 @@ export default function PerformanceInsights({ logs }: PerformanceInsightsProps) 
             desc = 'Squeeze consolidation breakout with expanding volume';
             diag = 'Consistent 50%+ win rate during sideways accumulation phases.';
             rec = 'Optimal during low-volatility Asian sessions.';
+          } else if (stratKey === 'EARLY_COIL_BREAKOUT') {
+            displayName = 'Early Coil Breakout';
+            cond = 'Ranging / Consolidation';
+            desc = 'Fractal compression breakout with structural trigger';
+            diag = 'Consistent risk-reward on early spring breakouts.';
+            rec = 'Require volume surge on breakout candle.';
+          } else if (stratKey === 'MACRO_RANGE_BREAKOUT') {
+            displayName = 'Macro Range Breakout';
+            cond = 'Trending';
+            desc = 'Macro accumulation breakout beyond multi-day range';
+            diag = 'Produces extended multi-day trend moves.';
+            rec = 'Hold runners to 3R and 5R targets.';
+          } else if (stratKey === 'SMC_LIQUIDITY_SWEEP' || stratKey === 'SMC') {
+            displayName = 'SMC Liquidity Sweep';
+            cond = 'Mean-Reversion / Climax';
+            desc = 'Protected structure sweep and institutional FVG retest';
+            diag = 'High asymmetric payoff at major liquidity pools.';
+            rec = 'Confirm sweep on HTF before entry.';
           }
 
           groups[stratKey] = {

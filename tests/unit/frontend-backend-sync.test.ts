@@ -200,4 +200,56 @@ describe('Frontend-Backend Synchronization & Integration Suite', () => {
       expect(fallback).toEqual({ id: 'pos-789', currentPrice: 150, reason: 'MANUAL' });
     });
   });
+
+  describe('Contract & Strategy ID Alignment', () => {
+    it('ensures all strategy IDs in DEFAULT_STRATEGY_BUCKET are valid and mapped cleanly', async () => {
+      const { DEFAULT_STRATEGY_BUCKET } = await import('../../src/utils/strategyBucket.js');
+      expect(DEFAULT_STRATEGY_BUCKET.length).toBeGreaterThan(0);
+
+      const knownStrategies = [
+        'TREND_PULLBACK',
+        'TREND_PULLBACK_RETEST',
+        'VOLATILITY_COMPRESSION',
+        'EARLY_COIL_BREAKOUT',
+        'BINANCE_COMPOSITE',
+        'SMC_LIQUIDITY_SWEEP',
+        'EMA_GAP_PULLBACK',
+        'EMA5_PA_VOLUME_V1',
+        'MACRO_RANGE_BREAKOUT'
+      ];
+
+      for (const item of DEFAULT_STRATEGY_BUCKET) {
+        expect(knownStrategies).toContain(item.id);
+        expect(typeof item.name).toBe('string');
+        expect(item.name.length).toBeGreaterThan(0);
+        expect(typeof item.priority).toBe('number');
+        expect(item.priority).toBeGreaterThanOrEqual(1);
+      }
+    });
+
+    it('ensures all CANONICAL_DEFAULT_SETTINGS keys are present and conform to TradingSettings schema', async () => {
+      const { CANONICAL_DEFAULT_SETTINGS, validateTradingSettings } = await import('../../src/shared/TradingSettings.js');
+      
+      const validation = validateTradingSettings(CANONICAL_DEFAULT_SETTINGS);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toHaveLength(0);
+
+      // Mandatory trading parameters required by both backend engine and frontend settings panel
+      const requiredKeys = [
+        'accountRiskPct',
+        'leverage',
+        'maxConcurrentTrades',
+        'maxDrawdownPct',
+        'dailyLossLimitPct',
+        'autoTradeEnabled',
+        'egpEnabled',
+        'egpStrictGapOnly',
+        'egpRequireReal3RRoom'
+      ];
+
+      for (const key of requiredKeys) {
+        expect(CANONICAL_DEFAULT_SETTINGS).toHaveProperty(key);
+      }
+    });
+  });
 });

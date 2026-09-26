@@ -57,6 +57,13 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
 
   const getStrategyBadge = (strat?: string) => {
     const s = (strat || 'BINANCE_COMPOSITE').toUpperCase();
+    if (s.includes('EMA5_PA') || s === 'EMA5_PA_VOLUME_V1') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-950/50 text-emerald-300 border border-emerald-700/60 text-[10px] font-bold tracking-wide uppercase">
+          <Zap className="w-3 h-3 text-emerald-400" /> EMA 5 PA Vol
+        </span>
+      );
+    }
     if (s.includes('EMA_GAP') || s === 'EMA_GAP_PULLBACK') {
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-950/50 text-teal-300 border border-teal-700/60 text-[10px] font-bold tracking-wide uppercase">
@@ -75,6 +82,13 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-950/50 text-amber-300 border border-amber-700/60 text-[10px] font-bold tracking-wide uppercase">
           <Flame className="w-3 h-3 text-amber-400" /> VCB Breakout
+        </span>
+      );
+    }
+    if (s === 'TREND_PULLBACK_RETEST') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-950/50 text-sky-300 border border-sky-700/60 text-[10px] font-bold tracking-wide uppercase">
+          <Target className="w-3 h-3 text-sky-400" /> Pullback Retest
         </span>
       );
     }
@@ -146,10 +160,12 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
               <span className="text-gray-400">Active Strategies ({activeStrategiesList.length}):</span>
               <span className="text-[#00e696]">
                 {activeStrategiesList.map(s => {
+                  if (s === 'EMA5_PA_VOLUME_V1') return 'EMA 5 PA Vol';
                   if (s === 'EMA_GAP_PULLBACK') return '5 EMA Gap';
                   if ((s as string) === 'DELTA_CLIMAX') return 'Delta Climax (Legacy)';
                   if (s === 'VOLATILITY_COMPRESSION') return 'VCB';
                   if (s === 'TREND_PULLBACK') return 'Trend Pullback';
+                  if (s === 'TREND_PULLBACK_RETEST') return 'Pullback Retest';
                   if (s === 'SMC_LIQUIDITY_SWEEP') return 'SMC';
                   if (s === 'BINANCE_COMPOSITE') return 'Ranging 1:3';
                   if (s === 'EARLY_COIL_BREAKOUT') return 'Early Coil';
@@ -162,11 +178,13 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
             <span className="inline-flex items-center gap-1.5 text-[10.5px] font-bold px-2.5 py-1 bg-gray-900 border border-gray-700 text-gray-200 rounded-lg">
               <span className="text-gray-400">Bot Strategy:</span>
               <span className="text-[#00e696]">
-                {activeStrategiesList[0] === 'EMA_GAP_PULLBACK' ? '⚡ 5 EMA Gap Pullback'
+                {activeStrategiesList[0] === 'EMA5_PA_VOLUME_V1' ? '⚡ EMA 5 PA + Volume'
+                  : activeStrategiesList[0] === 'EMA_GAP_PULLBACK' ? '⚡ 5 EMA Gap Pullback'
                   : (activeStrategiesList[0] as string) === 'DELTA_CLIMAX' ? '⚡ Delta Climax (Legacy)'
                   : activeStrategiesList[0] === 'VOLATILITY_COMPRESSION' ? '💥 VCB Breakout'
                   : activeStrategiesList[0] === 'EARLY_COIL_BREAKOUT' ? '🔥 Early Coil Breakout'
                   : activeStrategiesList[0] === 'TREND_PULLBACK' ? '🎯 Trend Pullback'
+                  : activeStrategiesList[0] === 'TREND_PULLBACK_RETEST' ? '🎯 Pullback Retest'
                   : activeStrategiesList[0] === 'MACRO_RANGE_BREAKOUT' ? '📦 Macro Range Breakout'
                   : activeStrategiesList[0] === 'SMC_LIQUIDITY_SWEEP' ? '💧 Liquidity Sweep Reversal'
                   : '📊 Composite 10-Gate'}
@@ -229,7 +247,7 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
           <Clock className="w-8 h-8 mb-2 stroke-gray-600" />
           <p className="text-sm font-medium">No open positions at the moment</p>
           <span className="text-xs text-gray-500 mt-1 max-w-sm text-center leading-relaxed">
-            Scanning {settings?.coinCount || 100} Binance Futures pairs across <strong className="text-gray-400">{activeStrategiesList.length > 1 ? `${activeStrategiesList.length} Active Strategies` : (activeStrategiesList[0] === 'EMA_GAP_PULLBACK' ? '5 EMA Gap Pullback' : (activeStrategiesList[0] as string) === 'DELTA_CLIMAX' ? 'Delta Climax (Legacy)' : activeStrategiesList[0] === 'VOLATILITY_COMPRESSION' ? 'VCB Breakout' : activeStrategiesList[0] === 'TREND_PULLBACK' ? 'Trend Pullback' : activeStrategiesList[0] === 'SMC_LIQUIDITY_SWEEP' ? 'SMC Liquidity' : activeStrategiesList[0] || 'Autonomous')}</strong> fully-confirmed signals with tight invalidation Stop Loss and <strong className="text-indigo-400">1:3 Asymmetric Target</strong>.
+            Scanning {settings?.coinCount || 100} Binance Futures pairs across <strong className="text-gray-400">{activeStrategiesList.length > 1 ? `${activeStrategiesList.length} Active Strategies` : (activeStrategiesList[0] === 'EMA5_PA_VOLUME_V1' ? 'EMA 5 PA + Volume' : activeStrategiesList[0] === 'EMA_GAP_PULLBACK' ? '5 EMA Gap Pullback' : (activeStrategiesList[0] as string) === 'DELTA_CLIMAX' ? 'Delta Climax (Legacy)' : activeStrategiesList[0] === 'VOLATILITY_COMPRESSION' ? 'VCB Breakout' : activeStrategiesList[0] === 'TREND_PULLBACK' ? 'Trend Pullback' : activeStrategiesList[0] === 'TREND_PULLBACK_RETEST' ? 'Pullback Retest' : activeStrategiesList[0] === 'SMC_LIQUIDITY_SWEEP' ? 'SMC Liquidity' : activeStrategiesList[0] || 'Autonomous')}</strong> fully-confirmed signals with tight invalidation Stop Loss and <strong className="text-indigo-400">1:3 Asymmetric Target</strong>.
           </span>
         </div>
       ) : (

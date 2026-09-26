@@ -26,7 +26,9 @@ import { detectMacroRangeBreakout } from '../../src/utils/strategies/macroRange.
 import { evaluateEarlyCoilBreakout } from '../../src/utils/strategies/earlyCoilBreakout.js';
 import { evaluateTwoSidedCoilBreakout } from '../../src/utils/strategies/twoSidedCoilBreakout.js';
 import { evaluateRangeMeanReversion } from '../../src/utils/strategies/rangeMeanReversion.js';
-import { evaluateEmaGapPullback } from '../../src/utils/strategies/emaGapPullback.js';
+import { evaluateEmaGapPullback, checkReal3RRoom } from '../../src/utils/strategies/emaGapPullback.js';
+import { evaluateEma5PaVolume } from '../../src/utils/strategies/ema5PaVolume.js';
+import { evaluateTrendPullbackRetest, createTprState, TprState } from '../../src/utils/strategies/trendPullbackRetest.js';
 import { calculateRSI } from '../../src/utils/indicators.js';
 import {
   allowVCB,
@@ -80,6 +82,8 @@ export class AutoTrader {
   private lastGlobalRegimeTime = 0;
   private globalFilterBlockActive = false;
   private globalFilterBlockReason = '';
+  // Per-symbol state machine state for TREND_PULLBACK_RETEST
+  private tprStates = new Map<string, TprState>();
 
   public isGlobalFilterPausing(): boolean {
     return this.globalFilterBlockActive;
@@ -1484,12 +1488,28 @@ export class AutoTrader {
     signalTime?: number;
     compressionHigh?: number;
     compressionLow?: number;
+    distanceToObstacleR?: number;
+    nearestObstaclePrice?: number;
   } | null> {
     // 1. 5 EMA Gap Pullback algorithm
     if (strat === 'EMA_GAP_PULLBACK') {
       const htfCandles = await this.getKlines(symbol, '1h');
       const sig = evaluateEmaGapPullback(klines, htfCandles, currentPrice, this.settings as any);
       if (!sig || sig.status !== 'confirmed') return null;
+      // Optional Real 3R room validation if enabled in settings
+      if (this.settings.egpRequireReal3RRoom) {
+        const roomResult = checkReal3RRoom(sig.entry!, sig.stop!, sig.direction!, htfCandles);
+        if (!roomResult.hasRoom) {
+          this.logScanResult(symbol, sig.direction!, false,
+            `Real 3R Room Failed: ${roomResult.reason}`,
+            currentPrice, sig.stop!, sig.tp1!, sig.score || 0,
+            { strategy: 'EMA_GAP_PULLBACK' });
+          return null;
+        }
+        // Attach diagnostics to signal
+        (sig as any).distanceToObstacleR = roomResult.distanceToObstacleR;
+        (sig as any).nearestObstaclePrice = roomResult.nearestObstaclePrice;
+      }
       return {
         direction: sig.direction!,
         score: sig.score || 90,
@@ -1500,8 +1520,45 @@ export class AutoTrader {
         tp3: sig.tp3!,
         signalTime: sig.signalTime,
         reason: sig.reason,
+        // Include Real‑3R diagnostics if present
+        distanceToObstacleR: (sig as any).distanceToObstacleR,
+        nearestObstaclePrice: (sig as any).nearestObstaclePrice,
         strategy: 'EMA_GAP_PULLBACK',
         marketRegime: '5 EMA Trend Continuation'
+      };
+    }
+
+    // 1b. EMA 5 Price Action Gap + Volume Strategy (Standalone Pure PA Engine)
+    if (strat === 'EMA5_PA_VOLUME_V1') {
+      const candles15m = await this.getKlines(symbol, '15m');
+      const sig = evaluateEma5PaVolume(klines, candles15m, {
+        version: this.settings.ema5PaVersion ?? 'C',
+        minVolumeRatio: this.settings.ema5PaMinVolumeRatio ?? 1.10,
+        minGapRangeRatio: this.settings.ema5PaMinGapRangeRatio ?? 0.20,
+        maxGapRangeRatio: this.settings.ema5PaMaxGapRangeRatio ?? 1.00,
+        maxEmaCrosses: this.settings.ema5PaMaxEmaCrosses ?? 3,
+        minBodyRatio: this.settings.ema5PaMinBodyRatio ?? 0.50,
+        minClosePosition: this.settings.ema5PaMinClosePosition ?? 0.65,
+        maxSetupRangeRatio: this.settings.ema5PaMaxSetupRangeRatio ?? 2.0,
+        maxStopRangeRatio: this.settings.ema5PaMaxStopRangeRatio ?? 2.0,
+        riskReward: this.settings.ema5PaRiskReward ?? 1.5,
+        breakevenEnabled: this.settings.ema5PaBreakevenEnabled ?? true,
+        requireStructureBreak: this.settings.ema5PaRequireStructureBreak ?? false,
+        entryMode: this.settings.ema5PaEntryMode ?? 'MOMENTUM',
+      }, symbol);
+      if (!sig || sig.rejectionReason) return null;
+      return {
+        direction: sig.direction,
+        score: sig.setupScore,
+        atr: sig.metrics.recentAvgRange,
+        sl: sig.sl,
+        tp1: sig.tp1,
+        tp2: sig.tp2,
+        tp3: sig.tp3,
+        signalTime: sig.candleTime,
+        reason: `EMA5 PA Vol (${sig.direction}) 15m ${sig.regime15m}`,
+        strategy: 'EMA5_PA_VOLUME_V1',
+        marketRegime: `15m Structure ${sig.regime15m}`,
       };
     }
     
@@ -1627,6 +1684,64 @@ export class AutoTrader {
       const compSig = this.evaluateCompositeStrategy(klines, currentPrice);
       if (!compSig) return null;
       return { ...compSig, strategy: 'BINANCE_COMPOSITE', marketRegime: 'Ranging [1:3 R:R Mean-Reversion]' };
+    }
+
+    // 8. Trend Pullback Retest (full state-machine strategy)
+    if (strat === 'TREND_PULLBACK_RETEST') {
+      if (this.settings.tprEnabled === false) return null;
+      // Closed candles only — strip the last (in-progress) candle
+      const closedKlines = klines.slice(0, -1);
+      if (closedKlines.length < 60) return null;
+      // Get or create per-symbol state
+      if (!this.tprStates.has(symbol)) {
+        this.tprStates.set(symbol, createTprState());
+      }
+      const tprState = this.tprStates.get(symbol)!;
+      const sig = evaluateTrendPullbackRetest(
+        closedKlines,
+        {
+          emaFast: this.settings.tprEmaFast ?? 20,
+          emaSlow: this.settings.tprEmaSlow ?? 50,
+          emaHtf: this.settings.tprEmaHtf ?? 200,
+          atrPeriod: this.settings.tprAtrPeriod ?? 14,
+          adxPeriod: this.settings.tprAdxPeriod ?? 14,
+          rsiPeriod: this.settings.tprRsiPeriod ?? 14,
+          minAdx: this.settings.tprMinAdx ?? 20,
+          minTrendScore: this.settings.tprMinTrendScore ?? 5,
+          maxPullbackAtr: this.settings.tprMaxPullbackAtr ?? 1.5,
+          maxPullbackCandles: this.settings.tprMaxPullbackCandles ?? 10,
+          retestToleranceAtr: this.settings.tprRetestToleranceAtr ?? 0.20,
+          minConfBodyRatio: this.settings.tprMinConfBodyRatio ?? 0.40,
+          maxChaseAtr: this.settings.tprMaxChaseAtr ?? 0.75,
+          maxConfCandleAtr: this.settings.tprMaxConfCandleAtr ?? 2.0,
+          minEmaGapAtrRatio: this.settings.tprMinEmaGapAtrRatio ?? 0.20,
+          slAtrMultiple: this.settings.tprSlAtrMultiple ?? 1.5,
+          rrRatio: this.settings.tprRrRatio ?? 2.0,
+          trailingEnabled: this.settings.tprTrailingEnabled !== false,
+          breakevenEnabled: this.settings.tprBreakevenEnabled !== false,
+          cooldownCandles: this.settings.tprCooldownCandles ?? 5,
+          setupTimeout: this.settings.tprSetupTimeout ?? 10,
+          allowLongs: this.settings.tprAllowLongs !== false,
+          allowShorts: this.settings.tprAllowShorts !== false,
+          debugMode: false,
+        },
+        tprState,
+        symbol
+      );
+      if (!sig || sig.rejectionReason) return null;
+      return {
+        direction: sig.direction,
+        score: sig.setupScore,
+        atr: sig.atr,
+        sl: sig.sl,
+        tp1: sig.tp1,
+        tp2: sig.tp2,
+        tp3: sig.tp3,
+        signalTime: sig.candleTime,
+        reason: sig.reason,
+        strategy: 'TREND_PULLBACK_RETEST',
+        marketRegime: `Trend Pullback Retest [${sig.trendScore}/6 trend quality]`,
+      };
     }
 
     return null;
@@ -1931,6 +2046,91 @@ export class AutoTrader {
         }
       }
 
+      if (candidate.id === 'EMA5_PA_VOLUME_V1' && currentRegime.startsWith('TRENDING')) {
+        const candles15m = await this.getKlines(symbol, '15m');
+        const sig = evaluateEma5PaVolume(closedKlines, candles15m, {
+          version: this.settings.ema5PaVersion ?? 'C',
+          minVolumeRatio: this.settings.ema5PaMinVolumeRatio ?? 1.10,
+          minGapRangeRatio: this.settings.ema5PaMinGapRangeRatio ?? 0.20,
+          maxGapRangeRatio: this.settings.ema5PaMaxGapRangeRatio ?? 1.00,
+          maxEmaCrosses: this.settings.ema5PaMaxEmaCrosses ?? 3,
+          minBodyRatio: this.settings.ema5PaMinBodyRatio ?? 0.50,
+          minClosePosition: this.settings.ema5PaMinClosePosition ?? 0.65,
+          maxSetupRangeRatio: this.settings.ema5PaMaxSetupRangeRatio ?? 2.0,
+          maxStopRangeRatio: this.settings.ema5PaMaxStopRangeRatio ?? 2.0,
+          riskReward: this.settings.ema5PaRiskReward ?? 1.5,
+          breakevenEnabled: this.settings.ema5PaBreakevenEnabled ?? true,
+          requireStructureBreak: this.settings.ema5PaRequireStructureBreak ?? false,
+          entryMode: this.settings.ema5PaEntryMode ?? 'MOMENTUM',
+        }, symbol);
+        if (sig && !sig.rejectionReason && (!candidate.direction || sig.direction === candidate.direction)) {
+          pendingSignal = {
+            direction: sig.direction,
+            score: sig.setupScore,
+            atr: sig.metrics.recentAvgRange,
+            sl: sig.sl,
+            tp1: sig.tp1,
+            tp2: sig.tp2,
+            tp3: sig.tp3,
+            signalTime: sig.candleTime,
+            reason: `EMA5 PA Vol (${sig.direction}) 15m ${sig.regime15m}`,
+          };
+        }
+      }
+
+      if (candidate.id === 'TREND_PULLBACK_RETEST' && currentRegime.startsWith('TRENDING')) {
+        if (this.settings.tprEnabled !== false && closedKlines.length >= 60) {
+          if (!this.tprStates.has(symbol)) {
+            this.tprStates.set(symbol, createTprState());
+          }
+          const tprState = this.tprStates.get(symbol)!;
+          const tprSig = evaluateTrendPullbackRetest(
+            closedKlines,
+            {
+              emaFast: this.settings.tprEmaFast ?? 20,
+              emaSlow: this.settings.tprEmaSlow ?? 50,
+              emaHtf: this.settings.tprEmaHtf ?? 200,
+              atrPeriod: this.settings.tprAtrPeriod ?? 14,
+              adxPeriod: this.settings.tprAdxPeriod ?? 14,
+              rsiPeriod: this.settings.tprRsiPeriod ?? 14,
+              minAdx: this.settings.tprMinAdx ?? 20,
+              minTrendScore: this.settings.tprMinTrendScore ?? 5,
+              maxPullbackAtr: this.settings.tprMaxPullbackAtr ?? 1.5,
+              maxPullbackCandles: this.settings.tprMaxPullbackCandles ?? 10,
+              retestToleranceAtr: this.settings.tprRetestToleranceAtr ?? 0.20,
+              minConfBodyRatio: this.settings.tprMinConfBodyRatio ?? 0.40,
+              maxChaseAtr: this.settings.tprMaxChaseAtr ?? 0.75,
+              maxConfCandleAtr: this.settings.tprMaxConfCandleAtr ?? 2.0,
+              minEmaGapAtrRatio: this.settings.tprMinEmaGapAtrRatio ?? 0.20,
+              slAtrMultiple: this.settings.tprSlAtrMultiple ?? 1.5,
+              rrRatio: this.settings.tprRrRatio ?? 2.0,
+              trailingEnabled: this.settings.tprTrailingEnabled !== false,
+              breakevenEnabled: this.settings.tprBreakevenEnabled !== false,
+              cooldownCandles: this.settings.tprCooldownCandles ?? 5,
+              setupTimeout: this.settings.tprSetupTimeout ?? 10,
+              allowLongs: this.settings.tprAllowLongs !== false,
+              allowShorts: this.settings.tprAllowShorts !== false,
+              debugMode: false,
+            },
+            tprState,
+            symbol
+          );
+          if (tprSig && !tprSig.rejectionReason && (!candidate.direction || tprSig.direction === candidate.direction)) {
+            pendingSignal = {
+              direction: tprSig.direction,
+              score: tprSig.setupScore,
+              atr: tprSig.atr,
+              sl: tprSig.sl,
+              tp1: tprSig.tp1,
+              tp2: tprSig.tp2,
+              tp3: tprSig.tp3,
+              signalTime: tprSig.candleTime,
+              reason: tprSig.reason,
+            };
+          }
+        }
+      }
+
       if ((candidate.id === 'SMC_LIQUIDITY_SWEEP' || candidate.id === 'LIQUIDITY_SWEEP_REVERSAL') && (currentRegime.startsWith('EXHAUSTION') || currentRegime === 'RANGING' || currentRegime.startsWith('TRENDING'))) {
         try {
           const htf = this.settings.smcHtfResolution || '1h';
@@ -2033,8 +2233,8 @@ export class AutoTrader {
           gateResults.stopStructurallyValid = 'PASS';
         }
 
-        // 5. Structural Risk-to-Reward Gate (>= 3.0 required, or >= 2.5 for EMA_GAP_PULLBACK / Mean Reversion)
-        const minRR = (candidate.id === 'EMA_GAP_PULLBACK' || candidate.id === 'BINANCE_COMPOSITE' || candidate.id === 'RANGE_MEAN_REVERSION' || currentRegime.startsWith('EXHAUSTION') || currentRegime === 'RANGING') ? 2.5 : 3.0;
+        // 5. Structural Risk-to-Reward Gate (>= 3.0 required, or >= 2.5 for EMA_GAP_PULLBACK / Mean Reversion, or >= 1.5 for EMA5_PA_VOLUME_V1)
+        const minRR = candidate.id === 'EMA5_PA_VOLUME_V1' ? 1.5 : (candidate.id === 'EMA_GAP_PULLBACK' || candidate.id === 'BINANCE_COMPOSITE' || candidate.id === 'RANGE_MEAN_REVERSION' || currentRegime.startsWith('EXHAUSTION') || currentRegime === 'RANGING') ? 2.5 : 3.0;
         const reward3 = Math.abs(pendingSignal.tp3 - currentPrice);
         const structuralRR = risk > 0 ? (reward3 / risk) : 0;
         if (structuralRR < minRR) {

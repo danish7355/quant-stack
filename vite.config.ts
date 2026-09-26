@@ -13,15 +13,20 @@ export default defineConfig(() => {
     },
     server: {
       allowedHosts: true as const,
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
       hmr: process.env.DISABLE_HMR !== 'true',
-      // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {
-        // Exclude bot runtime data files from triggering page reloads.
-        // The trading engine writes to data/ every few seconds (settings, positions, signals).
-        // Without this, Vite detects those writes as code changes and reloads the page,
-        // destroying React state (scanned coins) before the scanner can populate.
         ignored: ['**/data/**', '**/server/**', '**/node_modules/**', '**/.git/**'],
+      },
+    },
+    test: {
+      // Make describe / it / expect / beforeEach available without import
+      globals: true,
+      environment: 'node',
+      include: ['tests/**/*.test.ts'],
+      coverage: {
+        provider: 'v8',
+        reporter: ['text', 'json', 'html'],
+        include: ['src/utils/strategies/core/**/*.ts'],
       },
     },
   };

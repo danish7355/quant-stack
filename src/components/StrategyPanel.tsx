@@ -15,7 +15,7 @@ interface StrategyPanelProps {
 }
 
 export const AVAILABLE_STRATEGIES: {
-  id: 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'EMA_GAP_PULLBACK' | 'SMC_LIQUIDITY_SWEEP' | 'BINANCE_COMPOSITE' | 'EARLY_COIL_BREAKOUT' | 'MACRO_RANGE_BREAKOUT';
+  id: 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'SMC_LIQUIDITY_SWEEP' | 'BINANCE_COMPOSITE' | 'EARLY_COIL_BREAKOUT' | 'MACRO_RANGE_BREAKOUT';
   name: string;
   shortName: string;
   type: string;
@@ -42,12 +42,30 @@ export const AVAILABLE_STRATEGIES: {
     icon: Target,
   },
   {
+    id: 'TREND_PULLBACK_RETEST',
+    name: 'Trend Pullback Retest (State Machine)',
+    shortName: 'Pullback Retest',
+    type: 'Trend Continuation',
+    badgeBg: 'bg-sky-500/20 text-sky-300 border-sky-500/40',
+    description: 'Full 5-stage state machine: trend detected → pullback → EMA retest → confirmation candle → entry. Requires ALL stages in order. No premature entries.',
+    icon: Target,
+  },
+  {
     id: 'EMA_GAP_PULLBACK',
     name: '5 EMA Gap Pullback (Trend Continuation)',
     shortName: '5 EMA Gap',
     type: 'Trend Continuation',
     badgeBg: 'bg-teal-500/20 text-teal-300 border-teal-500/40',
     description: 'Trades high-quality 5 EMA gap candles after structured pullbacks with HTF 50 EMA trend alignment and anti-overextension filter.',
+    icon: Zap,
+  },
+  {
+    id: 'EMA5_PA_VOLUME_V1',
+    name: 'EMA 5 Price Action Gap + Volume',
+    shortName: 'EMA 5 PA Vol',
+    type: 'Pure Price Action & Volume',
+    badgeBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+    description: 'Standalone 5m pure price action + volume gap strategy with zero lagging indicators, strictly filtered by 15m market structure swings.',
     icon: Zap,
   },
   {
@@ -632,6 +650,9 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                         {strat.id === 'EMA_GAP_PULLBACK' && (
                           <span className="text-gray-400 font-mono">7 Gates</span>
                         )}
+                        {strat.id === 'EMA5_PA_VOLUME_V1' && (
+                          <span className="text-gray-400 font-mono">PA + Vol</span>
+                        )}
                       </div>
                     </div>
                   );
@@ -860,6 +881,9 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                         {strat.id === 'EMA_GAP_PULLBACK' && (
                           <span className="text-gray-400 font-mono">7 Gates</span>
                         )}
+                        {strat.id === 'EMA5_PA_VOLUME_V1' && (
+                          <span className="text-gray-400 font-mono">PA + Vol</span>
+                        )}
                       </div>
                     </div>
                   );
@@ -1068,6 +1092,197 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                 <InputRow label="Gap Candle Volume Multiplier" desc="Current volume vs 20-period SMA required for gap confirmation" value={settings.egpVolumeMultiplier ?? 1.5} onChange={(v: any) => handleInputChange('egpVolumeMultiplier', v)} step={0.1} min={1.1} max={4.0} />
                 <InputRow label="Max Overextension (x ATR from 21 EMA)" desc="Maximum allowable distance from 21 EMA in ATR multiples" value={settings.egpMaxDistToEma21Atr ?? 1.0} onChange={(v: any) => handleInputChange('egpMaxDistToEma21Atr', v)} step={0.1} min={0.5} max={3.0} />
                 <InputRow label="Min Gap Body Ratio" desc="Minimum percentage of gap candle body beyond 5 EMA" value={settings.egpMinGapBodyPct ?? 0.60} onChange={(v: any) => handleInputChange('egpMinGapBodyPct', v)} step={0.05} min={0.4} max={0.95} />
+{/* Institutional filters */}
+<InputRow label="Execution Model" type="select" value={settings.egpExecutionModel ?? 'MODEL_A_NEXT_OPEN'} onChange={(v: any) => handleInputChange('egpExecutionModel', v)} options={['MODEL_A_NEXT_OPEN','MODEL_B_RETEST_LIMIT']} />
+<InputRow label="Max Signal Range (ATR)" desc="Maximum allowed candle range in ATR multiples" value={settings.egpMaxSignalRangeAtr ?? 2.0} onChange={(v: any) => handleInputChange('egpMaxSignalRangeAtr', v)} step={0.1} min={0.5} max={5.0} />
+<InputRow label="CLV Threshold" desc="Minimum close location value (CLV)" value={settings.egpMinCloseLocation ?? 0.7} onChange={(v: any) => handleInputChange('egpMinCloseLocation', v)} step={0.05} min={0.4} max={0.95} />
+<InputRow label="Min Stop‑Distance (ATR)" desc="Minimum stop distance in ATR multiples" value={settings.egpMinStopDistanceAtr ?? 0.2} onChange={(v: any) => handleInputChange('egpMinStopDistanceAtr', v)} step={0.05} min={0.1} max={1.0} />
+<InputRow label="Max Stop‑Distance (ATR)" desc="Maximum stop distance in ATR multiples" value={settings.egpMaxStopDistanceAtr ?? 1.0} onChange={(v: any) => handleInputChange('egpMaxStopDistanceAtr', v)} step={0.1} min={0.5} max={2.0} />
+<InputRow label="Require Real‑3R‑Room" type="checkbox" checked={settings.egpRequireReal3RRoom ?? false} onChange={(e: any) => handleInputChange('egpRequireReal3RRoom', e.target.checked)} />
+<InputRow label="Strict Gap Only" type="checkbox" checked={settings.egpStrictGapOnly ?? false} onChange={(e: any) => handleInputChange('egpStrictGapOnly', e.target.checked)} />
+              </div>
+            </div>
+
+            {/* EMA 5 Price Action Gap + Volume Parameters */}
+            <div className="bg-[#161B22] rounded-xl p-6 border border-emerald-500/30 space-y-4 shadow-xl shadow-emerald-950/10">
+              <div className="flex items-center justify-between border-b border-[#30363D] pb-3">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-emerald-400" />
+                    <span>EMA 5 Price Action Gap + Volume Parameters</span>
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Standalone 5m pure price action + volume expansion strategy filtered by 15m market structure swings without lagging indicators.</p>
+                </div>
+                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  PURE PA &amp; VOL
+                </span>
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-gray-800/50 gap-4">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Strategy Version</span>
+                    <span className="text-xs text-gray-500 mt-1">A: PA+EMA5 | B: +Vol | C: +15m Structure (Default) | D: +5m Breakout</span>
+                  </div>
+                  <div className="flex bg-gray-900 rounded p-1 border border-gray-700">
+                    {(['A', 'B', 'C', 'D'] as const).map((ver) => (
+                      <button
+                        key={ver}
+                        type="button"
+                        onClick={() => handleInputChange('ema5PaVersion', ver)}
+                        className={`px-3 py-1 rounded text-xs font-bold transition-all ${
+                          (settings.ema5PaVersion || 'C') === ver
+                            ? 'bg-emerald-600 text-white shadow'
+                            : 'text-gray-400 hover:text-gray-200'
+                        }`}
+                      >
+                        v{ver}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-gray-800/50 gap-4">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Execution Entry Mode</span>
+                    <span className="text-xs text-gray-500 mt-1">MOMENTUM (Market on confirmation) vs LIMIT (Retest of gap)</span>
+                  </div>
+                  <div className="flex bg-gray-900 rounded p-1 border border-gray-700">
+                    {(['MOMENTUM', 'LIMIT'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => handleInputChange('ema5PaEntryMode', mode)}
+                        className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${
+                          (settings.ema5PaEntryMode || 'MOMENTUM') === mode
+                            ? 'bg-emerald-600 text-white shadow'
+                            : 'text-gray-400 hover:text-gray-200'
+                        }`}
+                      >
+                        {mode}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <InputRow label="Min Volume Multiplier" desc="Setup candle volume vs 20 SMA ratio (Rule 14: default 1.10x)" value={settings.ema5PaMinVolumeRatio ?? 1.10} onChange={(v: any) => handleInputChange('ema5PaMinVolumeRatio', v)} step={0.05} min={0.5} max={3.0} />
+                <InputRow label="Min Gap / Range Ratio" desc="Normalized gap vs recent 5-candle average range (Rule 16: default 0.20)" value={settings.ema5PaMinGapRangeRatio ?? 0.20} onChange={(v: any) => handleInputChange('ema5PaMinGapRangeRatio', v)} step={0.05} min={0.05} max={0.80} />
+                <InputRow label="Max Gap / Range Ratio" desc="Anti-overextension gap ceiling vs average range (Rule 17: default 1.00)" value={settings.ema5PaMaxGapRangeRatio ?? 1.00} onChange={(v: any) => handleInputChange('ema5PaMaxGapRangeRatio', v)} step={0.05} min={0.50} max={2.50} />
+                <InputRow label="Max Chop EMA Crosses" desc="Max EMA5 crosses in last 10 candles before flagging chop (Rule 23: default 3)" value={settings.ema5PaMaxEmaCrosses ?? 3} onChange={(v: any) => handleInputChange('ema5PaMaxEmaCrosses', v)} min={1} max={8} />
+                <InputRow label="Min Body / Range Ratio" desc="Minimum candle body dominance (Rule 9: default 0.50 = 50%)" value={settings.ema5PaMinBodyRatio ?? 0.50} onChange={(v: any) => handleInputChange('ema5PaMinBodyRatio', v)} step={0.05} min={0.30} max={0.90} />
+                <InputRow label="Min Close Location (CLV)" desc="Close position in top/bottom quartile (Rule 10: default 0.65)" value={settings.ema5PaMinClosePosition ?? 0.65} onChange={(v: any) => handleInputChange('ema5PaMinClosePosition', v)} step={0.05} min={0.50} max={0.95} />
+                <InputRow label="Max Setup Range Ratio" desc="Max setup candle range vs recent average (Rule 18: default 2.0x)" value={settings.ema5PaMaxSetupRangeRatio ?? 2.0} onChange={(v: any) => handleInputChange('ema5PaMaxSetupRangeRatio', v)} step={0.1} min={1.0} max={5.0} />
+                <InputRow label="Target Risk:Reward Ratio" desc="Primary take-profit multiple vs initial stop distance (Rule 29: default 1.5R)" value={settings.ema5PaRiskReward ?? 1.5} onChange={(v: any) => handleInputChange('ema5PaRiskReward', v)} step={0.1} min={1.0} max={5.0} />
+
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Move Stop to Breakeven at 1.0R</span>
+                    <span className="text-xs text-gray-500 mt-1">Lock entry price after price advances 1.0x initial risk (Rule 31)</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.ema5PaBreakevenEnabled !== false}
+                    onChange={(e) => handleInputChange('ema5PaBreakevenEnabled', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-emerald-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Require 15m Structure Break</span>
+                    <span className="text-xs text-gray-500 mt-1">Only trade on fresh breaks of 15m swing highs/lows</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(settings.ema5PaRequireStructureBreak)}
+                    onChange={(e) => handleInputChange('ema5PaRequireStructureBreak', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-emerald-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Trend Pullback Retest (TPR) Parameters */}
+            <div className="bg-[#161B22] rounded-xl p-6 border border-[#30363D] space-y-4">
+              <div>
+                <h3 className="text-base font-bold text-white">Trend Pullback Retest (TPR) Parameters</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Full state-machine strategy: trend → pullback → retest → confirmation → entry. All 5 stages required.</p>
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Enable TPR Strategy</span>
+                    <span className="text-xs text-gray-500 mt-1">Allow TREND_PULLBACK_RETEST to generate signals</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.tprEnabled !== false}
+                    onChange={(e) => handleInputChange('tprEnabled', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-sky-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+                <InputRow label="Fast EMA Period" desc="EMA used for pullback zone and retest level (default 20)" value={settings.tprEmaFast ?? 20} onChange={(v: any) => handleInputChange('tprEmaFast', v)} min={5} max={100} />
+                <InputRow label="Slow EMA Period" desc="EMA defining the trend boundary (default 50)" value={settings.tprEmaSlow ?? 50} onChange={(v: any) => handleInputChange('tprEmaSlow', v)} min={20} max={200} />
+                <InputRow label="HTF EMA Period" desc="Optional higher-timeframe trend EMA (default 200, set 0 to disable)" value={settings.tprEmaHtf ?? 200} onChange={(v: any) => handleInputChange('tprEmaHtf', v)} min={50} max={500} />
+                <InputRow label="Min ADX" desc="Minimum ADX value to classify market as trending (default 20)" value={settings.tprMinAdx ?? 20} onChange={(v: any) => handleInputChange('tprMinAdx', v)} min={10} max={50} />
+                <InputRow label="Min Trend Score (1-6)" desc="Minimum trend quality score required to enter TREND_DETECTED phase (default 5)" value={settings.tprMinTrendScore ?? 5} onChange={(v: any) => handleInputChange('tprMinTrendScore', v)} min={1} max={6} />
+                <InputRow label="Max Pullback Depth (ATR)" desc="Maximum allowed pullback depth in ATR units before invalidating (default 1.5)" value={settings.tprMaxPullbackAtr ?? 1.5} onChange={(v: any) => handleInputChange('tprMaxPullbackAtr', v)} step={0.1} min={0.3} max={4.0} />
+                <InputRow label="Max Pullback Candles" desc="Setup timeout — max candles to wait in pullback phase (default 10)" value={settings.tprMaxPullbackCandles ?? 10} onChange={(v: any) => handleInputChange('tprMaxPullbackCandles', v)} min={3} max={30} />
+                <InputRow label="Retest Tolerance (ATR)" desc="How close to EMA counts as a valid retest in ATR units (default 0.20)" value={settings.tprRetestToleranceAtr ?? 0.20} onChange={(v: any) => handleInputChange('tprRetestToleranceAtr', v)} step={0.05} min={0.05} max={1.0} />
+                <InputRow label="Min Confirmation Body Ratio" desc="Min body/range ratio for the confirmation candle (default 0.40 = 40%)" value={settings.tprMinConfBodyRatio ?? 0.40} onChange={(v: any) => handleInputChange('tprMinConfBodyRatio', v)} step={0.05} min={0.20} max={0.80} />
+                <InputRow label="Max Chase Distance (ATR)" desc="Chase filter: reject if price is too far from EMA after confirmation (default 0.75)" value={settings.tprMaxChaseAtr ?? 0.75} onChange={(v: any) => handleInputChange('tprMaxChaseAtr', v)} step={0.05} min={0.20} max={2.0} />
+                <InputRow label="Max Confirmation Candle Range (ATR)" desc="Extreme candle filter: reject if confirmation candle range exceeds this ATR multiple (default 2.0)" value={settings.tprMaxConfCandleAtr ?? 2.0} onChange={(v: any) => handleInputChange('tprMaxConfCandleAtr', v)} step={0.1} min={0.5} max={5.0} />
+                <InputRow label="Min EMA Separation (ATR ratio)" desc="EMA separation filter: |EMA slow - EMA fast| / ATR must be ≥ this value (default 0.20)" value={settings.tprMinEmaGapAtrRatio ?? 0.20} onChange={(v: any) => handleInputChange('tprMinEmaGapAtrRatio', v)} step={0.05} min={0.05} max={1.0} />
+                <InputRow label="SL ATR Multiple" desc="Stop-loss placed at EMA fast ± SL_ATR × ATR (default 1.5)" value={settings.tprSlAtrMultiple ?? 1.5} onChange={(v: any) => handleInputChange('tprSlAtrMultiple', v)} step={0.1} min={0.5} max={4.0} />
+                <InputRow label="R:R Ratio" desc="TP2 risk-to-reward ratio (default 2.0)" value={settings.tprRrRatio ?? 2.0} onChange={(v: any) => handleInputChange('tprRrRatio', v)} step={0.1} min={1.0} max={5.0} />
+                <InputRow label="Cooldown Candles" desc="Candles to wait after exit or invalidation before looking for new setup (default 5)" value={settings.tprCooldownCandles ?? 5} onChange={(v: any) => handleInputChange('tprCooldownCandles', v)} min={1} max={20} />
+                <InputRow label="Setup Timeout Candles" desc="Maximum candles to remain in any pending phase before invalidating (default 10)" value={settings.tprSetupTimeout ?? 10} onChange={(v: any) => handleInputChange('tprSetupTimeout', v)} min={3} max={30} />
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Enable Break-even</span>
+                    <span className="text-xs text-gray-500 mt-1">Move SL to breakeven when trade reaches +1R</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.tprBreakevenEnabled !== false}
+                    onChange={(e) => handleInputChange('tprBreakevenEnabled', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-sky-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Enable Trailing Stop</span>
+                    <span className="text-xs text-gray-500 mt-1">Activate ATR-based trailing stop after +1.5R</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.tprTrailingEnabled !== false}
+                    onChange={(e) => handleInputChange('tprTrailingEnabled', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-sky-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Allow Long Trades</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.tprAllowLongs !== false}
+                    onChange={(e) => handleInputChange('tprAllowLongs', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-sky-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+                <div className="flex items-center justify-between py-3">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Allow Short Trades</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.tprAllowShorts !== false}
+                    onChange={(e) => handleInputChange('tprAllowShorts', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-sky-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
               </div>
             </div>
 

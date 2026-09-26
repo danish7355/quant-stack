@@ -380,10 +380,14 @@ export default function FullTradeLogTable({ logs }: FullTradeLogTableProps) {
             <option value="ALL">All Strategies</option>
             <option value="BINANCE_COMPOSITE">10-Gate Scanner</option>
             <option value="EMA_GAP_PULLBACK">5 EMA Gap Pullback</option>
+            <option value="EMA5_PA_VOLUME_V1">EMA 5 PA + Volume</option>
             <option value="DELTA_CLIMAX">Climax Reversal (Legacy)</option>
             <option value="VOLATILITY_COMPRESSION">VCB Breakout</option>
             <option value="TREND_PULLBACK">Trend Pullback</option>
+            <option value="TREND_PULLBACK_RETEST">Pullback Retest</option>
             <option value="SMC_LIQUIDITY_SWEEP">SMC Liquidity Sweep</option>
+            <option value="EARLY_COIL_BREAKOUT">Early Coil Breakout</option>
+            <option value="MACRO_RANGE_BREAKOUT">Macro Range Breakout</option>
           </select>
         </div>
 
@@ -487,7 +491,11 @@ export default function FullTradeLogTable({ logs }: FullTradeLogTableProps) {
                       {/* Strategy & Frequency Badges */}
                       <td className="py-3 pr-4">
                         <div className="flex flex-col gap-1">
-                          {strat === 'EMA_GAP_PULLBACK' ? (
+                          {strat === 'EMA5_PA_VOLUME_V1' ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-emerald-950/50 text-emerald-300 border border-emerald-700/50 text-[9.5px] font-bold w-fit">
+                              <Zap className="w-2.5 h-2.5 text-emerald-400" /> EMA 5 PA Vol
+                            </span>
+                          ) : strat === 'EMA_GAP_PULLBACK' ? (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-teal-950/50 text-teal-300 border border-teal-700/50 text-[9.5px] font-bold w-fit">
                               <Zap className="w-2.5 h-2.5 text-teal-400" /> 5 EMA Gap
                             </span>
@@ -503,9 +511,21 @@ export default function FullTradeLogTable({ logs }: FullTradeLogTableProps) {
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-blue-950/50 text-blue-300 border border-blue-700/50 text-[9.5px] font-bold w-fit">
                               <Target className="w-2.5 h-2.5 text-blue-400" /> Trend Pullback
                             </span>
+                          ) : strat === 'TREND_PULLBACK_RETEST' ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-sky-950/50 text-sky-300 border border-sky-700/50 text-[9.5px] font-bold w-fit">
+                              <Target className="w-2.5 h-2.5 text-sky-400" /> Pullback Retest
+                            </span>
                           ) : strat === 'SMC_LIQUIDITY_SWEEP' || strat === 'SMC' ? (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-purple-950/60 text-purple-300 border border-purple-700/50 text-[9.5px] font-bold w-fit">
                               <Sparkles className="w-2.5 h-2.5 text-purple-400" /> SMC Liquidity
+                            </span>
+                          ) : strat === 'EARLY_COIL_BREAKOUT' ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-orange-950/50 text-orange-300 border border-orange-700/50 text-[9.5px] font-bold w-fit">
+                              <Flame className="w-2.5 h-2.5 text-orange-400" /> Early Coil
+                            </span>
+                          ) : strat === 'MACRO_RANGE_BREAKOUT' ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-indigo-950/50 text-indigo-300 border border-indigo-700/50 text-[9.5px] font-bold w-fit">
+                              <Target className="w-2.5 h-2.5 text-indigo-400" /> Macro Range
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-emerald-950/50 text-emerald-300 border border-emerald-700/50 text-[9.5px] font-bold w-fit">

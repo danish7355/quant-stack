@@ -287,6 +287,21 @@ export function evaluateBreakoutQuality(
     };
   }
 
+  // Same-candle double breakout guard: reject whipsaw / outside bar piercing both coil edges
+  if (candle.high > coil.coilHigh && candle.low < coil.coilLow) {
+    return {
+      isBreakout: false,
+      direction: null,
+      breakoutCandle: candle,
+      breakoutIndex: candleIndex,
+      bodyRatio: 0,
+      rangeRatio: 0,
+      volumeRatio: 0,
+      isValidQuality: false,
+      rejectionReason: 'Same-candle double breakout (whipsaw / outside bar rejected)'
+    };
+  }
+
   const direction: 'LONG' | 'SHORT' = isAbove ? 'LONG' : 'SHORT';
   const body = Math.abs(candle.close - candle.open);
   const range = candle.high - candle.low;
@@ -299,15 +314,20 @@ export function evaluateBreakoutQuality(
   // Breakout body >= 1.2 * median coil candle body
   // Breakout range >= 1.25 * median coil candle range
   // Volume >= 1.25 * mean coil volume
+  // Minimum breakout distance >= 0.20 * ATR
+  const breakoutDist = Math.abs(candle.close - (isAbove ? coil.coilHigh : coil.coilLow));
+  const minBreakoutDist = 0.20 * (coil.atrAtCoil || 1);
+  const distValid = breakoutDist >= minBreakoutDist;
   const bodyValid = bodyRatio >= 1.20;
   const rangeValid = rangeRatio >= 1.25;
   const volumeValid = volumeRatio >= 1.25;
 
-  const isValidQuality = bodyValid && rangeValid && volumeValid;
+  const isValidQuality = bodyValid && rangeValid && volumeValid && distValid;
 
   let rejectionReason: string | undefined;
   if (!isValidQuality) {
     const reasons: string[] = [];
+    if (!distValid) reasons.push(`breakout distance insufficient (${breakoutDist.toFixed(4)} < ${minBreakoutDist.toFixed(4)})`);
     if (!bodyValid) reasons.push(`body expansion insufficient (${bodyRatio.toFixed(2)}x < 1.2x)`);
     if (!rangeValid) reasons.push(`range expansion insufficient (${rangeRatio.toFixed(2)}x < 1.25x)`);
     if (!volumeValid) reasons.push(`volume expansion insufficient (${volumeRatio.toFixed(2)}x < 1.25x)`);
