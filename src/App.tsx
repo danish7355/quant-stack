@@ -1624,8 +1624,17 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
 
   return (
     <div className="flex h-screen bg-[#0E1117] text-gray-200 font-mono overflow-hidden">
+      {/* Mobile Backdrop for Sidebar */}
+      {!sidebarCollapsed && (
+        <div 
+          className="md:hidden fixed inset-0 bg-black/70 backdrop-blur-xs z-40 transition-opacity cursor-pointer"
+          onClick={() => setSidebarCollapsed(true)}
+          aria-label="Close sidebar overlay"
+        />
+      )}
+
       {/* Sidebar */}
-      <div className={`${sidebarCollapsed ? 'w-0 md:w-16 -ml-64 md:ml-0' : 'w-64'} bg-[#161B22] border-r border-[#30363D] flex flex-col transition-all duration-300 z-50 shrink-0 absolute md:relative h-full overflow-hidden`}>
+      <div className={`${sidebarCollapsed ? 'w-0 md:w-16 -ml-64 md:ml-0' : 'w-64'} bg-[#161B22] border-r border-[#30363D] flex flex-col transition-all duration-300 z-50 shrink-0 fixed md:relative h-full overflow-hidden shadow-2xl md:shadow-none`}>
         <div className="p-4 border-b border-[#30363D] flex items-center justify-between">
           {!sidebarCollapsed && (
             <div>
@@ -1637,7 +1646,8 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
           )}
           <button 
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            className="text-gray-400 hover:text-gray-200 p-1"
+            className="text-gray-400 hover:text-gray-200 p-1 cursor-pointer"
+            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
             {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           </button>
@@ -1650,8 +1660,13 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
               return (
                 <button
                   key={t.id}
-                  onClick={() => setActiveTab(t.id)}
-                  className={`w-full flex items-center gap-3 px-3 py-2 text-xs rounded-md transition-colors ${sidebarCollapsed ? 'justify-center' : ''} ${
+                  onClick={() => {
+                    setActiveTab(t.id);
+                    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+                      setSidebarCollapsed(true);
+                    }
+                  }}
+                  className={`w-full flex items-center gap-3 px-3 py-2 text-xs rounded-md transition-colors cursor-pointer ${sidebarCollapsed ? 'justify-center' : ''} ${
                     activeTab === t.id 
                       ? 'bg-[#21262D] text-gray-200 font-bold border border-[#30363D]' 
                       : 'text-gray-400 hover:bg-[#21262D] hover:text-gray-200'
@@ -1695,6 +1710,7 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
           openRiskPct={openRiskPct}
           engineRunning={engineRunning}
           onToggleEngine={toggleEngine}
+          onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
         />
 
         {/* Deprecated header logic starts here - we can replace this completely or just hide it */}
@@ -1750,7 +1766,7 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
         />
 
         {/* Scrollable Area */}
-        <main className="flex-1 overflow-auto p-6">
+        <main className="flex-1 overflow-auto p-3 sm:p-4 md:p-6">
           {activeTab === 'scanner' && (
             <div className="space-y-4 max-w-7xl mx-auto">
               <div className="flex items-center justify-between">

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, ShieldAlert, Wifi, ZapOff, Play, Clock, AlertTriangle } from 'lucide-react';
+import { Activity, ShieldAlert, Wifi, ZapOff, Play, Clock, AlertTriangle, Menu } from 'lucide-react';
 import { TradingMode, SystemHealth } from '../types.js';
 
 interface Props {
@@ -9,18 +9,30 @@ interface Props {
   openRiskPct: number;
   engineRunning: boolean;
   onToggleEngine: () => void;
+  onToggleSidebar?: () => void;
 }
 
-export function TopNavigationBar({ mode, health, dailyLossPct, openRiskPct, engineRunning, onToggleEngine }: Props) {
+export function TopNavigationBar({ mode, health, dailyLossPct, openRiskPct, engineRunning, onToggleEngine, onToggleSidebar }: Props) {
   const isStale = health.marketData === 'STALE';
   const isBlocked = health.tradingBlocked;
 
   return (
-    <div className="h-14 bg-[#161B22] border-b border-[#30363D] flex items-center justify-between px-4 shrink-0 z-40 relative">
+    <div className="h-14 bg-[#161B22] border-b border-[#30363D] flex items-center justify-between px-3 sm:px-4 shrink-0 z-40 relative">
       
-      {/* Left: Mode & Health */}
-      <div className="flex items-center gap-4">
-        <div className={`px-2.5 py-1 text-[10px] font-bold rounded-sm border ${
+      {/* Left: Hamburger (mobile) + Mode & Health */}
+      <div className="flex items-center gap-2.5 sm:gap-4">
+        {onToggleSidebar && (
+          <button
+            onClick={onToggleSidebar}
+            className="md:hidden text-gray-400 hover:text-white p-1.5 rounded hover:bg-[#21262D] transition cursor-pointer"
+            title="Toggle Menu"
+            aria-label="Toggle Navigation Menu"
+          >
+            <Menu size={18} />
+          </button>
+        )}
+
+        <div className={`px-2 sm:px-2.5 py-1 text-[9px] sm:text-[10px] font-bold rounded-sm border ${
           mode === 'LIVE' ? 'border-red-500/50 text-red-400 bg-red-500/10' :
           mode === 'TESTNET' ? 'border-amber-500/50 text-amber-400 bg-amber-500/10' :
           'border-blue-500/50 text-blue-400 bg-blue-500/10'
@@ -64,7 +76,7 @@ export function TopNavigationBar({ mode, health, dailyLossPct, openRiskPct, engi
           <div className="text-xs font-bold text-gray-300">{openRiskPct.toFixed(2)}%</div>
         </div>
 
-        <div className="w-px h-6 bg-[#30363D] mx-1"></div>
+        <div className="w-px h-6 bg-[#30363D] mx-1 hidden md:block"></div>
 
         <button
           onClick={onToggleEngine}

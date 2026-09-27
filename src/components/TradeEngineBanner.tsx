@@ -496,34 +496,36 @@ export function TradeDiagnosticsModal({
 
   return (
     <div 
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-2 sm:p-4 overflow-y-auto"
       onClick={onClose}
     >
       <div 
-        className="bg-[#0D1117] border border-[#30363D] rounded-xl max-w-2xl w-full shadow-2xl overflow-hidden my-8"
+        className="bg-[#0D1117] border border-[#30363D] rounded-xl max-w-2xl w-full shadow-2xl overflow-hidden my-auto sm:my-8 max-h-[94vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#30363D] bg-[#161B22]">
-          <div className="flex items-center gap-2.5">
-            <div className={`p-2 rounded-lg border ${isAllClear ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
-              <ShieldCheck size={20} />
+        <div className="flex items-start sm:items-center justify-between px-3.5 sm:px-5 py-3 sm:py-4 border-b border-[#30363D] bg-[#161B22] gap-2 shrink-0">
+          <div className="flex items-start sm:items-center gap-2 sm:gap-2.5 min-w-0">
+            <div className={`p-1.5 sm:p-2 rounded-lg border shrink-0 mt-0.5 sm:mt-0 ${isAllClear ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
+              <ShieldCheck size={18} className="sm:w-5 sm:h-5" />
             </div>
-            <div>
-              <h2 className="text-base font-bold text-gray-100 flex items-center gap-2">
-                <span>System Readiness & Trade Gate Diagnostics</span>
-                <span className={`text-[10px] font-black px-2 py-0.5 rounded border ${isAllClear ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-rose-500/20 text-rose-300 border-rose-500/40'}`}>
-                  {isAllClear ? `${passedCount}/10 GATES CLEAR` : `${blockedCount} BLOCKER${blockedCount > 1 ? 'S' : ''} DETECTED`}
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                <h2 className="text-xs sm:text-base font-bold text-gray-100 truncate">
+                  Trade Gate Diagnostics
+                </h2>
+                <span className={`text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-0.2 sm:py-0.5 rounded border shrink-0 ${isAllClear ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-rose-500/20 text-rose-300 border-rose-500/40'}`}>
+                  {isAllClear ? `${passedCount}/10 CLEAR` : `${blockedCount} BLOCKER${blockedCount > 1 ? 'S' : ''}`}
                 </span>
-              </h2>
-              <p className="text-xs text-gray-400 mt-0.5">
+              </div>
+              <p className="text-[10px] sm:text-xs text-gray-400 mt-0.5 line-clamp-1 sm:line-clamp-none">
                 Real-time audit across all 10 autonomous execution gates and safety limits
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-[#21262D] transition cursor-pointer"
+            className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-[#21262D] transition cursor-pointer shrink-0"
             title="Close diagnostics modal"
           >
             <X size={18} />
@@ -531,42 +533,42 @@ export function TradeDiagnosticsModal({
         </div>
 
         {/* Content Body */}
-        <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+        <div className="p-3 sm:p-5 space-y-3.5 sm:space-y-4 max-h-[68vh] sm:max-h-[72vh] overflow-y-auto flex-1">
           {/* 1. Main Status Verdict Card */}
           {isAllClear ? (
-            <div className="bg-gradient-to-r from-emerald-950/50 via-[#0D1117] to-emerald-950/30 border border-emerald-500/40 rounded-lg p-4">
-              <div className="flex items-start gap-3">
-                <CheckCircle2 size={20} className="text-emerald-400 shrink-0 mt-0.5" />
+            <div className="bg-gradient-to-r from-emerald-950/50 via-[#0D1117] to-emerald-950/30 border border-emerald-500/40 rounded-lg p-3 sm:p-4">
+              <div className="flex items-start gap-2.5 sm:gap-3">
+                <CheckCircle2 size={18} className="text-emerald-400 shrink-0 mt-0.5 sm:w-5 sm:h-5" />
                 <div className="space-y-1">
-                  <h3 className="text-sm font-bold text-emerald-300">
+                  <h3 className="text-xs sm:text-sm font-bold text-emerald-300">
                     EVERYTHING IS WORKING PROPERLY (0 BLOCKERS)
                   </h3>
-                  <p className="text-xs text-gray-300 leading-relaxed">
+                  <p className="text-[11px] sm:text-xs text-gray-300 leading-relaxed">
                     The bot is active and continuously scanning <strong>{coinCount} cryptocurrency futures pairs</strong> every {scanInterval}s. All 10 risk filters, data streams, and execution gates are 100% operational.
                   </p>
-                  <p className="text-xs text-emerald-300/80 leading-relaxed pt-1">
+                  <p className="text-[11px] sm:text-xs text-emerald-300/80 leading-relaxed pt-1">
                     <strong>Why hasn't a trade opened yet?</strong> The engine is simply waiting for live candles to trigger the exact price action entry rules of your enabled strategies ({evaluation.activeStrategies.map(s => s.shortName).join(', ')}). No risk gate or technical error is stopping trades.
                   </p>
                 </div>
               </div>
             </div>
           ) : (
-            <div className="bg-gradient-to-r from-rose-950/60 via-[#0D1117] to-rose-950/40 border border-rose-500/50 rounded-lg p-4">
-              <div className="flex items-start gap-3">
-                <AlertTriangle size={20} className="text-rose-400 shrink-0 mt-0.5" />
+            <div className="bg-gradient-to-r from-rose-950/60 via-[#0D1117] to-rose-950/40 border border-rose-500/50 rounded-lg p-3 sm:p-4">
+              <div className="flex items-start gap-2.5 sm:gap-3">
+                <AlertTriangle size={18} className="text-rose-400 shrink-0 mt-0.5 sm:w-5 sm:h-5" />
                 <div className="space-y-1">
-                  <h3 className="text-sm font-bold text-rose-300">
+                  <h3 className="text-xs sm:text-sm font-bold text-rose-300">
                     TRADES ARE CURRENTLY STOPPED BY SAFETY GATE
                   </h3>
-                  <p className="text-xs text-rose-200 font-semibold leading-relaxed">
+                  <p className="text-[11px] sm:text-xs text-rose-200 font-semibold leading-relaxed">
                     Primary Stopping Reason: {evaluation.primaryReason}
                   </p>
                   {evaluation.allReasons.length > 1 && (
                     <div className="mt-2 pt-2 border-t border-rose-500/30">
-                      <span className="text-[11px] font-bold text-rose-300 block mb-1">
+                      <span className="text-[10px] sm:text-[11px] font-bold text-rose-300 block mb-1">
                         All Active Stopping Conditions ({evaluation.allReasons.length}):
                       </span>
-                      <ul className="list-disc list-inside space-y-0.5 text-xs text-gray-300">
+                      <ul className="list-disc list-inside space-y-0.5 text-[11px] sm:text-xs text-gray-300">
                         {evaluation.allReasons.map((r, i) => (
                           <li key={i} className="leading-snug">{r}</li>
                         ))}
@@ -580,7 +582,7 @@ export function TradeDiagnosticsModal({
 
           {/* 2. The 10 Gates Checklist */}
           <div>
-            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+            <h4 className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
               Trade Execution Gates Checklist (10 Checks)
             </h4>
             <div className="border border-[#30363D] rounded-lg divide-y divide-[#30363D]/60 bg-black/20 overflow-hidden text-xs">
@@ -588,45 +590,45 @@ export function TradeDiagnosticsModal({
                 const isPass = gate.status === 'PASS';
                 const isWarn = gate.status === 'WARN';
                 return (
-                  <div key={gate.id} className="p-3 flex items-start justify-between gap-3 hover:bg-[#161B22]/50 transition">
-                    <div className="flex items-start gap-2.5 min-w-0">
-                      <div className="mt-0.5 shrink-0">
-                        {isPass ? (
-                          <CheckCircle2 size={16} className="text-emerald-400" />
-                        ) : isWarn ? (
-                          <AlertTriangle size={16} className="text-amber-400" />
-                        ) : (
-                          <XCircle size={16} className="text-rose-400" />
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-bold text-gray-200">{gate.label}</span>
-                          <span className={`text-[10px] px-1.5 py-0.2 rounded font-bold border ${
-                            isPass 
-                              ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' 
-                              : isWarn 
-                              ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                              : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
-                          }`}>
-                            {gate.value}
-                          </span>
+                  <div key={gate.id} className="p-2.5 sm:p-3 hover:bg-[#161B22]/50 transition">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="shrink-0">
+                          {isPass ? (
+                            <CheckCircle2 size={15} className="text-emerald-400" />
+                          ) : isWarn ? (
+                            <AlertTriangle size={15} className="text-amber-400" />
+                          ) : (
+                            <XCircle size={15} className="text-rose-400" />
+                          )}
                         </div>
-                        <p className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
-                          {gate.detail}
-                        </p>
+                        <span className="font-bold text-gray-200 text-xs truncate">{gate.label}</span>
                       </div>
+                      <span className={`text-[9px] sm:text-[10px] font-black uppercase px-1.5 sm:px-2 py-0.5 rounded border shrink-0 ${
+                        isPass 
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' 
+                          : isWarn
+                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                          : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                      }`}>
+                        {gate.status}
+                      </span>
                     </div>
 
-                    <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded border shrink-0 ${
-                      isPass 
-                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' 
-                        : isWarn
-                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                        : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-                    }`}>
-                      {gate.status}
-                    </span>
+                    <div className="mt-1 pl-6">
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded font-bold border inline-block mb-1 ${
+                        isPass 
+                          ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' 
+                          : isWarn 
+                          ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                          : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                      }`}>
+                        {gate.value}
+                      </span>
+                      <p className="text-[11px] text-gray-400 leading-relaxed break-words">
+                        {gate.detail}
+                      </p>
+                    </div>
                   </div>
                 );
               })}
@@ -634,16 +636,16 @@ export function TradeDiagnosticsModal({
           </div>
 
           {/* 3. Educational / Strategy Assurance Note */}
-          <div className="bg-[#161B22] border border-[#30363D] rounded-lg p-3.5 flex items-start gap-3">
-            <HelpCircle size={18} className="text-indigo-400 shrink-0 mt-0.5" />
+          <div className="bg-[#161B22] border border-[#30363D] rounded-lg p-3 sm:p-3.5 flex items-start gap-2.5 sm:gap-3">
+            <HelpCircle size={16} className="text-indigo-400 shrink-0 mt-0.5 sm:w-[18px] sm:h-[18px]" />
             <div className="text-xs text-gray-300 space-y-1">
-              <strong className="text-indigo-300 font-semibold block">
+              <strong className="text-indigo-300 font-semibold block text-[11px] sm:text-xs">
                 How Institutional Setups Work (Why trades aren't taken on random candles)
               </strong>
-              <p className="text-gray-400 leading-relaxed text-[11px]">
+              <p className="text-gray-400 leading-relaxed text-[10px] sm:text-[11px]">
                 Quantitative strategies (like <strong>EMA 5 Exact Price Action Entry</strong>, <strong>Volatility Compression Breakout</strong>, or <strong>SMC Liquidity Sweep</strong>) are specifically engineered to enter ONLY when high-conviction mathematical conditions align (e.g. rejection wick touch on EMA 5, volume expansion surge, and structural swing confirmation).
               </p>
-              <p className="text-gray-400 leading-relaxed text-[11px]">
+              <p className="text-gray-400 leading-relaxed text-[10px] sm:text-[11px]">
                 If the market is consolidating sideways, choppy, or failing volume filters, the bot patiently sits on cash. This disciplined selectivity is the primary hallmark of a profitable automated trading system.
               </p>
             </div>
@@ -651,12 +653,12 @@ export function TradeDiagnosticsModal({
         </div>
 
         {/* Footer Actions */}
-        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 border-t border-[#30363D] bg-[#161B22]">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-2.5 px-3.5 sm:px-5 py-3 border-t border-[#30363D] bg-[#161B22] shrink-0">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
             {!evaluation.isActive && evaluation.actionType === 'START_ENGINE' && (
               <button
                 onClick={() => { onToggleEngine(); onClose(); }}
-                className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black rounded text-xs transition flex items-center gap-1.5 cursor-pointer"
+                className="w-full sm:w-auto px-3.5 py-2 sm:py-1.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black rounded text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <Play size={13} className="fill-black" />
                 <span>START ENGINE NOW</span>
@@ -666,7 +668,7 @@ export function TradeDiagnosticsModal({
             {!evaluation.isActive && evaluation.actionType === 'DISABLE_KILL_SWITCH' && onDisableKillSwitch && (
               <button
                 onClick={() => { onDisableKillSwitch(); onClose(); }}
-                className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded text-xs transition flex items-center gap-1.5 cursor-pointer"
+                className="w-full sm:w-auto px-3.5 py-2 sm:py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <ShieldAlert size={13} />
                 <span>DISABLE KILL SWITCH</span>
@@ -676,7 +678,7 @@ export function TradeDiagnosticsModal({
             {!evaluation.isActive && evaluation.actionType === 'RECONNECT_FEED' && onRefreshFeed && (
               <button
                 onClick={() => { onRefreshFeed(); onClose(); }}
-                className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-black font-bold rounded text-xs transition flex items-center gap-1.5 cursor-pointer"
+                className="w-full sm:w-auto px-3.5 py-2 sm:py-1.5 bg-amber-600 hover:bg-amber-500 text-black font-bold rounded text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <RefreshCw size={13} />
                 <span>RECONNECT FEED</span>
@@ -686,7 +688,7 @@ export function TradeDiagnosticsModal({
             {onOpenSettings && (
               <button
                 onClick={() => { onOpenSettings(); onClose(); }}
-                className="px-3 py-1.5 bg-[#21262D] hover:bg-[#30363D] text-gray-300 rounded border border-[#30363D] text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                className="w-full sm:w-auto px-3 py-2 sm:py-1.5 bg-[#21262D] hover:bg-[#30363D] text-gray-300 rounded border border-[#30363D] text-xs font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <SettingsIcon size={13} />
                 <span>Adjust Risk / Settings</span>
@@ -696,7 +698,7 @@ export function TradeDiagnosticsModal({
             {onOpenStrategy && (
               <button
                 onClick={() => { onOpenStrategy(); onClose(); }}
-                className="px-3 py-1.5 bg-[#21262D] hover:bg-[#30363D] text-gray-300 rounded border border-[#30363D] text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                className="w-full sm:w-auto px-3 py-2 sm:py-1.5 bg-[#21262D] hover:bg-[#30363D] text-gray-300 rounded border border-[#30363D] text-xs font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <GitBranch size={13} />
                 <span>View Strategy Rules</span>
@@ -706,7 +708,7 @@ export function TradeDiagnosticsModal({
 
           <button
             onClick={onClose}
-            className="px-4 py-1.5 bg-[#21262D] hover:bg-[#30363D] text-gray-300 font-semibold rounded border border-[#30363D] text-xs transition cursor-pointer"
+            className="w-full sm:w-auto px-4 py-2 sm:py-1.5 bg-[#21262D] hover:bg-[#30363D] text-gray-300 font-semibold rounded border border-[#30363D] text-xs transition cursor-pointer text-center"
           >
             Close
           </button>
@@ -776,7 +778,7 @@ export function TradeEngineBanner({
       <>
         <div 
           id="engine-banner-collapsed"
-          className={`border-b px-4 py-1.5 text-xs shadow-sm transition-all ${
+          className={`border-b px-3 sm:px-4 py-1.5 text-xs shadow-sm transition-all ${
             evaluation.isActive 
               ? 'bg-gradient-to-r from-emerald-950/60 via-[#0E1117] to-emerald-950/40 border-emerald-500/30' 
               : isCritical
@@ -784,74 +786,76 @@ export function TradeEngineBanner({
               : 'bg-gradient-to-r from-amber-950/60 via-[#0E1117] to-amber-950/40 border-amber-600/40'
           }`}
         >
-          <div className="flex flex-wrap items-center justify-between gap-2.5">
+          <div className="flex items-center justify-between gap-2">
             {/* Left: Indicator dot + Status + Reassurance / Blocker */}
-            <div className="flex items-center gap-2.5 min-w-0">
-              <span className="relative flex h-2.5 w-2.5 shrink-0">
-                <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${evaluation.isActive ? 'bg-emerald-500' : (isCritical ? 'bg-rose-500 animate-pulse' : 'bg-amber-500')}`}></span>
+            <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-1">
+              <span className="relative flex h-2 w-2 sm:h-2.5 sm:w-2.5 shrink-0">
+                <span className={`relative inline-flex rounded-full h-2 w-2 sm:h-2.5 sm:w-2.5 ${evaluation.isActive ? 'bg-emerald-500' : (isCritical ? 'bg-rose-500 animate-pulse' : 'bg-amber-500')}`}></span>
               </span>
-              <span className={`px-2 py-0.5 rounded text-[10px] font-black tracking-wider border shrink-0 ${
+              <span className={`px-1.5 sm:px-2 py-0.5 rounded text-[9px] sm:text-[10px] font-black tracking-wider border shrink-0 ${
                 evaluation.isActive 
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' 
                   : isCritical
                   ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
                   : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
               }`}>
-                {evaluation.isActive ? 'ENGINE ACTIVE' : (isCritical ? 'ENGINE STOPPED' : 'TRADING BLOCKED')}
+                {evaluation.isActive ? 'ACTIVE' : (isCritical ? 'STOPPED' : 'BLOCKED')}
               </span>
-              <span className={`hidden sm:inline-block px-1.5 py-0.5 rounded text-[10px] font-bold border shrink-0 ${isLive ? 'bg-red-500/10 text-red-400 border-red-500/30' : 'bg-blue-500/10 text-blue-400 border-blue-500/30'}`}>
+              <span className={`hidden md:inline-block px-1.5 py-0.5 rounded text-[10px] font-bold border shrink-0 ${isLive ? 'bg-red-500/10 text-red-400 border-red-500/30' : 'bg-blue-500/10 text-blue-400 border-blue-500/30'}`}>
                 {modeLabel}
               </span>
 
-              <div className="h-3.5 w-px bg-[#30363D] hidden md:block"></div>
+              <div className="h-3.5 w-px bg-[#30363D] hidden lg:block"></div>
 
               {/* Status / Working Fine / Blocker Text */}
               {evaluation.isActive ? (
                 <button
                   onClick={() => setShowDiagnosticsModal(true)}
-                  className="text-emerald-300/90 hover:text-emerald-200 text-[11px] font-medium flex items-center gap-1.5 truncate cursor-pointer text-left transition"
+                  className="text-emerald-300/90 hover:text-emerald-200 text-[10px] sm:text-[11px] font-medium flex items-center gap-1 truncate cursor-pointer text-left transition min-w-0"
                   title="Everything is working fine! Click to inspect 10-gate readiness checklist"
                 >
-                  <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+                  <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
                   <span className="truncate">
-                    <strong>All Systems Operational:</strong> Scanning {coinCount} pairs • 0 blockers • Ready for setups
+                    <span className="hidden sm:inline"><strong>All Systems Operational:</strong> </span>
+                    <span>Scanning {coinCount} pairs • Ready for setups</span>
                   </span>
                 </button>
               ) : (
                 <button
                   onClick={() => setShowDiagnosticsModal(true)}
-                  className="text-amber-300 hover:text-amber-200 text-[11px] font-medium flex items-center gap-1.5 truncate cursor-pointer text-left transition"
+                  className="text-amber-300 hover:text-amber-200 text-[10px] sm:text-[11px] font-medium flex items-center gap-1 truncate cursor-pointer text-left transition min-w-0"
                   title="Click to view detailed trade blocker diagnostics"
                 >
-                  <AlertTriangle size={13} className={isCritical ? 'text-rose-400 shrink-0' : 'text-amber-400 shrink-0'} />
+                  <AlertTriangle size={12} className={isCritical ? 'text-rose-400 shrink-0' : 'text-amber-400 shrink-0'} />
                   <span className="truncate">
-                    <strong>Stopping Reason:</strong> {evaluation.primaryReason}
+                    <span className="hidden sm:inline"><strong>Reason:</strong> </span>
+                    <span>{evaluation.primaryReason}</span>
                   </span>
                 </button>
               )}
             </div>
 
             {/* Right: Diagnostics / Action / Expand */}
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
               <button
                 onClick={() => setShowDiagnosticsModal(true)}
-                className={`px-2 py-0.5 rounded border text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer ${
+                className={`px-1.5 sm:px-2 py-0.5 rounded border text-[10px] sm:text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer ${
                   evaluation.isActive 
                     ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300 hover:bg-emerald-900/50' 
                     : 'bg-amber-950/40 border-amber-500/30 text-amber-300 hover:bg-amber-900/50'
                 }`}
                 title="Open Trade Readiness & Gate Diagnostics"
               >
-                <ShieldCheck size={12} />
+                <ShieldCheck size={11} />
                 <span className="hidden sm:inline">Gates:</span>
-                <span>{evaluation.isActive ? '10/10 Clear' : `${evaluation.allReasons.length} Blocked`}</span>
+                <span>{evaluation.isActive ? '10/10' : `${evaluation.allReasons.length} Block`}</span>
               </button>
 
               {evaluation.isActive ? (
                 <button
                   id="engine-banner-stop-btn-collapsed"
                   onClick={onToggleEngine}
-                  className="px-2.5 py-0.5 bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 font-bold rounded border border-rose-500/30 text-[11px] transition flex items-center gap-1 cursor-pointer"
+                  className="px-2 sm:px-2.5 py-0.5 bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 font-bold rounded border border-rose-500/30 text-[10px] sm:text-[11px] transition flex items-center gap-1 cursor-pointer"
                   title="Pause trading engine"
                 >
                   <Square size={10} />
@@ -862,7 +866,7 @@ export function TradeEngineBanner({
                   <button
                     id="engine-banner-start-btn-collapsed"
                     onClick={onToggleEngine}
-                    className="px-2.5 py-0.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black rounded text-[11px] transition flex items-center gap-1 cursor-pointer"
+                    className="px-2 sm:px-2.5 py-0.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black rounded text-[10px] sm:text-[11px] transition flex items-center gap-1 cursor-pointer"
                     title="Start trading engine"
                   >
                     <Play size={10} className="fill-black" />
@@ -873,11 +877,11 @@ export function TradeEngineBanner({
 
               <button
                 onClick={toggleCollapsed}
-                className="px-2.5 py-0.5 bg-[#161B22] hover:bg-[#21262D] text-gray-300 hover:text-white rounded border border-[#30363D] text-[11px] font-semibold transition flex items-center gap-1 cursor-pointer shadow-sm"
+                className="px-2 sm:px-2.5 py-0.5 bg-[#161B22] hover:bg-[#21262D] text-gray-300 hover:text-white rounded border border-[#30363D] text-[10px] sm:text-[11px] font-semibold transition flex items-center gap-1 cursor-pointer shadow-sm"
                 title="Expand full trade engine banner"
               >
-                <ChevronDown size={13} />
-                <span>Expand</span>
+                <ChevronDown size={12} />
+                <span className="hidden sm:inline">Expand</span>
               </button>
             </div>
           </div>
@@ -911,35 +915,35 @@ export function TradeEngineBanner({
       <>
         <div 
           id="engine-active-banner" 
-          className="bg-gradient-to-r from-emerald-950/70 via-[#0E1117] to-emerald-950/50 border-b border-emerald-500/40 px-4 py-2.5 text-xs shadow-md transition-all"
+          className="bg-gradient-to-r from-emerald-950/70 via-[#0E1117] to-emerald-950/50 border-b border-emerald-500/40 px-3 sm:px-4 py-2 sm:py-2.5 text-xs shadow-md transition-all"
         >
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 sm:gap-2.5 md:gap-3">
             {/* Left: Status & Strategy */}
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+              <div className="flex items-center gap-1.5 sm:gap-2">
                 <span className="relative flex h-2.5 w-2.5">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
                 </span>
-                <span className="px-2 py-0.5 rounded text-[10px] font-black tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                  TRADE ENGINE ACTIVE
+                <span className="px-1.5 sm:px-2 py-0.5 rounded text-[9px] sm:text-[10px] font-black tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  ENGINE ACTIVE
                 </span>
               </div>
 
               <div className="h-4 w-px bg-[#30363D] hidden sm:block"></div>
 
               {evaluation.activeStrategies.length > 1 ? (
-                <div className="flex items-center flex-wrap gap-2">
-                  <span className="text-gray-400 font-medium flex items-center gap-1.5">
-                    <GitBranch size={13} className="text-emerald-400" />
-                    <span>Strategies ({evaluation.activeStrategies.length} Active):</span>
+                <div className="flex items-center flex-wrap gap-1.5 sm:gap-2">
+                  <span className="text-gray-400 font-medium text-[11px] flex items-center gap-1">
+                    <GitBranch size={12} className="text-emerald-400" />
+                    <span>Strategies ({evaluation.activeStrategies.length}):</span>
                   </span>
-                  <div className="flex items-center flex-wrap gap-1.5">
+                  <div className="flex items-center flex-wrap gap-1">
                     {evaluation.activeStrategies.map((s) => (
                       <button
                         key={s.id}
                         onClick={onOpenStrategy}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold border flex items-center gap-1 hover:brightness-125 transition-all cursor-pointer shadow-sm ${s.badgeBg}`}
+                        className={`px-1.5 sm:px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-bold border flex items-center gap-1 hover:brightness-125 transition-all cursor-pointer shadow-sm ${s.badgeBg}`}
                         title={`Active Strategy: ${s.name}\n${s.description}\nClick to view strategy rules and configuration`}
                       >
                         <span>{s.shortName}</span>
@@ -948,17 +952,17 @@ export function TradeEngineBanner({
                   </div>
                 </div>
               ) : (
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-400 font-medium">Strategy:</span>
+                <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                  <span className="text-gray-400 font-medium text-[11px]">Strategy:</span>
                   <button
                     onClick={onOpenStrategy}
-                    className="font-bold text-emerald-300 hover:text-emerald-200 transition-colors flex items-center gap-1.5 underline decoration-emerald-500/50 underline-offset-2 cursor-pointer"
+                    className="font-bold text-emerald-300 hover:text-emerald-200 transition-colors flex items-center gap-1.5 underline decoration-emerald-500/50 underline-offset-2 cursor-pointer text-xs"
                     title="Click to view strategy rules and configuration"
                   >
-                    <GitBranch size={13} className="text-emerald-400" />
+                    <GitBranch size={12} className="text-emerald-400" />
                     <span>{evaluation.strategyName}</span>
                   </button>
-                  <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-[#161B22] text-gray-300 border border-[#30363D]">
+                  <span className="text-[9px] sm:text-[10px] px-1.5 py-0.2 rounded font-bold bg-[#161B22] text-gray-300 border border-[#30363D]">
                     {evaluation.strategyTag}
                   </span>
                 </div>
@@ -966,7 +970,7 @@ export function TradeEngineBanner({
 
               <div className="h-4 w-px bg-[#30363D] hidden lg:block"></div>
 
-              {/* Badges / Metrics */}
+              {/* Badges / Metrics - Desktop */}
               <div className="hidden lg:flex items-center gap-2 text-[11px] text-gray-400">
                 <span className="px-1.5 py-0.5 rounded bg-black/40 border border-[#30363D] font-mono text-gray-300">
                   {timeframe} TF
@@ -980,35 +984,46 @@ export function TradeEngineBanner({
                   {modeLabel}
                 </span>
               </div>
+
+              {/* Mobile quick metric chip */}
+              <div className="flex lg:hidden items-center gap-1 text-[10px] text-gray-400">
+                <span className="px-1.5 py-0.2 rounded bg-black/40 border border-[#30363D] font-mono text-gray-300">
+                  {timeframe}
+                </span>
+                <span>•</span>
+                <span className="text-gray-300">{coinCount}p</span>
+                <span>•</span>
+                <span className={`font-semibold ${isLive ? 'text-red-400' : 'text-blue-400'}`}>{isLive ? 'LIVE' : 'PAPER'}</span>
+              </div>
             </div>
 
             {/* Right: Actions */}
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center justify-between sm:justify-end gap-1.5 sm:gap-2 w-full md:w-auto mt-1 md:mt-0 pt-1.5 md:pt-0 border-t md:border-t-0 border-[#30363D]/40">
               {/* Gate Readiness Badge & Modal Trigger */}
               <button
                 onClick={() => setShowDiagnosticsModal(true)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-500/40 text-emerald-300 font-bold text-[11px] transition cursor-pointer shadow-sm"
+                className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-500/40 text-emerald-300 font-bold text-[10px] sm:text-[11px] transition cursor-pointer shadow-sm"
                 title="Click to view full 10-gate system readiness checklist"
               >
                 <ShieldCheck size={12} className="text-emerald-400" />
-                <span>10/10 Gates Clear</span>
+                <span>10/10 Clear</span>
               </button>
 
               <button
                 onClick={() => setShowDetails(!showDetails)}
-                className="text-gray-400 hover:text-gray-200 px-2 py-1 text-[11px] flex items-center gap-1 transition"
+                className="text-gray-400 hover:text-gray-200 px-1.5 sm:px-2 py-1 text-[10px] sm:text-[11px] flex items-center gap-0.5 transition"
                 title="Toggle operational details"
               >
                 <span>{showDetails ? 'Hide' : 'Details'}</span>
-                {showDetails ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                {showDetails ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
               </button>
 
               <button
                 onClick={toggleCollapsed}
-                className="px-2 py-1 bg-[#161B22] hover:bg-[#21262D] text-gray-300 hover:text-white rounded border border-[#30363D] font-semibold text-[11px] transition flex items-center gap-1 cursor-pointer shadow-sm"
+                className="px-2 py-1 bg-[#161B22] hover:bg-[#21262D] text-gray-300 hover:text-white rounded border border-[#30363D] font-semibold text-[10px] sm:text-[11px] transition flex items-center gap-1 cursor-pointer shadow-sm"
                 title="Collapse banner to save screen space"
               >
-                <ChevronUp size={12} />
+                <ChevronUp size={11} />
                 <span className="hidden sm:inline">Collapse</span>
               </button>
 
@@ -1025,10 +1040,10 @@ export function TradeEngineBanner({
               <button
                 id="engine-banner-stop-btn"
                 onClick={onToggleEngine}
-                className="px-3 py-1 bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 font-bold rounded border border-rose-500/30 transition-colors flex items-center gap-1.5 cursor-pointer"
+                className="px-2.5 sm:px-3 py-1 bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 font-bold rounded border border-rose-500/30 transition-colors flex items-center gap-1 sm:gap-1.5 cursor-pointer text-[11px] sm:text-xs"
                 title="Pause trading engine"
               >
-                <Square size={12} />
+                <Square size={11} />
                 <span>PAUSE ENGINE</span>
               </button>
             </div>
@@ -1171,71 +1186,49 @@ export function TradeEngineBanner({
     <>
       <div 
         id="engine-stopped-banner" 
-        className={`${bannerBg} px-4 py-2.5 text-xs shadow-lg transition-all`}
+        className={`${bannerBg} px-3 sm:px-4 py-2 sm:py-2.5 text-xs shadow-lg transition-all`}
       >
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 sm:gap-2.5 md:gap-3">
           {/* Left: Status & Reason */}
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3 min-w-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               <span className="relative flex h-2.5 w-2.5">
                 <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${isCritical ? 'bg-rose-500 animate-pulse' : 'bg-amber-500'}`}></span>
               </span>
-              <span className={`px-2 py-0.5 rounded text-[10px] font-black tracking-wider border ${badgeBg}`}>
-                {isCritical ? 'TRADE ENGINE INACTIVE' : 'TRADING BLOCKED / PAUSED'}
+              <span className={`px-1.5 sm:px-2 py-0.5 rounded text-[9px] sm:text-[10px] font-black tracking-wider border ${badgeBg}`}>
+                {isCritical ? 'ENGINE STOPPED' : 'TRADING BLOCKED'}
               </span>
             </div>
 
             <div className="h-4 w-px bg-[#30363D] hidden sm:block"></div>
 
             {/* Primary Reason Display */}
-            <div className="flex items-center gap-2">
-              <AlertTriangle size={14} className={isCritical ? 'text-rose-400 shrink-0' : 'text-amber-400 shrink-0'} />
-              <span className="font-semibold text-gray-100">
-                <strong>Reason:</strong> {evaluation.primaryReason}
+            <div className="flex items-start sm:items-center gap-1.5 min-w-0">
+              <AlertTriangle size={13} className={`${isCritical ? 'text-rose-400' : 'text-amber-400'} shrink-0 mt-0.5 sm:mt-0`} />
+              <span className="font-semibold text-gray-100 text-[11px] sm:text-xs break-words leading-snug">
+                <strong className="text-gray-300">Reason:</strong> {evaluation.primaryReason}
               </span>
-            </div>
-
-            {/* Strategy Context in Blocked State */}
-            <div className="hidden xl:flex items-center gap-1.5 text-[11px] text-gray-400">
-              <span>•</span>
-              {evaluation.activeStrategies.length > 1 ? (
-                <div className="flex items-center gap-1.5">
-                  <span>Configured Strategies ({evaluation.activeStrategies.length}):</span>
-                  <div className="flex items-center gap-1">
-                    {evaluation.activeStrategies.map((s) => (
-                      <span key={s.id} className={`text-[10px] px-1.5 py-0.2 rounded font-bold border ${s.badgeBg}`}>
-                        {s.shortName}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5">
-                  <span>Configured Strategy:</span>
-                  <span className="font-bold text-gray-300">{evaluation.strategyName}</span>
-                </div>
-              )}
             </div>
           </div>
 
           {/* Right: Direct Action Buttons */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 w-full md:w-auto mt-1 md:mt-0 pt-1.5 md:pt-0 border-t md:border-t-0 border-[#30363D]/40 shrink-0">
             {/* Gate Diagnostics Modal Button */}
             <button
               onClick={() => setShowDiagnosticsModal(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-rose-950/60 hover:bg-rose-900/60 border border-rose-500/40 text-rose-300 font-bold text-[11px] transition cursor-pointer shadow-sm"
+              className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded bg-rose-950/60 hover:bg-rose-900/60 border border-rose-500/40 text-rose-300 font-bold text-[10px] sm:text-[11px] transition cursor-pointer shadow-sm"
               title="Click to view why trades are currently stopped and how to unblock"
             >
-              <ShieldAlert size={12} className="text-rose-400" />
-              <span>Gate Diagnostics ({evaluation.allReasons.length} Blocked)</span>
+              <ShieldAlert size={11} className="text-rose-400" />
+              <span>Diagnostics ({evaluation.allReasons.length} Blocked)</span>
             </button>
 
             <button
               onClick={toggleCollapsed}
-              className="px-2 py-1 bg-[#161B22] hover:bg-[#21262D] text-gray-300 hover:text-white rounded border border-[#30363D] font-semibold text-[11px] transition flex items-center gap-1 cursor-pointer shadow-sm"
+              className="px-2 py-1 bg-[#161B22] hover:bg-[#21262D] text-gray-300 hover:text-white rounded border border-[#30363D] font-semibold text-[10px] sm:text-[11px] transition flex items-center gap-1 cursor-pointer shadow-sm"
               title="Collapse banner to compact mode to save space"
             >
-              <ChevronUp size={12} />
+              <ChevronUp size={11} />
               <span className="hidden sm:inline">Collapse</span>
             </button>
 
@@ -1243,10 +1236,10 @@ export function TradeEngineBanner({
               <button
                 id="engine-banner-start-btn"
                 onClick={onToggleEngine}
-                className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black rounded shadow-md transition-all flex items-center gap-1.5 cursor-pointer text-xs uppercase tracking-wider"
+                className="px-3 py-1 sm:py-1.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black rounded shadow-md transition-all flex items-center gap-1 cursor-pointer text-[11px] sm:text-xs uppercase tracking-wider"
                 title="Click to activate trading engine"
               >
-                <Play size={13} className="fill-black" />
+                <Play size={12} className="fill-black" />
                 <span>START ENGINE</span>
               </button>
             )}
@@ -1254,9 +1247,9 @@ export function TradeEngineBanner({
             {evaluation.actionType === 'DISABLE_KILL_SWITCH' && onDisableKillSwitch && (
               <button
                 onClick={onDisableKillSwitch}
-                className="px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded shadow transition-all flex items-center gap-1.5 cursor-pointer"
+                className="px-2.5 sm:px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded shadow transition-all flex items-center gap-1 cursor-pointer text-[10px] sm:text-xs"
               >
-                <ShieldAlert size={13} />
+                <ShieldAlert size={12} />
                 <span>DISABLE KILL SWITCH</span>
               </button>
             )}
@@ -1264,9 +1257,9 @@ export function TradeEngineBanner({
             {evaluation.actionType === 'RETRY_SETTINGS' && onRetrySettings && (
               <button
                 onClick={onRetrySettings}
-                className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white font-bold rounded shadow transition-all flex items-center gap-1.5 cursor-pointer"
+                className="px-2.5 sm:px-3 py-1 bg-red-600 hover:bg-red-500 text-white font-bold rounded shadow transition-all flex items-center gap-1 cursor-pointer text-[10px] sm:text-xs"
               >
-                <RefreshCw size={13} />
+                <RefreshCw size={12} />
                 <span>RETRY CONFIG</span>
               </button>
             )}
@@ -1274,9 +1267,9 @@ export function TradeEngineBanner({
             {evaluation.actionType === 'RECONNECT_FEED' && onRefreshFeed && (
               <button
                 onClick={onRefreshFeed}
-                className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-black font-bold rounded shadow transition-all flex items-center gap-1.5 cursor-pointer"
+                className="px-2.5 sm:px-3 py-1 bg-amber-600 hover:bg-amber-500 text-black font-bold rounded shadow transition-all flex items-center gap-1 cursor-pointer text-[10px] sm:text-xs"
               >
-                <RefreshCw size={13} />
+                <RefreshCw size={12} />
                 <span>RECONNECT FEED</span>
               </button>
             )}
@@ -1284,9 +1277,9 @@ export function TradeEngineBanner({
             {onOpenSettings && (
               <button
                 onClick={onOpenSettings}
-                className="px-2.5 py-1 bg-[#161B22] hover:bg-[#21262D] text-gray-300 rounded border border-[#30363D] font-semibold text-[11px] transition flex items-center gap-1.5 cursor-pointer"
+                className="px-2 sm:px-2.5 py-1 bg-[#161B22] hover:bg-[#21262D] text-gray-300 rounded border border-[#30363D] font-semibold text-[10px] sm:text-[11px] transition flex items-center gap-1 cursor-pointer"
               >
-                <SettingsIcon size={12} />
+                <SettingsIcon size={11} />
                 <span>Settings</span>
               </button>
             )}
