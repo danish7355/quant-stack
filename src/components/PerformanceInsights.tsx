@@ -59,8 +59,10 @@ interface SetupEVMetrics {
 }
 
 // Map each known strategy to its typical market condition
-export function getMarketConditionForStrategy(strategy?: string): 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Trend Continuation / 5 EMA Gap' | 'Trend Continuation / Pullback Retest' | 'Unspecified' {
+export function getMarketConditionForStrategy(strategy?: string): 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Trend Continuation / 5 EMA Gap' | 'Trend Continuation / Pullback Retest' | 'Reversal / Reclaim & Displacement' | 'Unspecified' {
   const s = (strategy || '').toUpperCase();
+  if (s === 'EMA5_EXACT_ENTRY_V1') return 'Trend Continuation / 5 EMA Gap';
+  if (s === 'EMA5_REJECTION_RECLAIM_V1') return 'Reversal / Reclaim & Displacement';
   if ((s === 'TREND_PULLBACK' || s.includes('PULLBACK')) && s !== 'EMA_GAP_PULLBACK' && s !== 'TREND_PULLBACK_RETEST') return 'Trending';
   if (s === 'TREND_PULLBACK_RETEST') return 'Trend Continuation / Pullback Retest';
   if (s === 'BINANCE_COMPOSITE' || s.includes('COMPOSITE')) return 'Trending';
@@ -93,12 +95,24 @@ export default function PerformanceInsights({ logs }: PerformanceInsightsProps) 
         const stratKey = (trade.strategy || 'UNSPECIFIED').toUpperCase();
         if (!groups[stratKey]) {
           let displayName = stratKey;
-          let cond: 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Trend Continuation / 5 EMA Gap' | 'Trend Continuation / Pullback Retest' | 'Unspecified' = 'Unspecified';
+          let cond: 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Trend Continuation / 5 EMA Gap' | 'Trend Continuation / Pullback Retest' | 'Reversal / Reclaim & Displacement' | 'Unspecified' = 'Unspecified';
           let desc = 'Trades without strategy tag';
           let diag = 'Review strategy mapping';
           let rec = 'Track strategy parameter in order placement.';
 
-          if (stratKey === 'TREND_PULLBACK') {
+          if (stratKey === 'EMA5_EXACT_ENTRY_V1') {
+            displayName = 'EMA 5 Exact Price Action Entry';
+            cond = 'Trend Continuation / 5 EMA Gap';
+            desc = 'Exact EMA 5 price-action entry with 15m structure regime and volume confirmation filter';
+            diag = 'High-probability momentum trigger around EMA 5 with strict stop loss.';
+            rec = 'Maintain 1.5R target and breakeven protection.';
+          } else if (stratKey === 'EMA5_REJECTION_RECLAIM_V1') {
+            displayName = 'EMA 5 Rejection Reclaim';
+            cond = 'Reversal / Reclaim & Displacement';
+            desc = 'Approach → Sweep/Rejection Wick → EMA5 Reclaim → Displacement Candle → Volume Confirmation';
+            diag = 'High-conviction structural reversal capturing moves at the inflection point.';
+            rec = 'Enforce breakeven at 1R and target 1.5R.';
+          } else if (stratKey === 'TREND_PULLBACK') {
             displayName = 'Trend Pullback';
             cond = 'Trending';
             desc = 'EMA 21/50 trend continuation on dynamic value pullbacks';

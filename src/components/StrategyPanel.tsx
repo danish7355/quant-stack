@@ -3,7 +3,7 @@ import { AppSettings, StrategyBucketItem, MarketRegimeType, CoinDetail } from '.
 import { GATES_REGISTRY, GateImportance } from '../utils/gatesRegistry';
 import { DEFAULT_STRATEGY_BUCKET } from '../utils/strategyBucket';
 import { VcbChecklistPanel } from './VcbChecklistPanel';
-import { ShieldAlert, ShieldCheck, Zap, AlertTriangle, Flame, Info, Check, Cpu, Sparkles, RotateCcw, Layers, ArrowUpRight, Filter, Activity, Target, Compass } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, Zap, AlertTriangle, Flame, Info, Check, Cpu, Sparkles, RotateCcw, Layers, ArrowUpRight, Filter, Activity, Target, Compass, Trash2, RefreshCw, Plus } from 'lucide-react';
 
 interface StrategyPanelProps {
   settings: AppSettings;
@@ -15,7 +15,7 @@ interface StrategyPanelProps {
 }
 
 export const AVAILABLE_STRATEGIES: {
-  id: 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'SMC_LIQUIDITY_SWEEP' | 'BINANCE_COMPOSITE' | 'EARLY_COIL_BREAKOUT' | 'MACRO_RANGE_BREAKOUT';
+  id: 'EMA5_EXACT_ENTRY_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'EMA5_REJECTION_RECLAIM_V1' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'SMC_LIQUIDITY_SWEEP' | 'BINANCE_COMPOSITE' | 'EARLY_COIL_BREAKOUT' | 'MACRO_RANGE_BREAKOUT';
   name: string;
   shortName: string;
   type: string;
@@ -23,6 +23,24 @@ export const AVAILABLE_STRATEGIES: {
   description: string;
   icon: any;
 }[] = [
+  {
+    id: 'EMA5_EXACT_ENTRY_V1',
+    name: 'EMA 5 Exact Price Action Entry',
+    shortName: 'EMA 5 Exact',
+    type: 'Exact Price Action Entry',
+    badgeBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+    description: 'Exact EMA 5 price-action entry pattern with raw OHLC, EMA 5, volume confirmation, and 15m market structure regime filter.',
+    icon: Zap,
+  },
+  {
+    id: 'EMA5_REJECTION_RECLAIM_V1',
+    name: 'EMA 5 Rejection → Reclaim → Displacement',
+    shortName: 'EMA 5 Rejection Reclaim',
+    type: 'Reversal / Reclaim & Displacement',
+    badgeBg: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+    description: 'Requires full sequence: Approach → Sweep/Rejection wick → EMA5 Reclaim → Strong Displacement candle → Volume confirmation. Never enters on simple crossover.',
+    icon: Zap,
+  },
   {
     id: 'VOLATILITY_COMPRESSION',
     name: 'Volatility Compression Breakout (VCB)',
@@ -220,19 +238,40 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
     };
   }, [activeCoin, settings, globalFilterState]);
 
-  const enabledStrategies: string[] = (settings.enabledStrategies && settings.enabledStrategies.length > 0)
-    ? settings.enabledStrategies
-    : [settings.activeStrategy || 'VOLATILITY_COMPRESSION'];
+  const [strategyToDelete, setStrategyToDelete] = useState<string | null>(null);
+  const [showRestoreModal, setShowRestoreModal] = useState<boolean>(false);
+
+  const deletedStrategies: string[] = settings.deletedStrategies || [];
 
   const bucket: StrategyBucketItem[] = (settings.strategyBucket && settings.strategyBucket.length > 0)
     ? settings.strategyBucket
     : DEFAULT_STRATEGY_BUCKET;
 
+  const visibleStrategies = useMemo(() => {
+    return AVAILABLE_STRATEGIES.filter(s => !deletedStrategies.includes(s.id));
+  }, [deletedStrategies]);
+
+  const visibleBucket = useMemo(() => {
+    return bucket.filter(item => !deletedStrategies.includes(item.id));
+  }, [bucket, deletedStrategies]);
+
+  const enabledStrategies: string[] = (settings.enabledStrategies && settings.enabledStrategies.length > 0)
+    ? settings.enabledStrategies.filter(s => !deletedStrategies.includes(s))
+    : [settings.activeStrategy && !deletedStrategies.includes(settings.activeStrategy) ? settings.activeStrategy : (visibleStrategies[0]?.id || 'VOLATILITY_COMPRESSION')];
+
   const handleInputChange = (field: keyof AppSettings, value: any) => {
     const nextSettings = { ...settings, [field]: value };
-    if (field === 'activeStrategy' && (value === 'EMA_GAP_PULLBACK' || value === 'DELTA_CLIMAX')) {
-      nextSettings.egpEnabled = true;
-      nextSettings.crEnabled = true;
+    if (field === 'activeStrategy') {
+      if (value === 'EMA_GAP_PULLBACK' || value === 'DELTA_CLIMAX') {
+        nextSettings.egpEnabled = true;
+        nextSettings.crEnabled = true;
+      }
+      if (value === 'EMA5_REJECTION_RECLAIM_V1') {
+        nextSettings.errEnabled = true;
+      }
+      if (value === 'TREND_PULLBACK_RETEST') {
+        nextSettings.tprEnabled = true;
+      }
     }
     setSettings(nextSettings);
 
@@ -257,8 +296,10 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
     const nextSettings = {
       ...settings,
       enabledStrategies: nextEnabled,
-      activeStrategy: (nextEnabled[0] || 'VOLATILITY_COMPRESSION') as any,
+      activeStrategy: (nextEnabled[0] || visibleStrategies[0]?.id || 'VOLATILITY_COMPRESSION') as any,
       egpEnabled: nextEnabled.includes('EMA_GAP_PULLBACK'),
+      errEnabled: nextEnabled.includes('EMA5_REJECTION_RECLAIM_V1'),
+      tprEnabled: nextEnabled.includes('TREND_PULLBACK_RETEST'),
     };
     setSettings(nextSettings);
     fetch('/api/bot/settings', {
@@ -270,32 +311,103 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
     setTimeout(() => setSaveStatus(null), 2500);
   };
 
+  const handleConfirmDelete = (stratId: string) => {
+    const nextDeleted = Array.from(new Set([...deletedStrategies, stratId]));
+    const nextEnabled = enabledStrategies.filter(id => id !== stratId);
+    const nextBucket = bucket.filter(item => item.id !== stratId);
+    const remaining = visibleStrategies.filter(s => s.id !== stratId);
+    const nextActive = (settings.activeStrategy === stratId
+      ? (nextEnabled[0] || remaining[0]?.id || 'VOLATILITY_COMPRESSION')
+      : settings.activeStrategy) as any;
+
+    const nextSettings: AppSettings = {
+      ...settings,
+      deletedStrategies: nextDeleted,
+      enabledStrategies: nextEnabled,
+      strategyBucket: nextBucket,
+      activeStrategy: nextActive,
+      egpEnabled: nextEnabled.includes('EMA_GAP_PULLBACK'),
+      errEnabled: nextEnabled.includes('EMA5_REJECTION_RECLAIM_V1'),
+      tprEnabled: nextEnabled.includes('TREND_PULLBACK_RETEST'),
+    };
+
+    setSettings(nextSettings);
+    fetch('/api/bot/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(nextSettings)
+    }).catch(console.error);
+
+    setSaveStatus(`Strategy removed from engine`);
+    setStrategyToDelete(null);
+    setTimeout(() => setSaveStatus(null), 3000);
+  };
+
+  const handleRestoreStrategy = (stratId: string) => {
+    const nextDeleted = deletedStrategies.filter(id => id !== stratId);
+    const defaultItem = DEFAULT_STRATEGY_BUCKET.find(b => b.id === stratId);
+    const nextBucket = bucket.some(b => b.id === stratId)
+      ? bucket
+      : defaultItem
+        ? [...bucket, defaultItem]
+        : bucket;
+
+    const nextSettings: AppSettings = {
+      ...settings,
+      deletedStrategies: nextDeleted,
+      strategyBucket: nextBucket,
+    };
+
+    setSettings(nextSettings);
+    fetch('/api/bot/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(nextSettings)
+    }).catch(console.error);
+
+    setSaveStatus(`Restored strategy`);
+    setTimeout(() => setSaveStatus(null), 2500);
+  };
+
+  const handleRestoreAllStrategies = () => {
+    const nextSettings: AppSettings = {
+      ...settings,
+      deletedStrategies: [],
+      strategyBucket: DEFAULT_STRATEGY_BUCKET,
+    };
+
+    setSettings(nextSettings);
+    fetch('/api/bot/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(nextSettings)
+    }).catch(console.error);
+
+    setSaveStatus(`All strategies restored to default`);
+    setShowRestoreModal(false);
+    setTimeout(() => setSaveStatus(null), 2500);
+  };
+
   const handleSetPresets = (preset: 'ALL' | 'VCB' | 'TREND' | 'REVERSAL' | 'CLEAR') => {
     let nextEnabled: any[] = [];
     if (preset === 'ALL') {
-      nextEnabled = [
-        'VOLATILITY_COMPRESSION',
-        'TREND_PULLBACK',
-        'EMA_GAP_PULLBACK',
-        'SMC_LIQUIDITY_SWEEP',
-        'BINANCE_COMPOSITE',
-        'EARLY_COIL_BREAKOUT',
-        'MACRO_RANGE_BREAKOUT'
-      ];
+      nextEnabled = visibleStrategies.map(s => s.id);
     } else if (preset === 'VCB') {
-      nextEnabled = ['VOLATILITY_COMPRESSION'];
+      nextEnabled = ['VOLATILITY_COMPRESSION'].filter(s => !deletedStrategies.includes(s));
     } else if (preset === 'TREND') {
-      nextEnabled = ['VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'EMA_GAP_PULLBACK', 'EARLY_COIL_BREAKOUT'];
+      nextEnabled = ['VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'TREND_PULLBACK_RETEST', 'EMA_GAP_PULLBACK', 'EMA5_PA_VOLUME_V1', 'EARLY_COIL_BREAKOUT'].filter(s => !deletedStrategies.includes(s));
     } else if (preset === 'REVERSAL') {
-      nextEnabled = ['EMA_GAP_PULLBACK', 'BINANCE_COMPOSITE', 'SMC_LIQUIDITY_SWEEP'];
+      nextEnabled = ['EMA5_REJECTION_RECLAIM_V1', 'EMA_GAP_PULLBACK', 'BINANCE_COMPOSITE', 'SMC_LIQUIDITY_SWEEP'].filter(s => !deletedStrategies.includes(s));
     } else if (preset === 'CLEAR') {
       nextEnabled = [];
     }
     const nextSettings = {
       ...settings,
       enabledStrategies: nextEnabled,
-      activeStrategy: (nextEnabled[0] || 'VOLATILITY_COMPRESSION') as any,
+      activeStrategy: (nextEnabled[0] || visibleStrategies[0]?.id || 'VOLATILITY_COMPRESSION') as any,
       egpEnabled: nextEnabled.includes('EMA_GAP_PULLBACK'),
+      errEnabled: nextEnabled.includes('EMA5_REJECTION_RECLAIM_V1'),
+      tprEnabled: nextEnabled.includes('TREND_PULLBACK_RETEST'),
     };
     setSettings(nextSettings);
     fetch('/api/bot/settings', {
@@ -322,7 +434,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
   };
 
   const handleResetBucket = () => {
-    handleUpdateBucket(DEFAULT_STRATEGY_BUCKET);
+    handleUpdateBucket(DEFAULT_STRATEGY_BUCKET.filter(b => !deletedStrategies.includes(b.id)));
     setSaveStatus('Strategy bucket reset to defaults');
     setTimeout(() => setSaveStatus(null), 2500);
   };
@@ -397,8 +509,8 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
   );
 
   return (
-    <div className="h-full overflow-y-auto custom-scrollbar p-6 space-y-8 pb-32 font-mono text-xs">
-      <div className="max-w-4xl mx-auto space-y-8">
+    <div className="h-full overflow-y-auto custom-scrollbar p-3.5 sm:p-6 space-y-6 sm:space-y-8 pb-32 font-mono text-xs">
+      <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8">
         
         {/* Global Market & BTC Safety Filter Warning Banner */}
         {settings.useGlobalBtcFilter !== false && globalFilterState?.isPausing && (
@@ -431,11 +543,11 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
         )}
 
         {/* Navigation Tabs */}
-        <div className="flex items-center justify-between border-b border-[#30363D] pb-3">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-[#30363D] pb-3 gap-2.5">
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 max-w-full no-scrollbar touch-pan-x shrink-0">
             <button
               onClick={() => setActiveTab('checklist')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+              className={`px-3.5 py-2 sm:py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
                 activeTab === 'checklist' 
                   ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/30' 
                   : 'bg-[#161B22] text-gray-400 hover:text-white border border-[#30363D]'
@@ -445,7 +557,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('parameters')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+              className={`px-3.5 py-2 sm:py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
                 activeTab === 'parameters' 
                   ? 'bg-[#00e696] text-black font-semibold' 
                   : 'bg-[#161B22] text-gray-400 hover:text-white border border-[#30363D]'
@@ -455,7 +567,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('gates')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+              className={`px-3.5 py-2 sm:py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
                 activeTab === 'gates' 
                   ? 'bg-blue-600 text-white' 
                   : 'bg-[#161B22] text-gray-400 hover:text-white border border-[#30363D]'
@@ -465,7 +577,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('bucket')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+              className={`px-3.5 py-2 sm:py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
                 activeTab === 'bucket' 
                   ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/30' 
                   : 'bg-[#161B22] text-gray-400 hover:text-white border border-[#30363D]'
@@ -509,7 +621,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="text-base font-bold text-white">
-                        Active Strategies: {enabledStrategies.length} / {AVAILABLE_STRATEGIES.length} Selected
+                        Active Strategies: {enabledStrategies.length} / {visibleStrategies.length} Selected
                       </h3>
                       <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold tracking-wider">
                         MULTI-STRATEGY ENGINE
@@ -548,12 +660,21 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                     </span>
                   </div>
                   <p className="text-xs text-gray-400 mt-1">
-                    Toggle individual strategies on or off. Use presets below for rapid configuration.
+                    Toggle individual strategies on or off. Delete unwanted strategies directly or restore anytime.
                   </p>
                 </div>
 
                 {/* Preset Actions */}
                 <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setShowRestoreModal(true)}
+                    className="px-2.5 py-1 text-[11px] rounded bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-700/50 cursor-pointer font-semibold transition-colors flex items-center gap-1"
+                    title="Add or restore strategies"
+                  >
+                    <Plus className="w-3 h-3 text-emerald-400" />
+                    {deletedStrategies.length > 0 ? `Add / Restore (${deletedStrategies.length})` : 'Add / Restore Strategy'}
+                  </button>
                   <button
                     type="button"
                     onClick={() => handleSetPresets('ALL')}
@@ -594,14 +715,14 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
 
               {/* Strategy Cards Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
-                {AVAILABLE_STRATEGIES.map(strat => {
+                {visibleStrategies.map(strat => {
                   const isActive = enabledStrategies.includes(strat.id);
                   const Icon = strat.icon;
                   return (
                     <div
                       key={strat.id}
                       onClick={() => handleToggleStrategy(strat.id)}
-                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between select-none ${
+                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between select-none relative group ${
                         isActive
                           ? 'bg-gray-900/90 border-[#00e696] shadow-md shadow-emerald-950/20'
                           : 'bg-gray-950/50 border-gray-800/80 hover:border-gray-700 opacity-60'
@@ -619,10 +740,23 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                               {strat.shortName}
                             </span>
                           </div>
-                          <div className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
-                            isActive ? 'bg-[#00e696] border-[#00e696] text-black' : 'border-gray-600 bg-gray-800'
-                          }`}>
-                            {isActive && <Check className="w-3 h-3 stroke-[3]" />}
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              title={`Delete ${strat.shortName}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setStrategyToDelete(strat.id);
+                              }}
+                              className="p-1 rounded text-gray-500 hover:text-rose-400 hover:bg-rose-950/50 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                            <div className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
+                              isActive ? 'bg-[#00e696] border-[#00e696] text-black' : 'border-gray-600 bg-gray-800'
+                            }`}>
+                              {isActive && <Check className="w-3 h-3 stroke-[3]" />}
+                            </div>
                           </div>
                         </div>
 
@@ -647,11 +781,17 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                         {strat.id === 'TREND_PULLBACK' && (
                           <span className="text-gray-400 font-mono">5 Pillars</span>
                         )}
+                        {strat.id === 'TREND_PULLBACK_RETEST' && (
+                          <span className="text-gray-400 font-mono">State Machine</span>
+                        )}
                         {strat.id === 'EMA_GAP_PULLBACK' && (
                           <span className="text-gray-400 font-mono">7 Gates</span>
                         )}
                         {strat.id === 'EMA5_PA_VOLUME_V1' && (
                           <span className="text-gray-400 font-mono">PA + Vol</span>
+                        )}
+                        {strat.id === 'EMA5_REJECTION_RECLAIM_V1' && (
+                          <span className="text-gray-400 font-mono">Reclaim+Disp</span>
                         )}
                       </div>
                     </div>
@@ -676,7 +816,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
               </div>
 
               <div className="space-y-3">
-                {bucket.map(strat => {
+                {visibleBucket.map(strat => {
                   const isActive = enabledStrategies.includes(strat.id as any);
                   return (
                     <div
@@ -721,7 +861,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                           </div>
                         </div>
 
-                        {/* Right: Priority Selector + Quick Toggle */}
+                        {/* Right: Priority Selector + Quick Toggle + Delete */}
                         <div className="flex flex-wrap items-center gap-3 self-start lg:self-center pl-7 lg:pl-0">
                           <div className="flex items-center gap-1.5 bg-gray-900 border border-gray-800 rounded-lg px-2.5 py-1">
                             <span className="text-[10px] text-gray-400 font-semibold uppercase">Tie-Breaker:</span>
@@ -747,6 +887,18 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                             }`}
                           >
                             {isActive ? 'Enabled' : 'Disabled'}
+                          </button>
+
+                          <button
+                            type="button"
+                            title="Delete Strategy"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setStrategyToDelete(strat.id);
+                            }}
+                            className="p-1.5 rounded text-gray-500 hover:text-rose-400 hover:bg-rose-950/40 border border-transparent hover:border-rose-900/50 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </div>
@@ -775,16 +927,25 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                         ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                         : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
                     }`}>
-                      {enabledStrategies.length} / {AVAILABLE_STRATEGIES.length} Active
+                      {enabledStrategies.length} / {visibleStrategies.length} Active
                     </span>
                   </div>
                   <p className="text-xs text-gray-400 mt-1">
-                    Activate any combination of strategies. The engine evaluates all active strategies per coin and executes the highest-confidence setup.
+                    Activate any combination of strategies. Delete unwanted strategies directly or restore anytime.
                   </p>
                 </div>
 
                 {/* Preset Actions */}
                 <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setShowRestoreModal(true)}
+                    className="px-2.5 py-1 text-[11px] rounded bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-700/50 cursor-pointer font-semibold transition-colors flex items-center gap-1"
+                    title="Add or restore strategies"
+                  >
+                    <Plus className="w-3 h-3 text-emerald-400" />
+                    {deletedStrategies.length > 0 ? `Add / Restore (${deletedStrategies.length})` : 'Add / Restore Strategy'}
+                  </button>
                   <button
                     type="button"
                     onClick={() => handleSetPresets('ALL')}
@@ -825,14 +986,14 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
 
               {/* Strategy Cards Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
-                {AVAILABLE_STRATEGIES.map(strat => {
+                {visibleStrategies.map(strat => {
                   const isActive = enabledStrategies.includes(strat.id);
                   const Icon = strat.icon;
                   return (
                     <div
                       key={strat.id}
                       onClick={() => handleToggleStrategy(strat.id)}
-                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between select-none ${
+                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between select-none relative group ${
                         isActive
                           ? 'bg-gray-900/90 border-[#00e696] shadow-md shadow-emerald-950/20'
                           : 'bg-gray-950/50 border-gray-800/80 hover:border-gray-700 opacity-60'
@@ -850,10 +1011,23 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                               {strat.shortName}
                             </span>
                           </div>
-                          <div className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
-                            isActive ? 'bg-[#00e696] border-[#00e696] text-black' : 'border-gray-600 bg-gray-800'
-                          }`}>
-                            {isActive && <Check className="w-3 h-3 stroke-[3]" />}
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              title={`Delete ${strat.shortName}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setStrategyToDelete(strat.id);
+                              }}
+                              className="p-1 rounded text-gray-500 hover:text-rose-400 hover:bg-rose-950/50 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                            <div className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
+                              isActive ? 'bg-[#00e696] border-[#00e696] text-black' : 'border-gray-600 bg-gray-800'
+                            }`}>
+                              {isActive && <Check className="w-3 h-3 stroke-[3]" />}
+                            </div>
                           </div>
                         </div>
 
@@ -878,11 +1052,20 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                         {strat.id === 'TREND_PULLBACK' && (
                           <span className="text-gray-400 font-mono">5 Pillars</span>
                         )}
+                        {strat.id === 'TREND_PULLBACK_RETEST' && (
+                          <span className="text-gray-400 font-mono">State Machine</span>
+                        )}
                         {strat.id === 'EMA_GAP_PULLBACK' && (
                           <span className="text-gray-400 font-mono">7 Gates</span>
                         )}
                         {strat.id === 'EMA5_PA_VOLUME_V1' && (
                           <span className="text-gray-400 font-mono">PA + Vol</span>
+                        )}
+                        {strat.id === 'EMA5_EXACT_ENTRY_V1' && (
+                          <span className="text-gray-400 font-mono">Exact PA</span>
+                        )}
+                        {strat.id === 'EMA5_REJECTION_RECLAIM_V1' && (
+                          <span className="text-gray-400 font-mono">Reclaim+Disp</span>
                         )}
                       </div>
                     </div>
@@ -1202,6 +1385,143 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
               </div>
             </div>
 
+            {/* EMA 5 Rejection → Reclaim → Displacement (EMA5_REJECTION_RECLAIM_V1) Parameters */}
+            <div className="bg-[#161B22] rounded-xl p-6 border border-amber-500/30 space-y-4 shadow-xl shadow-amber-950/10">
+              <div className="flex items-center justify-between border-b border-[#30363D] pb-3 flex-wrap gap-2">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-amber-400" />
+                    <span>EMA 5 Rejection → Reclaim → Displacement Parameters</span>
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Strict sequence: Approach → Sweep/Rejection Wick → EMA 5 Reclaim → Displacement Candle → Volume Confirmation. Never enters on simple crossover.</p>
+                </div>
+                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                  REJECTION &amp; RECLAIM
+                </span>
+              </div>
+
+              <div className="space-y-1">
+                <InputRow label="EMA Period" desc="Moving average period for rejection and reclaim detection (default 5)" value={settings.errEmaLength ?? 5} onChange={(v: any) => handleInputChange('errEmaLength', v)} min={3} max={20} />
+                <InputRow label="Min Volume Multiplier" desc="Displacement candle volume vs 20-period baseline volume (default 1.10x)" value={settings.errMinVolumeRatio ?? 1.10} onChange={(v: any) => handleInputChange('errMinVolumeRatio', v)} step={0.05} min={0.5} max={3.0} />
+                <InputRow label="Min Rejection Wick/Body Ratio" desc="Minimum rejection wick vs body ratio to confirm sweep (default 1.0 = 100%)" value={settings.errMinRejectionWickBodyRatio ?? 1.0} onChange={(v: any) => handleInputChange('errMinRejectionWickBodyRatio', v)} step={0.1} min={0.5} max={3.0} />
+                <InputRow label="Strong Rejection Wick Ratio" desc="Wick/body ratio for higher conviction setup score (default 1.5)" value={settings.errStrongRejectionWickBodyRatio ?? 1.5} onChange={(v: any) => handleInputChange('errStrongRejectionWickBodyRatio', v)} step={0.1} min={1.0} max={4.0} />
+                <InputRow label="Min Displacement Body Ratio" desc="Minimum body vs full range for displacement candle (default 0.50 = 50%)" value={settings.errMinDisplacementBodyRatio ?? 0.50} onChange={(v: any) => handleInputChange('errMinDisplacementBodyRatio', v)} step={0.05} min={0.30} max={0.90} />
+                <InputRow label="Min Close Location (CLV)" desc="Displacement close position in candle range: ≥0.65 for Long, ≤0.35 for Short" value={settings.errMinClosePosition ?? 0.65} onChange={(v: any) => handleInputChange('errMinClosePosition', v)} step={0.05} min={0.50} max={0.95} />
+                <InputRow label="Rejection Expiry Candles" desc="Max candles allowed after rejection to reclaim EMA 5 (default 3 candles)" value={settings.errRejectionExpiryCandles ?? 3} onChange={(v: any) => handleInputChange('errRejectionExpiryCandles', v)} min={1} max={10} />
+                <InputRow label="Reclaim Expiry Candles" desc="Max candles allowed after reclaim to produce displacement candle (default 2 candles)" value={settings.errReclaimExpiryCandles ?? 2} onChange={(v: any) => handleInputChange('errReclaimExpiryCandles', v)} min={1} max={6} />
+                <InputRow label="Max Displacement Range Ratio" desc="Anti-blowout ceiling: max displacement candle range vs 5-bar average (default 2.0x)" value={settings.errMaxDisplacementRangeRatio ?? 2.0} onChange={(v: any) => handleInputChange('errMaxDisplacementRangeRatio', v)} step={0.1} min={1.0} max={5.0} />
+                <InputRow label="Max Stop Range Ratio" desc="Max distance between entry and SL vs 5-bar average range (default 3.5x)" value={settings.errMaxStopRangeRatio ?? 3.5} onChange={(v: any) => handleInputChange('errMaxStopRangeRatio', v)} step={0.1} min={1.0} max={6.0} />
+                <InputRow label="Max Chop EMA Crosses" desc="Max EMA 5 crosses in last 10 candles before flagging choppy market (default 3)" value={settings.errMaxEmaCrosses ?? 3} onChange={(v: any) => handleInputChange('errMaxEmaCrosses', v)} min={1} max={8} />
+                <InputRow label="Target Risk:Reward Ratio" desc="Take-profit multiple vs initial stop distance (default 1.5R)" value={settings.errRiskReward ?? 1.5} onChange={(v: any) => handleInputChange('errRiskReward', v)} step={0.1} min={1.0} max={5.0} />
+                <InputRow label="Cooldown Candles" desc="Candles to wait after trade exit before seeking new setup (default 2)" value={settings.errCooldownCandles ?? 2} onChange={(v: any) => handleInputChange('errCooldownCandles', v)} min={1} max={10} />
+
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Move Stop to Breakeven at 1.0R</span>
+                    <span className="text-xs text-gray-500 mt-1">Automatically lock entry price after +1.0R unrealized profit</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.errBreakevenEnabled !== false}
+                    onChange={(e) => handleInputChange('errBreakevenEnabled', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-amber-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Require 15m Structure Alignment</span>
+                    <span className="text-xs text-gray-500 mt-1">Block Longs in Bearish 15m structure and Shorts in Bullish 15m structure</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(settings.errRequireStructureBreak)}
+                    onChange={(e) => handleInputChange('errRequireStructureBreak', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-amber-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between py-3">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Allow Reclaim Candle as Displacement</span>
+                    <span className="text-xs text-gray-500 mt-1">If enabled, a single massive candle can count as both reclaim and displacement</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(settings.errAllowReclaimAsDisplacement)}
+                    onChange={(e) => handleInputChange('errAllowReclaimAsDisplacement', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-amber-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* EMA 5 Exact Price Action Entry (EMA5_EXACT_ENTRY_V1) Parameters */}
+            <div className="bg-[#161B22] rounded-xl p-6 border border-emerald-500/30 space-y-4 shadow-xl shadow-emerald-950/10">
+              <div className="flex items-center justify-between border-b border-[#30363D] pb-3 flex-wrap gap-2">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-[#00e696]" />
+                    <span>EMA 5 Exact Price Action Entry Parameters</span>
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Strict 2-stage architecture: Stage A (exact PA setup trigger around EMA 5) + Stage B (15m regime, volume, chop, extension, stop &amp; opposing structure filters).</p>
+                </div>
+                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  EXACT PA TRIGGER
+                </span>
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Enable Strategy</span>
+                    <span className="text-xs text-gray-500 mt-1">Allow EMA5_EXACT_ENTRY_V1 to generate entry signals</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.eeeEnabled !== false}
+                    onChange={(e) => handleInputChange('eeeEnabled', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-[#00e696] focus:ring-0 cursor-pointer"
+                  />
+                </div>
+                <InputRow label="EMA Period" desc="Moving average period (ONLY EMA 5 is used, default 5)" value={settings.eeeEmaLength ?? 5} onChange={(v: any) => handleInputChange('eeeEmaLength', v)} min={3} max={20} />
+                <InputRow label="Min Volume Ratio" desc="Candle volume vs 20-period baseline volume (Filter 2, default 1.05x)" value={settings.eeeMinVolumeRatio ?? 1.05} onChange={(v: any) => handleInputChange('eeeMinVolumeRatio', v)} step={0.05} min={0.5} max={3.0} />
+                <InputRow label="Min Candle Body Ratio" desc="Body vs total candle range ratio (default 0.50 = 50%)" value={settings.eeeMinBodyRatio ?? 0.50} onChange={(v: any) => handleInputChange('eeeMinBodyRatio', v)} step={0.05} min={0.20} max={0.90} />
+                <InputRow label="Min Close Location" desc="Close position in range: ≥0.60 for Long, ≤0.40 for Short (default 0.60)" value={settings.eeeMinClosePosition ?? 0.60} onChange={(v: any) => handleInputChange('eeeMinClosePosition', v)} step={0.05} min={0.50} max={0.95} />
+                <InputRow label="Max EMA Distance Ratio" desc="Proximity filter: max distance from EMA 5 vs average range (default 1.2x)" value={settings.eeeMaxEmaDistanceRatio ?? 1.2} onChange={(v: any) => handleInputChange('eeeMaxEmaDistanceRatio', v)} step={0.1} min={0.5} max={3.0} />
+                <InputRow label="Max Stop Range Ratio" desc="Filter 5: max stop distance vs average range (default 2.0x)" value={settings.eeeMaxStopRangeRatio ?? 2.0} onChange={(v: any) => handleInputChange('eeeMaxStopRangeRatio', v)} step={0.1} min={0.5} max={5.0} />
+                <InputRow label="Max Chop EMA Crosses" desc="Filter 3: max EMA 5 crosses in last 10 candles before flagging chop (default 3)" value={settings.eeeMaxEmaCrosses ?? 3} onChange={(v: any) => handleInputChange('eeeMaxEmaCrosses', v)} min={1} max={8} />
+                <InputRow label="Risk:Reward Ratio" desc="Take profit R:R multiple vs initial stop distance (default 1.5R)" value={settings.eeeRiskReward ?? 1.5} onChange={(v: any) => handleInputChange('eeeRiskReward', v)} step={0.1} min={0.5} max={5.0} />
+                <InputRow label="Cooldown Candles" desc="Candles to wait after entry before evaluating new setups (default 2)" value={settings.eeeCooldownCandles ?? 2} onChange={(v: any) => handleInputChange('eeeCooldownCandles', v)} min={0} max={10} />
+
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Move Stop to Breakeven at 1.0R</span>
+                    <span className="text-xs text-gray-500 mt-1">Automatically lock entry price after +1.0R unrealized profit</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.eeeBreakevenEnabled !== false}
+                    onChange={(e) => handleInputChange('eeeBreakevenEnabled', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-[#00e696] focus:ring-0 cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between py-3">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Require Opposing Structure Space</span>
+                    <span className="text-xs text-gray-500 mt-1">Filter 6: require at least 1.5R clear room before major opposing support/resistance</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.eeeRequireOpposingSpace !== false}
+                    onChange={(e) => handleInputChange('eeeRequireOpposingSpace', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-[#00e696] focus:ring-0 cursor-pointer"
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* Trend Pullback Retest (TPR) Parameters */}
             <div className="bg-[#161B22] rounded-xl p-6 border border-[#30363D] space-y-4">
               <div>
@@ -1396,6 +1716,110 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                     </div>
                   );
                 })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Confirmation Modal */}
+        {strategyToDelete && (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-[#161B22] border border-rose-500/40 rounded-xl p-5 max-w-md w-full shadow-2xl space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="p-2.5 rounded-lg bg-rose-500/20 text-rose-400 border border-rose-500/30 shrink-0">
+                  <Trash2 className="w-5 h-5 text-rose-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Delete Strategy</h3>
+                  <p className="text-xs text-gray-300 mt-1">
+                    Are you sure you want to delete <span className="font-bold text-rose-300">{AVAILABLE_STRATEGIES.find(s => s.id === strategyToDelete)?.name || strategyToDelete}</span>?
+                  </p>
+                  <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">
+                    This will immediately remove it from the active trading engine, multi-strategy scanning, and bucket priority. You can restore it anytime from "Restore Strategies".
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-800">
+                <button
+                  type="button"
+                  onClick={() => setStrategyToDelete(null)}
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleConfirmDelete(strategyToDelete)}
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white transition-colors cursor-pointer flex items-center gap-1.5 shadow-lg shadow-rose-950/50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Confirm Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Restore Deleted Strategies Modal */}
+        {showRestoreModal && (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-[#161B22] border border-[#30363D] rounded-xl p-5 max-w-lg w-full shadow-2xl space-y-4">
+              <div className="flex items-center justify-between border-b border-[#30363D] pb-3">
+                <div className="flex items-center gap-2">
+                  <Plus className="w-4 h-4 text-emerald-400" />
+                  <h3 className="text-base font-bold text-white">Add / Restore Strategies</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowRestoreModal(false)}
+                  className="text-gray-400 hover:text-white text-xs px-2 py-1 rounded bg-gray-800 cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-2 max-h-72 overflow-y-auto custom-scrollbar">
+                {deletedStrategies.length === 0 ? (
+                  <div className="py-6 px-4 text-center space-y-2">
+                    <p className="text-xs text-gray-300 font-medium">All 10 strategies are present in your active engine registry.</p>
+                    <p className="text-[11px] text-gray-500">To enable or disable any strategy, use the toggle checkboxes on the strategy cards.</p>
+                  </div>
+                ) : (
+                  deletedStrategies.map(stratId => {
+                    const stratMeta = AVAILABLE_STRATEGIES.find(s => s.id === stratId);
+                    return (
+                      <div key={stratId} className="flex items-center justify-between p-3 bg-gray-900/80 rounded-lg border border-gray-800 gap-3">
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-white truncate">{stratMeta?.name || stratId}</div>
+                          <div className="text-[10px] text-gray-500 font-mono">{stratId}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRestoreStrategy(stratId)}
+                          className="px-2.5 py-1 text-xs font-semibold rounded bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center gap-1 shrink-0 cursor-pointer"
+                        >
+                          <Plus className="w-3 h-3" /> Add Back
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="flex items-center justify-between pt-3 border-t border-gray-800">
+                <button
+                  type="button"
+                  onClick={handleRestoreAllStrategies}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-amber-300 border border-amber-800/40 transition-colors cursor-pointer"
+                >
+                  Restore All Defaults
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowRestoreModal(false)}
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-[#00e696] text-black hover:bg-[#00e696]/90 transition-colors cursor-pointer"
+                >
+                  Done
+                </button>
               </div>
             </div>
           </div>

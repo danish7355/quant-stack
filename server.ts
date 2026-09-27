@@ -157,20 +157,69 @@ async function startServer() {
   });
 });
   app.get("/api/health", (req, res) => {
+    const isEngineActive = autoTrader.isEngineActive();
+    const isStale = priceStream.isStale;
+    const globalFilterActive = autoTrader.isGlobalFilterPausing();
+    const globalFilterReason = autoTrader.getGlobalFilterBlockReason();
+    const activePositions = positionMonitor.getActivePositions().length;
+    const settings = autoTrader.getSettings();
+    const maxConcurrentTrades = settings.maxConcurrentTrades || 3;
+    const dailyLossPct = riskManager.getDailyLossPct();
+    const dailyLossLimitPct = riskManager.getDailyLossLimitPct();
+    const consecutiveLosses = riskManager.getConsecutiveLosses();
+    const maxConsecutiveLosses = riskManager.getMaxConsecutiveLosses();
+    const killSwitchActive = Boolean(settings.killSwitchActive);
+    const scanDiag = autoTrader.getScanDiagnostics();
+
+    const activeBlockers: string[] = [];
+    if (!isEngineActive || settings.autoTradeEnabled === false) {
+      activeBlockers.push('Trade Engine is STOPPED. Autonomous scanning and order execution are paused.');
+    }
+    if (killSwitchActive) {
+      activeBlockers.push('Emergency Kill Switch is ENGAGED. All order placement is halted.');
+    }
+    if (isStale) {
+      activeBlockers.push('Market data stream is STALE (>10s without ticks). New entries paused for price integrity.');
+    }
+    if (globalFilterActive) {
+      activeBlockers.push(globalFilterReason || 'Global BTC Macro Safety Filter is pausing altcoin entries.');
+    }
+    if (activePositions >= maxConcurrentTrades) {
+      activeBlockers.push(`Max concurrent positions reached (${activePositions}/${maxConcurrentTrades}). Order entry paused until a position closes.`);
+    }
+    if (dailyLossPct <= dailyLossLimitPct) {
+      activeBlockers.push(`Daily loss limit reached (${dailyLossPct.toFixed(2)}% / ${dailyLossLimitPct}%). Autonomous trading locked.`);
+    }
+    if (consecutiveLosses >= maxConsecutiveLosses) {
+      activeBlockers.push(`Consecutive loss limit reached (${consecutiveLosses}/${maxConsecutiveLosses} losses). Cooling down.`);
+    }
+    if (settings.tradingMode === 'LIVE' && (!settings.binanceApiKey || !settings.binanceApiSecret)) {
+      activeBlockers.push('Live Trading is active but Binance API Key or Secret is missing.');
+    }
+
     res.json({ 
       status: "ok", 
-      engine: autoTrader.isEngineActive() ? 'RUNNING' : 'PAUSED',
-      marketData: priceStream.isStale ? 'STALE' : 'CONNECTED',
+      engine: isEngineActive ? 'RUNNING' : 'PAUSED',
+      marketData: isStale ? 'STALE' : 'CONNECTED',
       userStream: executionAdapter.getIsLive() ? 'CONNECTED' : 'DISCONNECTED',
-      lastReconciliationAt: 'N/A', // We can add real state tracking later
-      tradingBlocked: priceStream.isStale,
-      globalFilterActive: autoTrader.isGlobalFilterPausing(),
-      globalFilterReason: autoTrader.getGlobalFilterBlockReason(),
+      lastReconciliationAt: 'N/A',
+      tradingBlocked: activeBlockers.length > 0,
+      blockReason: activeBlockers.length > 0 ? activeBlockers[0] : undefined,
+      activeBlockers,
+      globalFilterActive,
+      globalFilterReason,
       timestamp: new Date().toISOString(),
-      activePositions: positionMonitor.getActivePositions().length,
+      activePositions,
+      maxConcurrentTrades,
+      dailyLossPct,
+      dailyLossLimitPct,
+      consecutiveLosses,
+      maxConsecutiveLosses,
       telegramConfigured: telegramService.isConfigured(),
-      dailyLossPct: riskManager.getDailyLossPct(),
-      consecutiveLosses: riskManager.getConsecutiveLosses()
+      lastScanTime: scanDiag.lastScanCompletedTime,
+      lastScanDurationMs: scanDiag.lastScanDurationMs,
+      lastScannedCoins: scanDiag.lastScannedPairCount,
+      lastScanQualifiedSignals: scanDiag.lastScanQualifiedCount
     });
   });
 
@@ -235,11 +284,43 @@ async function startServer() {
 
   app.get("/api/bot/engine/status", (req, res) => {
     try {
+      const scanDiag = autoTrader.getScanDiagnostics();
+      const settings = autoTrader.getSettings();
+      const activePositions = positionMonitor.getActivePositions().length;
+      const maxConcurrentTrades = settings.maxConcurrentTrades || 3;
+      const globalFilterActive = autoTrader.isGlobalFilterPausing();
+      const globalFilterReason = autoTrader.getGlobalFilterBlockReason();
+      const isEngineActive = autoTrader.isEngineActive();
+      const isStale = priceStream.isStale;
+
+      const activeBlockers: string[] = [];
+      if (!isEngineActive || settings.autoTradeEnabled === false) {
+        activeBlockers.push('Trade Engine is STOPPED');
+      }
+      if (settings.killSwitchActive) {
+        activeBlockers.push('Emergency Kill Switch is ENGAGED');
+      }
+      if (isStale) {
+        activeBlockers.push('Market data stream is STALE');
+      }
+      if (globalFilterActive) {
+        activeBlockers.push(globalFilterReason || 'Global BTC Macro Safety Filter active');
+      }
+      if (activePositions >= maxConcurrentTrades) {
+        activeBlockers.push(`Max concurrent positions reached (${activePositions}/${maxConcurrentTrades})`);
+      }
+
       res.json({
-        engineRunning: autoTrader.isEngineActive(),
-        autoTradeEnabled: autoTrader.getSettings().autoTradeEnabled,
-        globalFilterActive: autoTrader.isGlobalFilterPausing(),
-        globalFilterReason: autoTrader.getGlobalFilterBlockReason()
+        engineRunning: isEngineActive,
+        autoTradeEnabled: settings.autoTradeEnabled,
+        globalFilterActive,
+        globalFilterReason,
+        activePositions,
+        maxConcurrentTrades,
+        activeBlockers,
+        isBlocked: activeBlockers.length > 0,
+        lastScanTime: scanDiag.lastScanCompletedTime,
+        lastScannedCoins: scanDiag.lastScannedPairCount
       });
     } catch (e) {
       res.status(500).json({ error: String(e) });
@@ -647,6 +728,29 @@ async function startServer() {
       res.json({ success: true, pnl });
     } catch(e) {
       res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.post("/api/bot/close-all-deleted", async (req, res) => {
+    try {
+      const settings = autoTrader.getSettings();
+      const deleted = settings.deletedStrategies || [];
+      const active = positionMonitor.getActivePositions();
+      const targetPositions = active.filter(p => deleted.includes(p.strategy));
+      const results = [];
+      for (const pos of targetPositions) {
+        const closePrice = pos.current_price || pos.entry_price || 0;
+        const pnl = await oms.closePosition(pos.id, closePrice, 'STRATEGY_DELETED_MANUAL_CLOSE');
+        results.push({ id: pos.id, symbol: pos.symbol, strategy: pos.strategy, pnl });
+      }
+      await positionMonitor.refreshOpenPositions();
+      broadcastWsEvent('POSITIONS_UPDATE', positionMonitor.getActivePositions());
+      const s = autoTrader.getSettings();
+      broadcastWsEvent('BALANCE_UPDATE', { demoBalance: s.demoBalance, startingBalance: s.startingBalance, equitySnapshots: s.equitySnapshots || [] });
+      res.json({ success: true, count: results.length, closed: results });
+    } catch(e: any) {
+      console.error("Error closing positions from deleted strategies:", e);
+      res.status(500).json({ success: false, error: String(e?.message || e) });
     }
   });
 

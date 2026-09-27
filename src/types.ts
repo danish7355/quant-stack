@@ -237,11 +237,19 @@ export interface SystemHealth {
   lastReconciliationAt: string;
   tradingBlocked: boolean;
   blockReason?: string;
+  activeBlockers?: string[];
   globalFilterActive?: boolean;
   globalFilterReason?: string;
   dailyLossPct?: number;
+  dailyLossLimitPct?: number;
   consecutiveLosses?: number;
+  maxConsecutiveLosses?: number;
   activePositions?: number;
+  maxConcurrentTrades?: number;
+  lastScanTime?: string;
+  lastScanDurationMs?: number;
+  lastScannedCoins?: number;
+  lastScanQualifiedSignals?: number;
   telegramConfigured?: boolean;
   timestamp?: string;
 }

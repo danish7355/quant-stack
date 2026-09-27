@@ -14,6 +14,7 @@ export class OMS {
   private closingPositions = new Set<string>();
   public onTradeClosed?: (pnl: number) => void;
   public isEngineActive?: () => boolean;
+  public getDeletedStrategies?: () => string[];
 
   public async placeOrder(
     symbol: string,
@@ -52,6 +53,14 @@ export class OMS {
 
     if (!symbol || !direction || !price || isNaN(price) || price <= 0) {
       throw new Error(`Invalid order params for ${symbol}`);
+    }
+
+    if (customOpts?.strategy && this.getDeletedStrategies) {
+      const deleted = this.getDeletedStrategies();
+      if (deleted && Array.isArray(deleted) && deleted.includes(customOpts.strategy)) {
+        console.warn(`🛑 [OMS] Order rejected for ${symbol}: Strategy '${customOpts.strategy}' is deleted.`);
+        return null;
+      }
     }
 
     if (this.processingOrder.has(symbol)) {

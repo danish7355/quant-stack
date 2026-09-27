@@ -38,8 +38,9 @@ export interface TradingSettings {
   equitySnapshots?: { time: string; balance: number }[];
 
   // Execution & Strategy Engine
-  activeStrategy: 'BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'AUTO_REGIME' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL';
-  enabledStrategies?: ('BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL')[];
+  activeStrategy: 'BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1' | 'EMA5_EXACT_ENTRY_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'AUTO_REGIME' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL';
+  enabledStrategies?: ('BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1' | 'EMA5_EXACT_ENTRY_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL')[];
+  deletedStrategies?: string[];
   strategyBucket?: StrategyBucketItem[];
   tradeFrequency: 'LOW' | 'MEDIUM' | 'HIGH';
   autoTradeThreshold: number;      // Confidence score threshold (50 - 100)
@@ -254,6 +255,47 @@ export interface TradingSettings {
   tprAllowLongs?: boolean;
   tprAllowShorts?: boolean;
 
+  // EMA 5 Rejection → Reclaim → Displacement Strategy Settings (EMA5_REJECTION_RECLAIM_V1)
+  errEnabled?: boolean;
+  errEmaLength?: number;                  // default 5
+  errVolumeLookback?: number;             // default 20
+  errMinVolumeRatio?: number;             // default 1.10
+  errMinRejectionWickBodyRatio?: number;  // default 1.0
+  errStrongRejectionWickBodyRatio?: number; // default 1.5
+  errMinDisplacementBodyRatio?: number;   // default 0.50
+  errStrongDisplacementBodyRatio?: number;// default 0.60
+  errMinClosePosition?: number;           // default 0.65
+  errRejectionExpiryCandles?: number;     // default 3
+  errReclaimExpiryCandles?: number;       // default 2
+  errRecentRangeLookback?: number;        // default 5
+  errMaxDisplacementRangeRatio?: number;  // default 2.0
+  errMaxStopRangeRatio?: number;          // default 2.0
+  errMaxEmaCrosses?: number;              // default 3
+  errEmaCrossLookback?: number;           // default 10
+  errRequireStructureBreak?: boolean;     // default false
+  errAllowReclaimAsDisplacement?: boolean;// default false
+  errRiskReward?: number;                 // default 1.5
+  errBreakevenEnabled?: boolean;          // default true
+  errBreakevenTriggerR?: number;          // default 1.0
+  errCooldownCandles?: number;            // default 2
+
+  // EMA 5 Exact Price Action Entry Strategy Settings (EMA5_EXACT_ENTRY_V1)
+  eeeEnabled?: boolean;
+  eeeEmaLength?: number;                  // default 5
+  eeeMinVolumeRatio?: number;             // default 1.05
+  eeeMinBodyRatio?: number;               // default 0.50
+  eeeMinClosePosition?: number;           // default 0.60
+  eeeMaxEmaDistanceRatio?: number;        // default 1.2
+  eeeMaxStopRangeRatio?: number;          // default 2.0
+  eeeMaxEmaCrosses?: number;              // default 3
+  eeeRiskReward?: number;                 // default 1.5
+  eeeExitMode?: 'RR' | 'STRUCTURE';       // default 'RR'
+  eeeBreakevenEnabled?: boolean;          // default true
+  eeeBreakevenTriggerR?: number;          // default 1.0
+  eeeCooldownCandles?: number;            // default 2
+  eeeSlBufferPct?: number;                // default 0.0005
+  eeeRequireOpposingSpace?: boolean;      // default true
+
   // SMC High-Probability Strategy Settings
   smcHtfResolution?: string;
   smcStructureLen?: number;
@@ -329,6 +371,24 @@ export const NUMERIC_BOUNDS: Record<string, { min: number; max: number; step?: n
   tprRrRatio: { min: 1.0, max: 5.0, step: 0.1, label: 'TPR Risk/Reward Ratio' },
   tprCooldownCandles: { min: 1, max: 20, step: 1, label: 'TPR Cooldown Candles' },
   tprSetupTimeout: { min: 3, max: 30, step: 1, label: 'TPR Setup Timeout Candles' },
+  errEmaLength: { min: 3, max: 20, step: 1, label: 'ERR EMA Length' },
+  errVolumeLookback: { min: 5, max: 50, step: 1, label: 'ERR Volume Lookback Bars' },
+  errMinVolumeRatio: { min: 1.0, max: 3.0, step: 0.05, label: 'ERR Min Volume Ratio' },
+  errMinRejectionWickBodyRatio: { min: 0.5, max: 3.0, step: 0.1, label: 'ERR Min Rejection Wick Ratio' },
+  errStrongRejectionWickBodyRatio: { min: 1.0, max: 4.0, step: 0.1, label: 'ERR Strong Rejection Wick Ratio' },
+  errMinDisplacementBodyRatio: { min: 0.30, max: 0.80, step: 0.05, label: 'ERR Min Displacement Body Ratio' },
+  errStrongDisplacementBodyRatio: { min: 0.40, max: 0.90, step: 0.05, label: 'ERR Strong Displacement Body Ratio' },
+  errMinClosePosition: { min: 0.50, max: 0.90, step: 0.05, label: 'ERR Min Close Position' },
+  errRejectionExpiryCandles: { min: 1, max: 10, step: 1, label: 'ERR Rejection Expiry Candles' },
+  errReclaimExpiryCandles: { min: 1, max: 10, step: 1, label: 'ERR Reclaim Expiry Candles' },
+  errRecentRangeLookback: { min: 3, max: 20, step: 1, label: 'ERR Recent Range Lookback' },
+  errMaxDisplacementRangeRatio: { min: 1.0, max: 4.0, step: 0.1, label: 'ERR Max Displacement Range Ratio' },
+  errMaxStopRangeRatio: { min: 1.0, max: 4.0, step: 0.1, label: 'ERR Max Stop Range Ratio' },
+  errMaxEmaCrosses: { min: 1, max: 10, step: 1, label: 'ERR Max EMA Crosses' },
+  errEmaCrossLookback: { min: 5, max: 30, step: 1, label: 'ERR EMA Cross Lookback' },
+  errRiskReward: { min: 1.0, max: 5.0, step: 0.1, label: 'ERR Risk/Reward Ratio' },
+  errBreakevenTriggerR: { min: 0.5, max: 3.0, step: 0.1, label: 'ERR Breakeven Trigger R' },
+  errCooldownCandles: { min: 1, max: 20, step: 1, label: 'ERR Cooldown Candles' },
   vcbChecklistMinScore: { min: 5, max: 11, step: 1, label: 'VCB Checklist Min Score' },
   vcbMinRrRatio: { min: 1.5, max: 5.0, step: 0.1, label: 'VCB Min Risk-to-Reward Ratio' },
   vcbHtfAdxMin: { min: 10, max: 40, step: 1, label: 'VCB HTF Min ADX' },
@@ -384,6 +444,17 @@ export const NUMERIC_BOUNDS: Record<string, { min: number; max: number; step?: n
   ema5PaMaxSetupRangeRatio: { min: 1.0, max: 5.0, step: 0.1, label: 'EMA 5 PA Max Setup Range Ratio' },
   ema5PaMaxStopRangeRatio: { min: 1.0, max: 5.0, step: 0.1, label: 'EMA 5 PA Max Stop Range Ratio' },
   ema5PaRiskReward: { min: 1.0, max: 5.0, step: 0.1, label: 'EMA 5 PA Risk Reward Ratio' },
+  eeeEmaLength: { min: 3, max: 21, step: 1, label: 'EMA5 Exact: EMA Period' },
+  eeeMinVolumeRatio: { min: 0.5, max: 5.0, step: 0.05, label: 'EMA5 Exact: Min Volume Ratio' },
+  eeeMinBodyRatio: { min: 0.2, max: 0.9, step: 0.05, label: 'EMA5 Exact: Min Body Ratio' },
+  eeeMinClosePosition: { min: 0.5, max: 0.95, step: 0.05, label: 'EMA5 Exact: Min Close Position' },
+  eeeMaxEmaDistanceRatio: { min: 0.5, max: 3.0, step: 0.1, label: 'EMA5 Exact: Max EMA Distance Ratio' },
+  eeeMaxStopRangeRatio: { min: 0.5, max: 5.0, step: 0.1, label: 'EMA5 Exact: Max Stop Range Ratio' },
+  eeeMaxEmaCrosses: { min: 1, max: 10, step: 1, label: 'EMA5 Exact: Max Chop EMA Crosses' },
+  eeeRiskReward: { min: 0.5, max: 5.0, step: 0.1, label: 'EMA5 Exact: Risk:Reward Ratio' },
+  eeeBreakevenTriggerR: { min: 0.5, max: 3.0, step: 0.1, label: 'EMA5 Exact: Breakeven Trigger (R)' },
+  eeeCooldownCandles: { min: 0, max: 20, step: 1, label: 'EMA5 Exact: Cooldown Candles' },
+  eeeSlBufferPct: { min: 0.0001, max: 0.01, step: 0.0001, label: 'EMA5 Exact: SL Buffer %' },
 };
 
 export interface ValidationResult {
@@ -436,7 +507,9 @@ export function validateTradingSettings(input: unknown): ValidationResult {
     'alertOnTsMoved', 'alertOnDailyLossLimit', 'alertOnRangingDetected',
     'alertSilentMode', 'binanceTestnet', 'scanOnlyWatchlist', 'egpRequireReal3RRoom',
     'egpStrictGapOnly', 'ema5PaEnabled', 'ema5PaBreakevenEnabled', 'ema5PaRequireStructureBreak',
-    'tprEnabled', 'tprTrailingEnabled', 'tprBreakevenEnabled', 'tprAllowLongs', 'tprAllowShorts'
+    'tprEnabled', 'tprTrailingEnabled', 'tprBreakevenEnabled', 'tprAllowLongs', 'tprAllowShorts',
+    'errEnabled', 'errRequireStructureBreak', 'errAllowReclaimAsDisplacement', 'errBreakevenEnabled',
+    'eeeEnabled', 'eeeBreakevenEnabled', 'eeeRequireOpposingSpace'
   ];
   for (const bKey of booleanKeys) {
     if (raw[bKey] !== undefined) {
@@ -445,6 +518,14 @@ export function validateTradingSettings(input: unknown): ValidationResult {
   }
 
   // Validate enums
+  if (raw.eeeExitMode !== undefined) {
+    if (['RR', 'STRUCTURE'].includes(raw.eeeExitMode)) {
+      sanitized.eeeExitMode = raw.eeeExitMode;
+    } else {
+      errors.push(`Invalid eeeExitMode: ${raw.eeeExitMode}`);
+    }
+  }
+
   if (raw.egpExecutionModel !== undefined) {
     if (['MODEL_A_NEXT_OPEN', 'MODEL_B_RETEST_LIMIT'].includes(raw.egpExecutionModel)) {
       sanitized.egpExecutionModel = raw.egpExecutionModel;
@@ -498,6 +579,9 @@ export function validateTradingSettings(input: unknown): ValidationResult {
     }
   } else if (sanitized.activeStrategy) {
     sanitized.enabledStrategies = [sanitized.activeStrategy as any];
+  }
+  if (raw.deletedStrategies && Array.isArray(raw.deletedStrategies)) {
+    sanitized.deletedStrategies = raw.deletedStrategies.filter((s: any) => typeof s === 'string');
   }
   if (raw.strategyBucket && Array.isArray(raw.strategyBucket)) {
     sanitized.strategyBucket = raw.strategyBucket;
@@ -729,6 +813,45 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   tprSetupTimeout: 10,
   tprAllowLongs: true,
   tprAllowShorts: true,
+
+  errEnabled: true,
+  errEmaLength: 5,
+  errVolumeLookback: 20,
+  errMinVolumeRatio: 1.10,
+  errMinRejectionWickBodyRatio: 1.0,
+  errStrongRejectionWickBodyRatio: 1.5,
+  errMinDisplacementBodyRatio: 0.50,
+  errStrongDisplacementBodyRatio: 0.60,
+  errMinClosePosition: 0.65,
+  errRejectionExpiryCandles: 3,
+  errReclaimExpiryCandles: 2,
+  errRecentRangeLookback: 5,
+  errMaxDisplacementRangeRatio: 2.0,
+  errMaxStopRangeRatio: 3.5,
+  errMaxEmaCrosses: 3,
+  errEmaCrossLookback: 10,
+  errRequireStructureBreak: false,
+  errAllowReclaimAsDisplacement: false,
+  errRiskReward: 1.5,
+  errBreakevenEnabled: true,
+  errBreakevenTriggerR: 1.0,
+  errCooldownCandles: 2,
+
+  eeeEnabled: true,
+  eeeEmaLength: 5,
+  eeeMinVolumeRatio: 1.05,
+  eeeMinBodyRatio: 0.50,
+  eeeMinClosePosition: 0.60,
+  eeeMaxEmaDistanceRatio: 1.2,
+  eeeMaxStopRangeRatio: 2.0,
+  eeeMaxEmaCrosses: 3,
+  eeeRiskReward: 1.5,
+  eeeExitMode: 'RR',
+  eeeBreakevenEnabled: true,
+  eeeBreakevenTriggerR: 1.0,
+  eeeCooldownCandles: 2,
+  eeeSlBufferPct: 0.0005,
+  eeeRequireOpposingSpace: true,
 
   rmrMaxAdx: 22,
   rmrMaxAtrRatio: 1.25,

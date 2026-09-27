@@ -29,6 +29,8 @@ import { evaluateRangeMeanReversion } from '../../src/utils/strategies/rangeMean
 import { evaluateEmaGapPullback, checkReal3RRoom } from '../../src/utils/strategies/emaGapPullback.js';
 import { evaluateEma5PaVolume } from '../../src/utils/strategies/ema5PaVolume.js';
 import { evaluateTrendPullbackRetest, createTprState, TprState } from '../../src/utils/strategies/trendPullbackRetest.js';
+import { evaluateEma5RejectionReclaim, createErrState, ErrState } from '../../src/utils/strategies/ema5RejectionReclaim.js';
+import { evaluateEma5ExactEntry, createEeeState, EeeState } from '../../src/utils/strategies/ema5ExactEntry.js';
 import { calculateRSI } from '../../src/utils/indicators.js';
 import {
   allowVCB,
@@ -84,6 +86,10 @@ export class AutoTrader {
   private globalFilterBlockReason = '';
   // Per-symbol state machine state for TREND_PULLBACK_RETEST
   private tprStates = new Map<string, TprState>();
+  // Per-symbol state machine state for EMA5_REJECTION_RECLAIM_V1
+  private errStates = new Map<string, ErrState>();
+  // Per-symbol state machine state for EMA5_EXACT_ENTRY_V1
+  private eeeStates = new Map<string, EeeState>();
 
   public isGlobalFilterPausing(): boolean {
     return this.globalFilterBlockActive;
@@ -833,11 +839,26 @@ export class AutoTrader {
   }
 
   private isScanning = false;
+  private lastScanCompletedTime = 0;
+  private lastScanDurationMs = 0;
+  private lastScannedPairCount = 0;
+  private lastScanQualifiedCount = 0;
+  private lastScanSummary = 'Initializing scan loop...';
+
+  public getScanDiagnostics() {
+    return {
+      isScanning: this.isScanning,
+      lastScanCompletedTime: this.lastScanCompletedTime > 0 ? new Date(this.lastScanCompletedTime).toISOString() : null,
+      lastScanDurationMs: this.lastScanDurationMs,
+      lastScannedPairCount: this.lastScannedPairCount,
+      lastScanQualifiedCount: this.lastScanQualifiedCount,
+      lastScanSummary: this.lastScanSummary
+    };
+  }
 
   public async runScanCycle() {
     if (!this.isEngineActive()) return;
     if (this.isScanning) return;
-    
     
     if (priceStream.isStale) {
       console.warn("🛡️ [AutoTrader] Skipping cycle: Market Data is STALE. Failing closed.");
@@ -845,12 +866,17 @@ export class AutoTrader {
     }
     
     this.isScanning = true;
+    const scanStart = Date.now();
+    let scannedCount = 0;
+    let qualifiedCount = 0;
 
     try {
       const activePositions = positionMonitor.getActivePositions();
       const openCount = activePositions.length;
       
       if (openCount >= this.settings.maxConcurrentTrades) {
+        this.lastScanCompletedTime = Date.now();
+        this.lastScanSummary = `Max concurrent trades reached (${openCount}/${this.settings.maxConcurrentTrades}). Standby until position exits.`;
         return; // Max concurrent trade limit reached
       }
 
@@ -861,6 +887,8 @@ export class AutoTrader {
         if (!globalRegime.isTradable || globalRegime.regime === 'PANIC' || globalRegime.macroColor === 'RED') {
           this.globalFilterBlockActive = true;
           this.globalFilterBlockReason = `Global Market & BTC Safety Filter: ${globalRegime.symbol} is '${globalRegime.regime}' (${globalRegime.details}). Macro risk management active — new entries paused.`;
+          this.lastScanCompletedTime = Date.now();
+          this.lastScanSummary = `Global Macro Filter active: ${globalRegime.symbol} is '${globalRegime.regime}'. Altcoin entries paused.`;
           console.log(`🛡️ [Global Macro Filter] Market Safety Lockout: ${globalRegime.symbol} is '${globalRegime.regime}' (${globalRegime.details}). New trade entries paused across all coins.`);
           this.logScanResult(
             globalRegime.symbol,
@@ -888,6 +916,7 @@ export class AutoTrader {
         : 100;
       const scanLimit = Math.min(Math.max(userCoinCount, 5), 100);
       const topSymbols = await this.getTopVolumeSymbols(scanLimit);
+      scannedCount = topSymbols.length;
       
       for (const symbol of topSymbols) {
         const cooldownExpiry = this.tradeCooldowns.get(symbol) || 0;
@@ -934,6 +963,7 @@ export class AutoTrader {
         }
         
         if (signal && signal.score >= this.settings.autoTradeThreshold) {
+          qualifiedCount++;
 
           const currentTotal = positionMonitor.getActivePositions().length + this.pendingSymbols.size;
           if (!this.settings.bypassMaxPositions && currentTotal >= this.settings.maxConcurrentTrades) {
@@ -970,6 +1000,11 @@ export class AutoTrader {
           let quantity = (allocatedBalance * leverage) / currentPrice;
 
           const finalStrat = (signal as any).strategy || (this.settings.activeStrategy === 'AUTO_REGIME' ? 'VOLATILITY_COMPRESSION' : this.settings.activeStrategy);
+          if ((this.settings.deletedStrategies || []).includes(finalStrat)) {
+            console.warn(`🛑 [AutoTrader] Execution blocked: Strategy '${finalStrat}' has been deleted by user.`);
+            this.pendingSymbols.delete(symbol);
+            continue;
+          }
           const marketRegime = (signal as any).marketRegime || null;
           const isAutoRegime = !!(signal as any).isAutoRegime;
 
@@ -1129,7 +1164,15 @@ export class AutoTrader {
       }
     } catch (e) {
       console.warn('AutoTrader scan cycle error:', e);
+      this.lastScanSummary = `Scan error: ${String(e)}`;
     } finally {
+      this.lastScanCompletedTime = Date.now();
+      this.lastScanDurationMs = Date.now() - scanStart;
+      this.lastScannedPairCount = scannedCount;
+      this.lastScanQualifiedCount = qualifiedCount;
+      if (!this.lastScanSummary || this.lastScanSummary.includes('Initializing') || this.lastScanSummary.includes('Scanned')) {
+        this.lastScanSummary = `Scanned ${scannedCount} pairs in ${this.lastScanDurationMs}ms. ${qualifiedCount} setups met threshold.`;
+      }
       this.isScanning = false;
     }
   }
@@ -1491,6 +1534,11 @@ export class AutoTrader {
     distanceToObstacleR?: number;
     nearestObstaclePrice?: number;
   } | null> {
+    // Immediate early-exit safety check: NEVER evaluate a strategy deleted by the user
+    if ((this.settings.deletedStrategies || []).includes(strat)) {
+      return null;
+    }
+
     // 1. 5 EMA Gap Pullback algorithm
     if (strat === 'EMA_GAP_PULLBACK') {
       const htfCandles = await this.getKlines(symbol, '1h');
@@ -1744,6 +1792,123 @@ export class AutoTrader {
       };
     }
 
+    // 9. EMA 5 Rejection → Reclaim → Displacement Strategy
+    if (strat === 'EMA5_REJECTION_RECLAIM_V1') {
+      if (this.settings.errEnabled === false) return null;
+      // Closed 5m candles only — strip the in-progress candle
+      const closedKlines = klines.slice(0, -1);
+      if (closedKlines.length < 30) return null;
+
+      // Get live 15m candles for regime structure
+      const klines15m = await this.getKlines(symbol, '15m');
+      const closedKlines15m = klines15m ? klines15m.slice(0, -1) : [];
+
+      if (!this.errStates.has(symbol)) {
+        this.errStates.set(symbol, createErrState());
+      }
+      const errState = this.errStates.get(symbol)!;
+
+      const sig = evaluateEma5RejectionReclaim(
+        closedKlines,
+        closedKlines15m,
+        {
+          emaLength: this.settings.errEmaLength ?? 5,
+          volumeLookback: this.settings.errVolumeLookback ?? 20,
+          minVolumeRatio: this.settings.errMinVolumeRatio ?? 1.10,
+          minRejectionWickBodyRatio: this.settings.errMinRejectionWickBodyRatio ?? 1.0,
+          strongRejectionWickBodyRatio: this.settings.errStrongRejectionWickBodyRatio ?? 1.5,
+          minDisplacementBodyRatio: this.settings.errMinDisplacementBodyRatio ?? 0.50,
+          strongDisplacementBodyRatio: this.settings.errStrongDisplacementBodyRatio ?? 0.60,
+          minClosePosition: this.settings.errMinClosePosition ?? 0.65,
+          rejectionExpiryCandles: this.settings.errRejectionExpiryCandles ?? 3,
+          reclaimExpiryCandles: this.settings.errReclaimExpiryCandles ?? 2,
+          recentRangeLookback: this.settings.errRecentRangeLookback ?? 5,
+          maxDisplacementRangeRatio: this.settings.errMaxDisplacementRangeRatio ?? 2.0,
+          maxStopRangeRatio: this.settings.errMaxStopRangeRatio ?? 2.0,
+          maxEmaCrosses: this.settings.errMaxEmaCrosses ?? 3,
+          emaCrossLookback: this.settings.errEmaCrossLookback ?? 10,
+          requireStructureBreak: this.settings.errRequireStructureBreak ?? false,
+          allowReclaimAsDisplacement: this.settings.errAllowReclaimAsDisplacement ?? false,
+          riskReward: this.settings.errRiskReward ?? 1.5,
+          breakevenEnabled: this.settings.errBreakevenEnabled !== false,
+          breakevenTriggerR: this.settings.errBreakevenTriggerR ?? 1.0,
+          cooldownCandles: this.settings.errCooldownCandles ?? 2,
+        },
+        errState,
+        symbol
+      );
+
+      if (!sig || sig.rejectionReason) return null;
+      return {
+        direction: sig.direction,
+        score: sig.setupScore,
+        atr: sig.metrics.recentAverageRange || 0,
+        sl: sig.sl,
+        tp1: sig.tp1,
+        tp2: sig.tp2,
+        tp3: sig.tp3,
+        signalTime: sig.candleTime,
+        reason: sig.reason,
+        strategy: 'EMA5_REJECTION_RECLAIM_V1',
+        marketRegime: `EMA5 Rejection Reclaim [15m ${sig.regime15m}]`,
+      };
+    }
+
+    // 10. EMA 5 Exact Price Action Entry Strategy (EMA5_EXACT_ENTRY_V1)
+    if (strat === 'EMA5_EXACT_ENTRY_V1') {
+      if (this.settings.eeeEnabled === false) return null;
+      // Closed 5m candles only — strip the in-progress candle
+      const closedKlines = klines.slice(0, -1);
+      if (closedKlines.length < 25) return null;
+
+      // Get live 15m candles for regime structure
+      const klines15m = await this.getKlines(symbol, '15m');
+      const closedKlines15m = klines15m ? klines15m.slice(0, -1) : [];
+
+      if (!this.eeeStates.has(symbol)) {
+        this.eeeStates.set(symbol, createEeeState());
+      }
+      const eeeState = this.eeeStates.get(symbol)!;
+
+      const sig = evaluateEma5ExactEntry(
+        closedKlines,
+        closedKlines15m,
+        {
+          emaLength: this.settings.eeeEmaLength ?? 5,
+          minVolumeRatio: this.settings.eeeMinVolumeRatio ?? 1.05,
+          minBodyRatio: this.settings.eeeMinBodyRatio ?? 0.50,
+          minClosePosition: this.settings.eeeMinClosePosition ?? 0.60,
+          maxEmaDistanceRatio: this.settings.eeeMaxEmaDistanceRatio ?? 1.2,
+          maxStopRangeRatio: this.settings.eeeMaxStopRangeRatio ?? 2.0,
+          maxEmaCrosses: this.settings.eeeMaxEmaCrosses ?? 3,
+          riskReward: this.settings.eeeRiskReward ?? 1.5,
+          exitMode: this.settings.eeeExitMode ?? 'RR',
+          breakevenEnabled: this.settings.eeeBreakevenEnabled !== false,
+          breakevenTriggerR: this.settings.eeeBreakevenTriggerR ?? 1.0,
+          cooldownCandles: this.settings.eeeCooldownCandles ?? 2,
+          slBufferPct: this.settings.eeeSlBufferPct ?? 0.0005,
+          requireOpposingSpace: this.settings.eeeRequireOpposingSpace !== false,
+        },
+        eeeState,
+        symbol
+      );
+
+      if (!sig || sig.rejectionReason) return null;
+      return {
+        direction: sig.direction,
+        score: sig.setupScore,
+        atr: sig.metrics.recentAverageRange || 0,
+        sl: sig.sl,
+        tp1: sig.tp1,
+        tp2: sig.tp2,
+        tp3: sig.tp3,
+        signalTime: sig.candleTime,
+        reason: sig.reason,
+        strategy: 'EMA5_EXACT_ENTRY_V1',
+        marketRegime: `EMA5 Exact PA [15m ${sig.regime15m}]`,
+      };
+    }
+
     return null;
   }
 
@@ -1771,14 +1936,17 @@ export class AutoTrader {
   } | null> {
     if (klines.length < 30) return null;
 
-    // Multi-strategy resolution: Gather all active strategies configured by user
+    // Multi-strategy resolution: Gather all active strategies configured by user (excluding deleted)
+    const deletedList = (this.settings.deletedStrategies || []).map(s => String(s).trim());
     let activeStrategies: string[] = [];
     if (this.settings.enabledStrategies && Array.isArray(this.settings.enabledStrategies) && this.settings.enabledStrategies.length > 0) {
-      activeStrategies = [...this.settings.enabledStrategies];
+      activeStrategies = this.settings.enabledStrategies.filter(s => !deletedList.includes(s));
     } else if (this.settings.activeStrategy && (this.settings.activeStrategy as string) !== 'AUTO_REGIME') {
-      activeStrategies = [this.settings.activeStrategy];
+      if (!deletedList.includes(this.settings.activeStrategy as string)) {
+        activeStrategies = [this.settings.activeStrategy];
+      }
     } else {
-      activeStrategies = ['VOLATILITY_COMPRESSION'];
+      activeStrategies = ['VOLATILITY_COMPRESSION'].filter(s => !deletedList.includes(s));
     }
 
     // Evaluate all active selective strategies
@@ -1930,7 +2098,7 @@ export class AutoTrader {
       ? this.settings.strategyBucket
       : DEFAULT_STRATEGY_BUCKET;
 
-    const eligibleCandidates = getEligibleBucketStrategies(bucket, currentRegime, globalRegime.macroColor);
+    const eligibleCandidates = getEligibleBucketStrategies(bucket, currentRegime, globalRegime.macroColor, this.settings.deletedStrategies || []);
     if (eligibleCandidates.length === 0) {
       this.logScanResult(
         symbol,
@@ -2126,6 +2294,111 @@ export class AutoTrader {
               tp3: tprSig.tp3,
               signalTime: tprSig.candleTime,
               reason: tprSig.reason,
+            };
+          }
+        }
+      }
+
+      if (candidate.id === 'EMA5_REJECTION_RECLAIM_V1' && currentRegime.startsWith('TRENDING')) {
+        if (this.settings.errEnabled !== false && closedKlines.length >= 30) {
+          const klines15m = await this.getKlines(symbol, '15m');
+          const closedKlines15m = klines15m ? klines15m.slice(0, -1) : [];
+
+          if (!this.errStates.has(symbol)) {
+            this.errStates.set(symbol, createErrState());
+          }
+          const errState = this.errStates.get(symbol)!;
+
+          const errSig = evaluateEma5RejectionReclaim(
+            closedKlines,
+            closedKlines15m,
+            {
+              emaLength: this.settings.errEmaLength ?? 5,
+              volumeLookback: this.settings.errVolumeLookback ?? 20,
+              minVolumeRatio: this.settings.errMinVolumeRatio ?? 1.10,
+              minRejectionWickBodyRatio: this.settings.errMinRejectionWickBodyRatio ?? 1.0,
+              strongRejectionWickBodyRatio: this.settings.errStrongRejectionWickBodyRatio ?? 1.5,
+              minDisplacementBodyRatio: this.settings.errMinDisplacementBodyRatio ?? 0.50,
+              strongDisplacementBodyRatio: this.settings.errStrongDisplacementBodyRatio ?? 0.60,
+              minClosePosition: this.settings.errMinClosePosition ?? 0.65,
+              rejectionExpiryCandles: this.settings.errRejectionExpiryCandles ?? 3,
+              reclaimExpiryCandles: this.settings.errReclaimExpiryCandles ?? 2,
+              recentRangeLookback: this.settings.errRecentRangeLookback ?? 5,
+              maxDisplacementRangeRatio: this.settings.errMaxDisplacementRangeRatio ?? 2.0,
+              maxStopRangeRatio: this.settings.errMaxStopRangeRatio ?? 2.0,
+              maxEmaCrosses: this.settings.errMaxEmaCrosses ?? 3,
+              emaCrossLookback: this.settings.errEmaCrossLookback ?? 10,
+              requireStructureBreak: this.settings.errRequireStructureBreak ?? false,
+              allowReclaimAsDisplacement: this.settings.errAllowReclaimAsDisplacement ?? false,
+              riskReward: this.settings.errRiskReward ?? 1.5,
+              breakevenEnabled: this.settings.errBreakevenEnabled !== false,
+              breakevenTriggerR: this.settings.errBreakevenTriggerR ?? 1.0,
+              cooldownCandles: this.settings.errCooldownCandles ?? 2,
+            },
+            errState,
+            symbol
+          );
+
+          if (errSig && !errSig.rejectionReason && (!candidate.direction || errSig.direction === candidate.direction)) {
+            pendingSignal = {
+              direction: errSig.direction,
+              score: errSig.setupScore,
+              atr: errSig.metrics.recentAverageRange || 0,
+              sl: errSig.sl,
+              tp1: errSig.tp1,
+              tp2: errSig.tp2,
+              tp3: errSig.tp3,
+              signalTime: errSig.candleTime,
+              reason: errSig.reason,
+            };
+          }
+        }
+      }
+
+      if (candidate.id === 'EMA5_EXACT_ENTRY_V1' && currentRegime.startsWith('TRENDING')) {
+        if (this.settings.eeeEnabled !== false && closedKlines.length >= 25) {
+          const klines15m = await this.getKlines(symbol, '15m');
+          const closedKlines15m = klines15m ? klines15m.slice(0, -1) : [];
+
+          if (!this.eeeStates.has(symbol)) {
+            this.eeeStates.set(symbol, createEeeState());
+          }
+          const eeeState = this.eeeStates.get(symbol)!;
+
+          const eeeSig = evaluateEma5ExactEntry(
+            closedKlines,
+            closedKlines15m,
+            {
+              emaLength: this.settings.eeeEmaLength ?? 5,
+              minVolumeRatio: this.settings.eeeMinVolumeRatio ?? 1.05,
+              minBodyRatio: this.settings.eeeMinBodyRatio ?? 0.50,
+              minClosePosition: this.settings.eeeMinClosePosition ?? 0.60,
+              maxEmaDistanceRatio: this.settings.eeeMaxEmaDistanceRatio ?? 1.2,
+              maxStopRangeRatio: this.settings.eeeMaxStopRangeRatio ?? 2.0,
+              maxEmaCrosses: this.settings.eeeMaxEmaCrosses ?? 3,
+              riskReward: this.settings.eeeRiskReward ?? 1.5,
+              exitMode: this.settings.eeeExitMode ?? 'RR',
+              breakevenEnabled: this.settings.eeeBreakevenEnabled !== false,
+              breakevenTriggerR: this.settings.eeeBreakevenTriggerR ?? 1.0,
+              cooldownCandles: this.settings.eeeCooldownCandles ?? 2,
+              slBufferPct: this.settings.eeeSlBufferPct ?? 0.0005,
+              requireOpposingSpace: this.settings.eeeRequireOpposingSpace !== false,
+            },
+            eeeState,
+            symbol
+          );
+
+          if (eeeSig && !eeeSig.rejectionReason && (!candidate.direction || eeeSig.direction === candidate.direction)) {
+            pendingSignal = {
+              direction: eeeSig.direction,
+              score: eeeSig.setupScore,
+              atr: eeeSig.metrics.recentAverageRange || 0,
+              sl: eeeSig.sl,
+              tp1: eeeSig.tp1,
+              tp2: eeeSig.tp2,
+              tp3: eeeSig.tp3,
+              signalTime: eeeSig.candleTime,
+              reason: eeeSig.reason,
             };
           }
         }
@@ -2424,3 +2697,5 @@ oms.onTradeClosed = (pnl: number) => {
   autoTrader.updateDemoBalance(pnl);
 };
 oms.isEngineActive = () => autoTrader.isEngineActive();
+oms.getDeletedStrategies = () => autoTrader.getSettings().deletedStrategies || [];
+

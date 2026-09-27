@@ -255,4 +255,86 @@ describe('TradeEngineBanner - Strategy & Trade Engine Active Evaluation', () => 
     expect(status.primaryReason).toContain('Trading Engine is STOPPED by operator');
     expect(status.strategyTag).toBe('4 ACTIVE');
   });
+
+  it('evaluates as BLOCKED and identifies stopping reason when max positions limit is reached', () => {
+    const status = evaluateEngineStatus(
+      true,
+      baseSettings,
+      'CONNECTED',
+      false,
+      null,
+      { isPausing: false, reason: null },
+      {
+        engine: 'RUNNING',
+        marketData: 'CONNECTED',
+        userStream: 'CONNECTED',
+        lastReconciliationAt: 'N/A',
+        tradingBlocked: true,
+        activePositions: 3,
+        maxConcurrentTrades: 3
+      }
+    );
+
+    expect(status.isActive).toBe(false);
+    expect(status.primaryReason).toContain('Max concurrent positions limit reached (3/3)');
+    const posGate = status.gateChecklist.find(g => g.id === 'positionsLimit');
+    expect(posGate).toBeDefined();
+    expect(posGate?.status).toBe('BLOCK');
+  });
+
+  it('evaluates as BLOCKED when daily loss limit is breached', () => {
+    const status = evaluateEngineStatus(
+      true,
+      baseSettings,
+      'CONNECTED',
+      false,
+      null,
+      { isPausing: false, reason: null },
+      {
+        engine: 'RUNNING',
+        marketData: 'CONNECTED',
+        userStream: 'CONNECTED',
+        lastReconciliationAt: 'N/A',
+        tradingBlocked: true,
+        dailyLossPct: -3.5,
+        dailyLossLimitPct: -3.0
+      }
+    );
+
+    expect(status.isActive).toBe(false);
+    expect(status.primaryReason).toContain('Daily loss limit reached (-3.50% / -3%)');
+    const lossGate = status.gateChecklist.find(g => g.id === 'dailyLoss');
+    expect(lossGate).toBeDefined();
+    expect(lossGate?.status).toBe('BLOCK');
+  });
+
+  it('produces all 10 operational gate checks with PASS status when everything is operational', () => {
+    const status = evaluateEngineStatus(
+      true,
+      baseSettings,
+      'CONNECTED',
+      false,
+      null,
+      { isPausing: false, reason: null },
+      {
+        engine: 'RUNNING',
+        marketData: 'CONNECTED',
+        userStream: 'CONNECTED',
+        lastReconciliationAt: 'N/A',
+        tradingBlocked: false,
+        activePositions: 1,
+        maxConcurrentTrades: 3,
+        dailyLossPct: 0.0,
+        dailyLossLimitPct: -3.0,
+        consecutiveLosses: 0,
+        maxConsecutiveLosses: 4,
+        lastScanTime: new Date().toISOString(),
+        lastScannedCoins: 100
+      }
+    );
+
+    expect(status.isActive).toBe(true);
+    expect(status.gateChecklist).toHaveLength(10);
+    expect(status.gateChecklist.every(g => g.status === 'PASS')).toBe(true);
+  });
 });

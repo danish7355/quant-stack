@@ -207,6 +207,8 @@ describe('Frontend-Backend Synchronization & Integration Suite', () => {
       expect(DEFAULT_STRATEGY_BUCKET.length).toBeGreaterThan(0);
 
       const knownStrategies = [
+        'EMA5_EXACT_ENTRY_V1',
+        'EMA5_REJECTION_RECLAIM_V1',
         'TREND_PULLBACK',
         'TREND_PULLBACK_RETEST',
         'VOLATILITY_COMPRESSION',

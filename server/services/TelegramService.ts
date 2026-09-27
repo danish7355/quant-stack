@@ -338,7 +338,11 @@ export class TelegramService {
     const arrow = isLong ? '📈 LONG' : '📉 SHORT';
 
     let stratName = '📊 Composite 10-Gate';
-    if (pos.strategy === 'EMA5_PA_VOLUME_V1') {
+    if (pos.strategy === 'EMA5_EXACT_ENTRY_V1') {
+      stratName = '⚡ EMA 5 Exact Entry';
+    } else if (pos.strategy === 'EMA5_REJECTION_RECLAIM_V1') {
+      stratName = '⚡ EMA 5 Rejection Reclaim';
+    } else if (pos.strategy === 'EMA5_PA_VOLUME_V1') {
       stratName = '⚡ EMA 5 PA + Volume';
     } else if (pos.strategy === 'TREND_PULLBACK') {
       stratName = '🎯 Trend Pullback (EMA Reversion)';
@@ -424,7 +428,11 @@ export class TelegramService {
     const status = isWin ? 'PROFIT' : 'STOPPED';
 
     let stratName = '📊 Composite 10-Gate';
-    if (pos.strategy === 'EMA5_PA_VOLUME_V1') {
+    if (pos.strategy === 'EMA5_EXACT_ENTRY_V1') {
+      stratName = '⚡ EMA 5 Exact Entry';
+    } else if (pos.strategy === 'EMA5_REJECTION_RECLAIM_V1') {
+      stratName = '⚡ EMA 5 Rejection Reclaim';
+    } else if (pos.strategy === 'EMA5_PA_VOLUME_V1') {
       stratName = '⚡ EMA 5 PA + Volume';
     } else if (pos.strategy === 'TREND_PULLBACK') {
       stratName = '🎯 Trend Pullback';

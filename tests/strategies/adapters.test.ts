@@ -15,6 +15,7 @@ import {
   evaluateStrategyRegimeFiltersAdapter,
   evaluateEma5PaVolumeAdapter,
   evaluateTrendPullbackRetestAdapter,
+  evaluateEma5RejectionReclaimAdapter,
   StrategySignal,
 } from '../../src/utils/strategies/index';
 
@@ -155,6 +156,15 @@ describe('Strategy Adapters — Contract Verification', () => {
     const sig = evaluateTrendPullbackRetestAdapter(candles, candles, candles[candles.length - 1].close, {
       symbol: 'ETHUSDT',
       timeframe: '15m',
+    });
+    if (sig) validateSignalShape(sig);
+    expect(sig === null || typeof sig === 'object').toBe(true);
+  });
+
+  test('evaluateEma5RejectionReclaimAdapter handles candles and returns valid shape or null', () => {
+    const sig = evaluateEma5RejectionReclaimAdapter(candles, candles, candles[candles.length - 1].close, {
+      symbol: 'BTCUSDT',
+      timeframe: '5m',
     });
     if (sig) validateSignalShape(sig);
     expect(sig === null || typeof sig === 'object').toBe(true);

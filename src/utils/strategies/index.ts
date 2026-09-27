@@ -33,6 +33,38 @@ export {
 } from './strategyRegimeFiltersAdapter.js';
 export { evaluateEma5PaVolumeAdapter } from './ema5PaVolumeAdapter.js';
 export { evaluateTrendPullbackRetestAdapter } from './trendPullbackRetestAdapter.js';
+export { evaluateEma5RejectionReclaimAdapter } from './ema5RejectionReclaimAdapter.js';
+export { evaluateEma5ExactEntryAdapter } from './ema5ExactEntryAdapter.js';
+export {
+  evaluateEma5ExactEntry,
+  detectExactEMA5Setup,
+  detectExactEMA5DetailedSetup,
+  backtestEma5ExactEntry,
+  createEeeState,
+  determine15mStructure,
+  type EeeConfig,
+  type EeeSignal,
+  type EeeState,
+  type EeeDirection,
+  type EeeRegime15m,
+  type EeeRejectionCode,
+  type EeeCandle,
+  type ExactSetupResult,
+  type SetupDetectionResult,
+  type EeeBacktestSummary,
+} from './ema5ExactEntry.js';
+export {
+  evaluateEma5RejectionReclaim,
+  backtestEma5RejectionReclaim,
+  createErrState,
+  type ErrConfig,
+  type ErrSignal,
+  type ErrState,
+  type ErrPhase,
+  type ErrDirection,
+  type ErrCandle,
+  type ErrBacktestSummary,
+} from './ema5RejectionReclaim.js';
 export {
   evaluateTrendPullbackRetest,
   backtestTrendPullbackRetest,
