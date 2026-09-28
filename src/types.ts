@@ -224,9 +224,9 @@ export interface GlobalMarketRegime {
   ethPrice?: number;
 }
 
-import type { TradingSettings, TradingMode, SettingsLoadState, ValidationResult } from './shared/TradingSettings.js';
+import type { TradingSettings, TradingMode, SettingsLoadState, ValidationResult, GateCustomConfig, StrategyCustomChecklist } from './shared/TradingSettings.js';
 import { NUMERIC_BOUNDS, validateTradingSettings, CANONICAL_DEFAULT_SETTINGS } from './shared/TradingSettings.js';
-export type { TradingSettings, TradingMode, SettingsLoadState, ValidationResult };
+export type { TradingSettings, TradingMode, SettingsLoadState, ValidationResult, GateCustomConfig, StrategyCustomChecklist };
 export { NUMERIC_BOUNDS, validateTradingSettings, CANONICAL_DEFAULT_SETTINGS };
 export type AppSettings = TradingSettings;
 

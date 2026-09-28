@@ -13,3 +13,6 @@ export * from "./logger";
 export * from "./positionSizer";
 export * from "./signalValidator";
 export * from "./backtester";
+export * from "./FeeDragCalculator";
+export * from "./SignalPriority";
+export * from "./PreTradeFilters";

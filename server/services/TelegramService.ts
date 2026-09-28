@@ -338,8 +338,10 @@ export class TelegramService {
     const arrow = isLong ? '📈 LONG' : '📉 SHORT';
 
     let stratName = '📊 Composite 10-Gate';
-    if (pos.strategy === 'EMA5_EXACT_ENTRY_V1') {
-      stratName = '⚡ EMA 5 Exact Entry';
+    if (pos.strategy === 'EMA5_EXACT_ENTRY_V2') {
+      stratName = '⚡ EMA 5 Exact Entry V2';
+    } else if (pos.strategy === 'EMA5_EXACT_ENTRY_V1') {
+      stratName = '⚡ EMA 5 Exact Entry (V1)';
     } else if (pos.strategy === 'EMA5_REJECTION_RECLAIM_V1') {
       stratName = '⚡ EMA 5 Rejection Reclaim';
     } else if (pos.strategy === 'EMA5_PA_VOLUME_V1') {
@@ -428,8 +430,10 @@ export class TelegramService {
     const status = isWin ? 'PROFIT' : 'STOPPED';
 
     let stratName = '📊 Composite 10-Gate';
-    if (pos.strategy === 'EMA5_EXACT_ENTRY_V1') {
-      stratName = '⚡ EMA 5 Exact Entry';
+    if (pos.strategy === 'EMA5_EXACT_ENTRY_V2') {
+      stratName = '⚡ EMA 5 Exact Entry V2';
+    } else if (pos.strategy === 'EMA5_EXACT_ENTRY_V1') {
+      stratName = '⚡ EMA 5 Exact Entry (V1)';
     } else if (pos.strategy === 'EMA5_REJECTION_RECLAIM_V1') {
       stratName = '⚡ EMA 5 Rejection Reclaim';
     } else if (pos.strategy === 'EMA5_PA_VOLUME_V1') {

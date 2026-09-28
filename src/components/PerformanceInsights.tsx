@@ -61,6 +61,7 @@ interface SetupEVMetrics {
 // Map each known strategy to its typical market condition
 export function getMarketConditionForStrategy(strategy?: string): 'Trending' | 'Ranging / Consolidation' | 'Mean-Reversion / Climax' | 'Trend Continuation / 5 EMA Gap' | 'Trend Continuation / Pullback Retest' | 'Reversal / Reclaim & Displacement' | 'Unspecified' {
   const s = (strategy || '').toUpperCase();
+  if (s === 'EMA5_EXACT_ENTRY_V2') return 'Trend Continuation / 5 EMA Gap';
   if (s === 'EMA5_EXACT_ENTRY_V1') return 'Trend Continuation / 5 EMA Gap';
   if (s === 'EMA5_REJECTION_RECLAIM_V1') return 'Reversal / Reclaim & Displacement';
   if ((s === 'TREND_PULLBACK' || s.includes('PULLBACK')) && s !== 'EMA_GAP_PULLBACK' && s !== 'TREND_PULLBACK_RETEST') return 'Trending';
@@ -100,8 +101,14 @@ export default function PerformanceInsights({ logs }: PerformanceInsightsProps) 
           let diag = 'Review strategy mapping';
           let rec = 'Track strategy parameter in order placement.';
 
-          if (stratKey === 'EMA5_EXACT_ENTRY_V1') {
-            displayName = 'EMA 5 Exact Price Action Entry';
+          if (stratKey === 'EMA5_EXACT_ENTRY_V2') {
+            displayName = 'EMA 5 Exact Price Action Entry V2';
+            cond = 'Trend Continuation / 5 EMA Gap';
+            desc = 'Exact 5m EMA 5 Alert → Break trigger with 15m structure regime, multi-timeframe level ladder targets, and fee-drag floor';
+            diag = 'Zero-lookahead alert-break trigger with strict structural stop and multi-TF level ladder.';
+            rec = 'Enforce fee-drag floor (feeR <= 0.20) and level ladder TP1 (40%), TP2 (40%), Runner (20%).';
+          } else if (stratKey === 'EMA5_EXACT_ENTRY_V1') {
+            displayName = 'EMA 5 Exact Price Action Entry (V1)';
             cond = 'Trend Continuation / 5 EMA Gap';
             desc = 'Exact EMA 5 price-action entry with 15m structure regime and volume confirmation filter';
             diag = 'High-probability momentum trigger around EMA 5 with strict stop loss.';

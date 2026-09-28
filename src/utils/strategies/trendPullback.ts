@@ -82,7 +82,7 @@ export interface TrendPullbackOptions {
   emaSlow?: number;              // default 50
   atrPeriod?: number;            // default 14
   adxPeriod?: number;            // default 14
-  adxMin?: number;               // default 18 (trend strength filter)
+  adxMin?: number;               // default 22 (trend strength filter, was 18)
   volSmaPeriod?: number;         // default 20
   minVolumeRatio?: number;       // default 1.0 (confirmation vol vs volSma20)
   requireVolume?: boolean;       // default true
@@ -441,7 +441,7 @@ export function detectMarketRegime(
 
   const fastP = options.emaFast || 20;
   const slowP = options.emaSlow || 50;
-  const adxMin = options.adxMin !== undefined ? options.adxMin : 18;
+  const adxMin = options.adxMin !== undefined ? options.adxMin : 22;
   const maxOverextendAtr = options.maxOverextensionAtr !== undefined ? options.maxOverextensionAtr : 3.0;
 
   const closes = htfCandles.map(c => c.close);
@@ -2523,3 +2523,142 @@ export function calculateStrategyExpectancy(trades: StrategyTradeRecord[]): Expe
     bySession
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STANDALONE DETECTION FUNCTION (PULLBACK LOGIC & ADX >= 22)
+// ─────────────────────────────────────────────────────────────────────────────
+export interface TrendPullbackConfig {
+  emaShort?: number;        // 20
+  emaLong?: number;         // 50
+  adxPeriod?: number;       // 14
+  minAdx?: number;          // 22 (FIXED: was 18)
+  pullbackDepthAtr?: number; // 0.25
+  volumeRatio?: number;     // 1.0
+  atrMultiplier?: number;   // 0.30
+}
+
+export interface TrendPullbackSignal {
+  direction: 'LONG' | 'SHORT';
+  entry: number;
+  stopLoss: number;
+  tp1: number;
+  tp2: number;
+  trailingEma: number;
+  confidence: number;
+  setupType: 'TREND_PULLBACK';
+}
+
+export function detectTrendPullback(
+  candles: Candle[],
+  config: TrendPullbackConfig = {}
+): TrendPullbackSignal | null {
+  const cfg = {
+    emaShort: config.emaShort ?? 20,
+    emaLong: config.emaLong ?? 50,
+    adxPeriod: config.adxPeriod ?? 14,
+    minAdx: config.minAdx ?? 22,
+    pullbackDepthAtr: config.pullbackDepthAtr ?? 0.25,
+    volumeRatio: config.volumeRatio ?? 1.0,
+    atrMultiplier: config.atrMultiplier ?? 0.30
+  };
+
+  if (!candles || candles.length < Math.max(cfg.emaLong + 5, 30)) return null;
+
+  const current = candles[candles.length - 1];
+  const prev = candles[candles.length - 2];
+
+  const closes = candles.map(c => c.close);
+  const highs = candles.map(c => c.high);
+  const lows = candles.map(c => c.low);
+
+  const emaShortArr = calculateEMA(closes, cfg.emaShort);
+  const emaLongArr = calculateEMA(closes, cfg.emaLong);
+  const adxResult = calculateADX(highs, lows, closes, cfg.adxPeriod);
+  const atrArr = calculateATR(highs, lows, closes, 14);
+  const avgVolArr = calculateSMA(candles.map(c => c.volume), 20);
+
+  const lastIdx = candles.length - 1;
+  const ema20 = emaShortArr[lastIdx] ?? current.close;
+  const ema20Prev = emaShortArr[Math.max(0, lastIdx - 1)] ?? ema20;
+  const ema50 = emaLongArr[lastIdx] ?? current.close;
+  const adx = adxResult.adx[lastIdx] ?? 0;
+  const atr = atrArr[lastIdx] ?? (current.close * 0.015);
+  const avgVolume = avgVolArr[lastIdx] ?? (current.volume || 1);
+
+  // === TREND BASELINE ===
+  const isUptrend = ema20 > ema50 && ema20 >= ema20Prev * 0.995;
+  const isDowntrend = ema20 < ema50 && ema20 <= ema20Prev * 1.005;
+
+  if (adx < cfg.minAdx) {
+    return null; // ADX >= 22 required
+  }
+
+  // === PULLBACK DETECTION (Clear wick vs body logic) ===
+  let pullbackValid = false;
+
+  if (isUptrend) {
+    // LONG: Wick touches EMA20, but close holds above EMA50
+    const wickTouchesEma20 =
+      prev.low <= ema20 * (1 + cfg.pullbackDepthAtr * (atr / (ema20 || 1))) &&
+      prev.low >= ema20 * (1 - cfg.pullbackDepthAtr * (atr / (ema20 || 1)));
+
+    const closeAboveEma50 = prev.close > ema50;
+    pullbackValid = wickTouchesEma20 && closeAboveEma50;
+  } else if (isDowntrend) {
+    // SHORT: Wick touches EMA20, but close holds below EMA50
+    const wickTouchesEma20 =
+      prev.high >= ema20 * (1 - cfg.pullbackDepthAtr * (atr / (ema20 || 1))) &&
+      prev.high <= ema20 * (1 + cfg.pullbackDepthAtr * (atr / (ema20 || 1)));
+
+    const closeBelowEma50 = prev.close < ema50;
+    pullbackValid = wickTouchesEma20 && closeBelowEma50;
+  }
+
+  if (!pullbackValid) return null;
+
+  // === REVERSAL TRIGGER ===
+  const candleRange = Math.max(0.0001, current.high - current.low);
+  const bodyRatio = Math.abs(current.close - current.open) / candleRange;
+
+  const isReversalLong = isUptrend && current.close > current.open && bodyRatio >= 0.50;
+  const isReversalShort = isDowntrend && current.close < current.open && bodyRatio >= 0.50;
+
+  if (!isReversalLong && !isReversalShort) return null;
+
+  // === VOLUME CONFIRMATION ===
+  const volumeRatio = current.volume / (avgVolume || 1);
+  if (volumeRatio < cfg.volumeRatio) return null;
+
+  // === STOP & TARGET CALCULATION ===
+  const recent10Lows = candles.slice(-10).map(c => c.low);
+  const recent10Highs = candles.slice(-10).map(c => c.high);
+  const pullbackLow = Math.min(...recent10Lows);
+  const pullbackHigh = Math.max(...recent10Highs);
+
+  const stopLoss = isUptrend
+    ? pullbackLow - cfg.atrMultiplier * atr
+    : pullbackHigh + cfg.atrMultiplier * atr;
+
+  const stopDistance = Math.abs(current.close - stopLoss);
+  if (stopDistance <= 0) return null;
+
+  const tp1 = isUptrend
+    ? current.close + 1.50 * stopDistance
+    : current.close - 1.50 * stopDistance;
+
+  const tp2 = isUptrend
+    ? current.close + 3.00 * stopDistance
+    : current.close - 3.00 * stopDistance;
+
+  return {
+    direction: isUptrend ? 'LONG' : 'SHORT',
+    entry: current.close,
+    stopLoss,
+    tp1,
+    tp2,
+    trailingEma: ema20,
+    confidence: 0.72,
+    setupType: 'TREND_PULLBACK'
+  };
+}
+

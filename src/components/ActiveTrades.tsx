@@ -60,8 +60,9 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
 
     if (isDeleted) {
       let label = strat?.replace(/_/g, ' ') || 'DELETED';
-      if (s.includes('MACRO_RANGE') || s === 'MACRO_RANGE_BREAKOUT') label = 'Macro Range Breakout';
-      else if (s.includes('EMA5_EXACT') || s === 'EMA5_EXACT_ENTRY_V1') label = 'EMA 5 Exact';
+      if (s === 'EMA5_EXACT_ENTRY_V2') label = 'EMA 5 Exact V2';
+      else if (s.includes('MACRO_RANGE') || s === 'MACRO_RANGE_BREAKOUT') label = 'Macro Range Breakout';
+      else if (s.includes('EMA5_EXACT') || s === 'EMA5_EXACT_ENTRY_V1') label = 'EMA 5 Exact V1';
       else if (s.includes('EMA5_REJECTION') || s === 'EMA5_REJECTION_RECLAIM_V1') label = 'EMA 5 Reclaim';
       else if (s.includes('EMA5_PA') || s === 'EMA5_PA_VOLUME_V1') label = 'EMA 5 PA Vol';
       else if (s.includes('EMA_GAP') || s === 'EMA_GAP_PULLBACK') label = '5 EMA Gap';
@@ -79,10 +80,17 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
       );
     }
 
+    if (s === 'EMA5_EXACT_ENTRY_V2') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-950/50 text-emerald-300 border border-emerald-500/60 text-[10px] font-bold tracking-wide uppercase">
+          <Zap className="w-3 h-3 text-emerald-400" /> EMA 5 Exact V2
+        </span>
+      );
+    }
     if (s.includes('EMA5_EXACT') || s === 'EMA5_EXACT_ENTRY_V1') {
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-950/50 text-emerald-300 border border-emerald-700/60 text-[10px] font-bold tracking-wide uppercase">
-          <Zap className="w-3 h-3 text-emerald-400" /> EMA 5 Exact
+          <Zap className="w-3 h-3 text-emerald-400" /> EMA 5 Exact V1
         </span>
       );
     }
@@ -240,6 +248,8 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
               <span className="text-gray-400">Active Strategies ({activeStrategiesList.length}):</span>
               <span className="text-[#00e696]">
                 {activeStrategiesList.map(s => {
+                  if (s === 'EMA5_EXACT_ENTRY_V2') return 'EMA 5 Exact V2';
+                  if (s === 'EMA5_EXACT_ENTRY_V1') return 'EMA 5 Exact V1';
                   if (s === 'EMA5_REJECTION_RECLAIM_V1') return 'EMA 5 Reclaim';
                   if (s === 'EMA5_PA_VOLUME_V1') return 'EMA 5 PA Vol';
                   if (s === 'EMA_GAP_PULLBACK') return '5 EMA Gap';
@@ -259,7 +269,9 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
             <span className="inline-flex items-center gap-1.5 text-[10.5px] font-bold px-2.5 py-1 bg-gray-900 border border-gray-700 text-gray-200 rounded-lg">
               <span className="text-gray-400">Bot Strategy:</span>
               <span className="text-[#00e696]">
-                {activeStrategiesList[0] === 'EMA5_REJECTION_RECLAIM_V1' ? '⚡ EMA 5 Rejection Reclaim'
+                {activeStrategiesList[0] === 'EMA5_EXACT_ENTRY_V2' ? '⚡ EMA 5 Exact Entry V2'
+                  : activeStrategiesList[0] === 'EMA5_EXACT_ENTRY_V1' ? '⚡ EMA 5 Exact Entry V1'
+                  : activeStrategiesList[0] === 'EMA5_REJECTION_RECLAIM_V1' ? '⚡ EMA 5 Rejection Reclaim'
                   : activeStrategiesList[0] === 'EMA5_PA_VOLUME_V1' ? '⚡ EMA 5 PA + Volume'
                   : activeStrategiesList[0] === 'EMA_GAP_PULLBACK' ? '⚡ 5 EMA Gap Pullback'
                   : (activeStrategiesList[0] as string) === 'DELTA_CLIMAX' ? '⚡ Delta Climax (Legacy)'

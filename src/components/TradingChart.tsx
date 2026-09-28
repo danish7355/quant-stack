@@ -167,7 +167,9 @@ export default function TradingChart({ coin, activePosition }: TradingChartProps
       }
       
       const isLong = activePosition.direction === 'LONG';
-      const stratLabel = activePosition.strategy === 'EMA5_REJECTION_RECLAIM_V1' ? 'EMA5 RECLAIM' :
+      const stratLabel = activePosition.strategy === 'EMA5_EXACT_ENTRY_V2' ? 'EMA5 EXACT V2' :
+        activePosition.strategy === 'EMA5_EXACT_ENTRY_V1' ? 'EMA5 EXACT V1' :
+        activePosition.strategy === 'EMA5_REJECTION_RECLAIM_V1' ? 'EMA5 RECLAIM' :
         activePosition.strategy === 'EMA_GAP_PULLBACK' ? '5 EMA GAP' :
         activePosition.strategy === 'TREND_PULLBACK_RETEST' ? 'RETEST' :
         activePosition.strategy === 'EMA5_PA_VOLUME_V1' ? 'EMA5 PA' :

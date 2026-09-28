@@ -434,8 +434,8 @@ export interface RangeMeanReversionOptions {
   minScore?: number;            // default 8 (out of 11)
   outerRangePct?: number;       // default 0.20 (lower 20% long, upper 20% short)
   rsiPeriod?: number;           // default 14 (or 5/7)
-  rsiOversold?: number;         // default 35
-  rsiOverbought?: number;       // default 65
+  rsiOversold?: number;         // default 35 (or 30 in strict detectRangeMeanReversion)
+  rsiOverbought?: number;       // default 65 (or 70 in strict detectRangeMeanReversion)
   atrBufferMult?: number;       // default 0.3
   minRrRatio?: number;          // default 1.2 to TP1, 2.0 to TP2
   bbPeriod?: number;            // default 20
@@ -463,8 +463,8 @@ export function evaluateRangeMeanReversion(
   const minScore = params.minScore !== undefined ? params.minScore : 8;
   const outerPct = params.outerRangePct !== undefined ? params.outerRangePct : 0.20;
   const rsiPeriod = params.rsiPeriod || 14;
-  const rsiOversold = params.rsiOversold || 35;
-  const rsiOverbought = params.rsiOverbought || 65;
+  const rsiOversold = params.rsiOversold !== undefined ? params.rsiOversold : 35;
+  const rsiOverbought = params.rsiOverbought !== undefined ? params.rsiOverbought : 65;
   const atrBufferMult = params.atrBufferMult !== undefined ? params.atrBufferMult : 0.3;
   const minRr = params.minRrRatio || 1.2;
 
@@ -865,3 +865,139 @@ export function calculateMeanReversionExpectancy(trades: MeanReversionTradeRecor
     }
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STANDALONE DETECTION FUNCTION (RSI 70/30 & REALISTIC TARGETS)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface RangeMeanReversionConfig {
+  bbPeriod?: number;         // 20
+  bbStdDev?: number;         // 2.0
+  rsiPeriod?: number;        // 14
+  rsiOverbought?: number;    // 70 (FIXED: was 65)
+  rsiOversold?: number;      // 30 (FIXED: was 35)
+  maxAdx?: number;           // 22
+  atrRatioMax?: number;      // 1.25
+  slBufferAtr?: number;      // 0.15
+}
+
+export interface RangeMeanReversionSignalResult {
+  direction: 'LONG' | 'SHORT';
+  entry: number;
+  stopLoss: number;
+  tp1: number;
+  tp2: number;
+  confidence: number;
+  setupType: 'RANGE_MEAN_REVERSION';
+  expectedRR: number;
+}
+
+export function detectRangeMeanReversion(
+  candles: any[],
+  htfCandles: any[] = [],  // 1h for regime confirmation
+  config: RangeMeanReversionConfig = {}
+): RangeMeanReversionSignalResult | null {
+  const cfg = {
+    bbPeriod: config.bbPeriod ?? 20,
+    bbStdDev: config.bbStdDev ?? 2.0,
+    rsiPeriod: config.rsiPeriod ?? 14,
+    rsiOverbought: config.rsiOverbought ?? 70,
+    rsiOversold: config.rsiOversold ?? 30,
+    maxAdx: config.maxAdx ?? 22,
+    atrRatioMax: config.atrRatioMax ?? 1.25,
+    slBufferAtr: config.slBufferAtr ?? 0.15
+  };
+
+  if (!candles || candles.length < 35) return null;
+
+  const current = candles[candles.length - 1];
+  const prev = candles[candles.length - 2];
+
+  const closes = candles.map(c => c.close);
+  const highs = candles.map(c => c.high);
+  const lows = candles.map(c => c.low);
+
+  const bb = calculateBollingerBands(closes, cfg.bbPeriod, cfg.bbStdDev);
+  const rsiSeries = calculateRSI(closes, cfg.rsiPeriod);
+  const adxResult = calculateADX(highs, lows, closes, 14);
+  const atrSeries = calculateATR(highs, lows, closes, 14);
+  const sma20Series = calculateSMA(closes, 20);
+
+  const len = candles.length - 1;
+  const currentAdx = adxResult.adx[len] ?? 0;
+  const currentAtr = atrSeries[len] ?? (current.close * 0.015);
+  const sma20 = sma20Series[len] ?? current.close;
+  const rsi = rsiSeries[len] ?? 50;
+
+  // === REGIME GATING (RANGING MARKET) ===
+  if (currentAdx > cfg.maxAdx) {
+    return null; // Trending market, skip mean reversion
+  }
+
+  // Range-bound confirmation (price oscillating around SMA20)
+  const priceDeviationFromMean = Math.abs(current.close - sma20) / (sma20 || 1);
+  if (priceDeviationFromMean > 0.02) {
+    return null; // Price > 2% from mean, not ranging
+  }
+
+  // === RSI EXHAUSTION THRESHOLDS ===
+  const isOverbought = rsi > cfg.rsiOverbought; // > 70
+  const isOversold = rsi < cfg.rsiOversold;     // < 30
+
+  // === BAND PENETRATION ===
+  const prevUpper = bb.upper[len - 1] ?? prev.close;
+  const prevLower = bb.lower[len - 1] ?? prev.close;
+  const currUpper = bb.upper[len] ?? current.close;
+  const currLower = bb.lower[len] ?? current.close;
+
+  const piercedUpperBand = prev.low < prevUpper && prev.close > prevUpper;
+  const piercedLowerBand = prev.high > prevLower && prev.close < prevLower;
+
+  // === REJECTION CLOSE (Back inside band) ===
+  const rejectedUpper = current.close < currUpper && current.close < prev.close;
+  const rejectedLower = current.close > currLower && current.close > prev.close;
+
+  // === SIGNAL VALIDATION ===
+  const isShortSetup = isOverbought && piercedUpperBand && rejectedUpper;
+  const isLongSetup = isOversold && piercedLowerBand && rejectedLower;
+
+  if (!isShortSetup && !isLongSetup) return null;
+
+  // === REALISTIC TARGETS (1:1.5 to 1:2.0, not 1:3.0) ===
+  const stopDistance = cfg.slBufferAtr * currentAtr;
+
+  const stopLoss = isLongSetup
+    ? current.low - stopDistance
+    : current.high + stopDistance;
+
+  // TP1: Return to mean (20-SMA)
+  const tp1 = sma20;
+
+  // TP2: Opposite band (realistic 1:1.8 R:R)
+  const tp2 = isLongSetup
+    ? current.close + 1.8 * stopDistance
+    : current.close - 1.8 * stopDistance;
+
+  // Calculate actual R:R for logging
+  const grossRR = stopDistance > 0
+    ? (isLongSetup ? (tp2 - current.close) / stopDistance : (current.close - tp2) / stopDistance)
+    : 0;
+
+  if (grossRR < 1.5) {
+    console.warn(
+      `[RANGE_MEAN_REVERSION] Low R:R setup: ${grossRR.toFixed(2)}R. Consider skipping.`
+    );
+  }
+
+  return {
+    direction: isLongSetup ? 'LONG' : 'SHORT',
+    entry: current.close,
+    stopLoss,
+    tp1,
+    tp2,
+    confidence: 0.58,
+    setupType: 'RANGE_MEAN_REVERSION',
+    expectedRR: Number(grossRR.toFixed(2))
+  };
+}
+

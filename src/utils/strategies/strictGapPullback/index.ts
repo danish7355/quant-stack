@@ -8,3 +8,9 @@ export {
   type ManagementResult,
 } from "./tradeManager";
 export * from "./types";
+export {
+  detectEmaGapPullback,
+  calculateHtfTrendScore,
+  type GapPullbackConfig,
+  type GapPullbackSignal,
+} from "./emaGapPullback.js";

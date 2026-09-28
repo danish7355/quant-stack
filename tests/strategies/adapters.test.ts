@@ -16,6 +16,8 @@ import {
   evaluateEma5PaVolumeAdapter,
   evaluateTrendPullbackRetestAdapter,
   evaluateEma5RejectionReclaimAdapter,
+  evaluateEma5ExactEntryAdapter,
+  evaluateEma5ExactEntryV2Adapter,
   StrategySignal,
 } from '../../src/utils/strategies/index';
 
@@ -163,6 +165,24 @@ describe('Strategy Adapters — Contract Verification', () => {
 
   test('evaluateEma5RejectionReclaimAdapter handles candles and returns valid shape or null', () => {
     const sig = evaluateEma5RejectionReclaimAdapter(candles, candles, candles[candles.length - 1].close, {
+      symbol: 'BTCUSDT',
+      timeframe: '5m',
+    });
+    if (sig) validateSignalShape(sig);
+    expect(sig === null || typeof sig === 'object').toBe(true);
+  });
+
+  test('evaluateEma5ExactEntryAdapter handles candles and returns valid shape or null', () => {
+    const sig = evaluateEma5ExactEntryAdapter(candles, candles, candles[candles.length - 1].close, {
+      symbol: 'BTCUSDT',
+      timeframe: '5m',
+    });
+    if (sig) validateSignalShape(sig);
+    expect(sig === null || typeof sig === 'object').toBe(true);
+  });
+
+  test('evaluateEma5ExactEntryV2Adapter handles candles and returns valid shape or null', () => {
+    const sig = evaluateEma5ExactEntryV2Adapter(candles, candles, candles[candles.length - 1].close, {
       symbol: 'BTCUSDT',
       timeframe: '5m',
     });

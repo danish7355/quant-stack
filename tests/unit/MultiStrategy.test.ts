@@ -137,6 +137,7 @@ describe('Multi-Strategy Activation & Arbitration Engine', () => {
   describe('Strategy Catalog Definition', () => {
     it('includes all 11 canonical strategies in AVAILABLE_STRATEGIES', () => {
       const ids = AVAILABLE_STRATEGIES.map(s => s.id);
+      expect(ids).toContain('EMA5_EXACT_ENTRY_V2');
       expect(ids).toContain('EMA5_EXACT_ENTRY_V1');
       expect(ids).toContain('EMA5_REJECTION_RECLAIM_V1');
       expect(ids).toContain('VOLATILITY_COMPRESSION');
@@ -148,7 +149,7 @@ describe('Multi-Strategy Activation & Arbitration Engine', () => {
       expect(ids).toContain('BINANCE_COMPOSITE');
       expect(ids).toContain('EARLY_COIL_BREAKOUT');
       expect(ids).toContain('MACRO_RANGE_BREAKOUT');
-      expect(AVAILABLE_STRATEGIES.length).toBe(11);
+      expect(AVAILABLE_STRATEGIES.length).toBe(12);
     });
   });
 });

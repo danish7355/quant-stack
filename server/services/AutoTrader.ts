@@ -31,6 +31,7 @@ import { evaluateEma5PaVolume } from '../../src/utils/strategies/ema5PaVolume.js
 import { evaluateTrendPullbackRetest, createTprState, TprState } from '../../src/utils/strategies/trendPullbackRetest.js';
 import { evaluateEma5RejectionReclaim, createErrState, ErrState } from '../../src/utils/strategies/ema5RejectionReclaim.js';
 import { evaluateEma5ExactEntry, createEeeState, EeeState } from '../../src/utils/strategies/ema5ExactEntry.js';
+import { evaluateSetup as evaluateEma5ExactEntryV2 } from '../../src/utils/strategies/ema5ExactEntryV2.js';
 import { calculateRSI } from '../../src/utils/indicators.js';
 import {
   allowVCB,
@@ -90,6 +91,8 @@ export class AutoTrader {
   private errStates = new Map<string, ErrState>();
   // Per-symbol state machine state for EMA5_EXACT_ENTRY_V1
   private eeeStates = new Map<string, EeeState>();
+  // Consumed setup keys for EMA5_EXACT_ENTRY_V2
+  private eev2ConsumedKeys = new Set<string>();
 
   public isGlobalFilterPausing(): boolean {
     return this.globalFilterBlockActive;
@@ -1909,6 +1912,108 @@ export class AutoTrader {
       };
     }
 
+    // 11. EMA 5 Exact Price Action Entry V2 (EMA5_EXACT_ENTRY_V2)
+    if (strat === 'EMA5_EXACT_ENTRY_V2') {
+      if (this.settings.eev2Enabled === false) return null;
+      // Closed 5m candles only — strip the in-progress candle
+      const closedKlines = klines.slice(0, -1);
+      if (closedKlines.length < 200) return null;
+
+      // Get live 15m, 1h, and 1D candles for HTF alignment and levels
+      const klines15m = await this.getKlines(symbol, '15m');
+      const closedKlines15m = klines15m ? klines15m.slice(0, -1) : [];
+
+      const klines1h = await this.getKlines(symbol, '1h');
+      const closedKlines1h = klines1h ? klines1h.slice(0, -1) : [];
+
+      const klines1d = await this.getKlines(symbol, '1d');
+      const closedKlines1d = klines1d ? klines1d.slice(0, -1) : [];
+
+      const activePositionsCount = positionMonitor.getActivePositions().filter(p => p.symbol === symbol).length;
+
+      const sig = evaluateEma5ExactEntryV2({
+        candles5m: closedKlines.map(k => ({
+          time: k.openTime || k.time,
+          open: k.open,
+          high: k.high,
+          low: k.low,
+          close: k.close,
+          volume: k.volume,
+          closeTime: k.closeTime,
+        })),
+        candles15m: closedKlines15m.map(k => ({
+          time: k.openTime || k.time,
+          open: k.open,
+          high: k.high,
+          low: k.low,
+          close: k.close,
+          volume: k.volume,
+          closeTime: k.closeTime,
+        })),
+        candles1h: closedKlines1h.map(k => ({
+          time: k.openTime || k.time,
+          open: k.open,
+          high: k.high,
+          low: k.low,
+          close: k.close,
+          volume: k.volume,
+          closeTime: k.closeTime,
+        })),
+        candles1d: closedKlines1d.map(k => ({
+          time: k.openTime || k.time,
+          open: k.open,
+          high: k.high,
+          low: k.low,
+          close: k.close,
+          volume: k.volume,
+          closeTime: k.closeTime,
+        })),
+        symbol,
+        config: {
+          entryMode: this.settings.eev2EntryMode ?? 'CLOSE_CONFIRM',
+          exitMode: this.settings.eev2ExitMode ?? 'LEVEL_LADDER',
+          beMode: this.settings.eev2BeMode ?? 'AFTER_TP1',
+          minVolumeRatio: this.settings.eev2MinVolumeRatio ?? 1.10,
+          regimePivotN: this.settings.eev2RegimePivotN ?? 3,
+          slBufferAvgRange: this.settings.eev2SlBufferAvgRange ?? 0.15,
+          maxStopAvgRange: this.settings.eev2MaxStopAvgRange ?? 2.0,
+          minStopAvgRange: this.settings.eev2MinStopAvgRange ?? 0.5,
+          maxFeeR: this.settings.eev2MaxFeeR ?? 0.20,
+          minNetRr: this.settings.eev2MinNetRr ?? 2.5,
+          tp1MinR: this.settings.eev2Tp1MinR ?? 1.5,
+          tp2MinR: this.settings.eev2Tp2MinR ?? 3.0,
+          minRoomR: this.settings.eev2MinRoomR ?? 1.0,
+          allowRrFallback: this.settings.eev2AllowRrFallback ?? false,
+          fallbackTpR: this.settings.eev2FallbackTpR ?? 3.0,
+          maxEntryDriftR: this.settings.eev2MaxEntryDriftR ?? 0.15,
+        },
+        consumedKeys: this.eev2ConsumedKeys,
+        activePositionsCount,
+        marketDriftPrice: currentPrice,
+      });
+
+      if (!sig || sig.signalStatus !== 'VALID' || !sig.direction) return null;
+
+      // Mark setup as consumed
+      if (sig.setupKey) {
+        this.eev2ConsumedKeys.add(sig.setupKey);
+      }
+
+      return {
+        direction: sig.direction,
+        score: Math.min(100, Math.round(70 + sig.netRr * 5)),
+        atr: sig.avgRange || 0,
+        sl: sig.stopLoss,
+        tp1: sig.tp1,
+        tp2: sig.tp2,
+        tp3: sig.tp3,
+        signalTime: sig.timestamp,
+        reason: `EMA 5 Alert-Break [15m ${sig.regime15m}] | Net R:R ${sig.netRr.toFixed(2)} | FeeR ${sig.feeR.toFixed(3)}R`,
+        strategy: 'EMA5_EXACT_ENTRY_V2',
+        marketRegime: `EMA5 V2 Alert-Break [15m ${sig.regime15m}]`,
+      };
+    }
+
     return null;
   }
 
@@ -2350,6 +2455,99 @@ export class AutoTrader {
               tp3: errSig.tp3,
               signalTime: errSig.candleTime,
               reason: errSig.reason,
+            };
+          }
+        }
+      }
+
+      if (candidate.id === 'EMA5_EXACT_ENTRY_V2' && currentRegime.startsWith('TRENDING')) {
+        if (this.settings.eev2Enabled !== false && closedKlines.length >= 200) {
+          const klines15m = await this.getKlines(symbol, '15m');
+          const closedKlines15m = klines15m ? klines15m.slice(0, -1) : [];
+
+          const klines1h = await this.getKlines(symbol, '1h');
+          const closedKlines1h = klines1h ? klines1h.slice(0, -1) : [];
+
+          const klines1d = await this.getKlines(symbol, '1d');
+          const closedKlines1d = klines1d ? klines1d.slice(0, -1) : [];
+
+          const activePositionsCount = positionMonitor.getActivePositions().filter(p => p.symbol === symbol).length;
+
+          const eev2Sig = evaluateEma5ExactEntryV2({
+            candles5m: closedKlines.map(k => ({
+              time: k.openTime || k.time,
+              open: k.open,
+              high: k.high,
+              low: k.low,
+              close: k.close,
+              volume: k.volume,
+              closeTime: k.closeTime,
+            })),
+            candles15m: closedKlines15m.map(k => ({
+              time: k.openTime || k.time,
+              open: k.open,
+              high: k.high,
+              low: k.low,
+              close: k.close,
+              volume: k.volume,
+              closeTime: k.closeTime,
+            })),
+            candles1h: closedKlines1h.map(k => ({
+              time: k.openTime || k.time,
+              open: k.open,
+              high: k.high,
+              low: k.low,
+              close: k.close,
+              volume: k.volume,
+              closeTime: k.closeTime,
+            })),
+            candles1d: closedKlines1d.map(k => ({
+              time: k.openTime || k.time,
+              open: k.open,
+              high: k.high,
+              low: k.low,
+              close: k.close,
+              volume: k.volume,
+              closeTime: k.closeTime,
+            })),
+            symbol,
+            config: {
+              entryMode: this.settings.eev2EntryMode ?? 'CLOSE_CONFIRM',
+              exitMode: this.settings.eev2ExitMode ?? 'LEVEL_LADDER',
+              beMode: this.settings.eev2BeMode ?? 'AFTER_TP1',
+              minVolumeRatio: this.settings.eev2MinVolumeRatio ?? 1.10,
+              regimePivotN: this.settings.eev2RegimePivotN ?? 3,
+              slBufferAvgRange: this.settings.eev2SlBufferAvgRange ?? 0.15,
+              maxStopAvgRange: this.settings.eev2MaxStopAvgRange ?? 2.0,
+              minStopAvgRange: this.settings.eev2MinStopAvgRange ?? 0.5,
+              maxFeeR: this.settings.eev2MaxFeeR ?? 0.20,
+              minNetRr: this.settings.eev2MinNetRr ?? 2.5,
+              tp1MinR: this.settings.eev2Tp1MinR ?? 1.5,
+              tp2MinR: this.settings.eev2Tp2MinR ?? 3.0,
+              minRoomR: this.settings.eev2MinRoomR ?? 1.0,
+              allowRrFallback: this.settings.eev2AllowRrFallback ?? false,
+              fallbackTpR: this.settings.eev2FallbackTpR ?? 3.0,
+              maxEntryDriftR: this.settings.eev2MaxEntryDriftR ?? 0.15,
+            },
+            consumedKeys: this.eev2ConsumedKeys,
+            activePositionsCount,
+            marketDriftPrice: currentPrice,
+          });
+
+          if (eev2Sig && eev2Sig.signalStatus === 'VALID' && eev2Sig.direction && (!candidate.direction || eev2Sig.direction === candidate.direction)) {
+            if (eev2Sig.setupKey) {
+              this.eev2ConsumedKeys.add(eev2Sig.setupKey);
+            }
+            pendingSignal = {
+              direction: eev2Sig.direction,
+              score: Math.min(100, Math.round(70 + eev2Sig.netRr * 5)),
+              atr: eev2Sig.avgRange || 0,
+              sl: eev2Sig.stopLoss,
+              tp1: eev2Sig.tp1,
+              tp2: eev2Sig.tp2,
+              tp3: eev2Sig.tp3,
+              signalTime: eev2Sig.timestamp,
+              reason: `EMA 5 Alert-Break [15m ${eev2Sig.regime15m}] | Net R:R ${eev2Sig.netRr.toFixed(2)} | FeeR ${eev2Sig.feeR.toFixed(3)}R`,
             };
           }
         }

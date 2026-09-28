@@ -38,7 +38,8 @@ export interface GlobalMarketRegime {
 }
 
 export const DEFAULT_STRATEGY_BUCKET: StrategyBucketItem[] = [
-  { id: 'EMA5_EXACT_ENTRY_V1', name: 'EMA 5 Exact Entry', description: 'Exact EMA 5 price-action entry with volume & 15m structure filter', priority: 1, enabled: true },
+  { id: 'EMA5_EXACT_ENTRY_V2', name: 'EMA 5 Exact Entry V2', description: 'Exact Alert-Break entry with multi-timeframe level targets & fee-drag protection', priority: 1, enabled: true },
+  { id: 'EMA5_EXACT_ENTRY_V1', name: 'EMA 5 Exact Entry (Legacy)', description: 'Exact EMA 5 price-action entry with volume & 15m structure filter', priority: 2, enabled: true },
   { id: 'TREND_PULLBACK', name: 'Trend EMA Pullback', description: 'Confirmed pullback to dynamic value area in directional trend', priority: 1, enabled: true },
   { id: 'TREND_PULLBACK_RETEST', name: 'Trend Pullback Retest', description: 'Full state-machine: trend → pullback → retest → confirmation → entry', priority: 1, enabled: true },
   { id: 'EMA5_REJECTION_RECLAIM_V1', name: 'EMA 5 Rejection Reclaim', description: 'EMA 5 rejection sweep, reclaim, and displacement with volume confirmation', priority: 1, enabled: true },
@@ -53,7 +54,8 @@ export const DEFAULT_STRATEGY_BUCKET: StrategyBucketItem[] = [
 
 export const strategyBucketMap: Record<MarketRegimeType, StrategyBucketItem[]> = {
   TRENDING_UP: [
-    { id: 'EMA5_EXACT_ENTRY_V1', name: 'EMA 5 Exact Entry', description: 'Long: exact EMA 5 price-action entry with 15m bullish structure & volume', priority: 1, direction: 'LONG', enabled: true },
+    { id: 'EMA5_EXACT_ENTRY_V2', name: 'EMA 5 Exact Entry V2', description: 'Long: Alert-break trigger with 15m bullish regime & multi-TF targets', priority: 1, direction: 'LONG', enabled: true },
+    { id: 'EMA5_EXACT_ENTRY_V1', name: 'EMA 5 Exact Entry', description: 'Long: exact EMA 5 price-action entry with 15m bullish structure & volume', priority: 2, direction: 'LONG', enabled: true },
     { id: 'EMA5_REJECTION_RECLAIM_V1', name: 'EMA 5 Rejection Reclaim', description: 'Long: sweep below EMA5, reclaim, and displacement with volume', priority: 1, direction: 'LONG', enabled: true },
     { id: 'EMA5_PA_VOLUME_V1', name: 'EMA 5 PA + Volume', description: 'Long EMA5 early price action expansion', priority: 1, direction: 'LONG', enabled: true },
     { id: 'TREND_PULLBACK', name: 'Trend EMA Pullback', description: 'Long pullback to EMA21/50 zone', priority: 1, direction: 'LONG', enabled: true },
@@ -64,7 +66,8 @@ export const strategyBucketMap: Record<MarketRegimeType, StrategyBucketItem[]> =
     { id: 'SMC_LIQUIDITY_SWEEP', name: 'LSR Liquidity Sweep', description: 'Long liquidity sweep of local lows', priority: 3, direction: 'LONG', enabled: true }
   ],
   TRENDING_DOWN: [
-    { id: 'EMA5_EXACT_ENTRY_V1', name: 'EMA 5 Exact Entry', description: 'Short: exact EMA 5 price-action entry with 15m bearish structure & volume', priority: 1, direction: 'SHORT', enabled: true },
+    { id: 'EMA5_EXACT_ENTRY_V2', name: 'EMA 5 Exact Entry V2', description: 'Short: Alert-break trigger with 15m bearish regime & multi-TF targets', priority: 1, direction: 'SHORT', enabled: true },
+    { id: 'EMA5_EXACT_ENTRY_V1', name: 'EMA 5 Exact Entry', description: 'Short: exact EMA 5 price-action entry with 15m bearish structure & volume', priority: 2, direction: 'SHORT', enabled: true },
     { id: 'EMA5_REJECTION_RECLAIM_V1', name: 'EMA 5 Rejection Reclaim', description: 'Short: sweep above EMA5, reclaim, and displacement with volume', priority: 1, direction: 'SHORT', enabled: true },
     { id: 'EMA5_PA_VOLUME_V1', name: 'EMA 5 PA + Volume', description: 'Short EMA5 early price action expansion', priority: 1, direction: 'SHORT', enabled: true },
     { id: 'TREND_PULLBACK', name: 'Trend EMA Pullback', description: 'Short pullback to EMA21/50 zone', priority: 1, direction: 'SHORT', enabled: true },

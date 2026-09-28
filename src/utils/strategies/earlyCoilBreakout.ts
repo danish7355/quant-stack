@@ -185,3 +185,134 @@ export function evaluateEarlyCoilBreakout(
   return null;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// STANDALONE DETECTION FUNCTION (VOLUME DRY-UP & REALISTIC TARGETS)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface EarlyCoilConfig {
+  compressionBars?: number;      // 5
+  atrLookback?: number;          // 14
+  motherBarEnclosure?: number;   // 0.70
+  boundaryProximityAtr?: number; // 0.15
+  volumeDryupRatio?: number;     // 0.70 (NEW)
+  slBufferAtr?: number;          // 1.0 (full opposite boundary)
+}
+
+export interface EarlyCoilSignal {
+  direction: 'LONG' | 'SHORT';
+  entry: number;
+  stopLoss: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
+  confidence: number;
+  setupType: 'EARLY_COIL_BREAKOUT';
+  coilRange: number;
+  volumeDryup: number;
+}
+
+export function detectEarlyCoilBreakout(
+  candles: Candle[],
+  htfCandles: Candle[] = [],  // 1h for structure
+  config: EarlyCoilConfig = {}
+): EarlyCoilSignal | null {
+  const cfg = {
+    compressionBars: config.compressionBars ?? 5,
+    atrLookback: config.atrLookback ?? 14,
+    motherBarEnclosure: config.motherBarEnclosure ?? 0.70,
+    boundaryProximityAtr: config.boundaryProximityAtr ?? 0.15,
+    volumeDryupRatio: config.volumeDryupRatio ?? 0.70,
+    slBufferAtr: config.slBufferAtr ?? 1.0
+  };
+
+  if (!candles || candles.length < cfg.compressionBars + 25) return null;
+
+  const current = candles[candles.length - 1];
+  const atrSeries = calculateATR(candles, cfg.atrLookback);
+  const atr = atrSeries[atrSeries.length - 1] ?? (current.close * 0.015);
+
+  // === ATR COMPRESSION (Overall decline) ===
+  const atrHistory: number[] = [];
+  for (let i = 0; i < cfg.compressionBars; i++) {
+    const idx = candles.length - 2 - i;
+    if (idx < 0) return null;
+    const pastAtr = atrSeries[idx] ?? atr;
+    atrHistory.push(pastAtr);
+  }
+
+  // atrHistory[0] is candle -2, atrHistory[last] is oldest
+  const atrDeclining = atrHistory[atrHistory.length - 1] > atrHistory[0];
+  if (!atrDeclining) return null;
+
+  // === MOTHER-BAR ENCLOSURE ===
+  const lookbackStart = Math.max(0, candles.length - cfg.compressionBars - 20);
+  const motherSlice = candles.slice(lookbackStart, candles.length - cfg.compressionBars);
+  if (!motherSlice.length) return null;
+
+  const motherBarHigh = Math.max(...motherSlice.map(c => c.high));
+  const motherBarLow = Math.min(...motherSlice.map(c => c.low));
+  const motherRange = motherBarHigh - motherBarLow;
+  if (motherRange <= 0) return null;
+
+  const compressionCandles = candles.slice(-cfg.compressionBars - 1, -1);
+  const enclosedBars = compressionCandles.filter(c => {
+    const bodyCenter = (c.open + c.close) / 2;
+    return bodyCenter >= motherBarLow && bodyCenter <= motherBarHigh;
+  }).length;
+
+  const enclosureRatio = enclosedBars / (compressionCandles.length || 1);
+  if (enclosureRatio < cfg.motherBarEnclosure) return null;
+
+  // === VOLUME DRY-UP QUANTIFICATION ===
+  const compVols = compressionCandles.map(c => c.volume);
+  const compressionVolume = compVols.reduce((s, v) => s + v, 0) / (compVols.length || 1);
+
+  const prevVolsSlice = candles.slice(-cfg.compressionBars - 11, -cfg.compressionBars - 1).map(c => c.volume);
+  const previousVolume = prevVolsSlice.length > 0
+    ? prevVolsSlice.reduce((s, v) => s + v, 0) / prevVolsSlice.length
+    : compressionVolume;
+
+  const volumeDryup = previousVolume > 0 ? compressionVolume / previousVolume : 1.0;
+  if (volumeDryup > cfg.volumeDryupRatio) {
+    return null; // Volume didn't dry up enough
+  }
+
+  // === BOUNDARY TEST ===
+  const apexResistance = motherBarHigh;
+  const apexSupport = motherBarLow;
+
+  const nearResistance = current.high >= apexResistance * (1 - cfg.boundaryProximityAtr * (atr / (apexResistance || 1)));
+  const nearSupport = current.low <= apexSupport * (1 + cfg.boundaryProximityAtr * (atr / (apexSupport || 1)));
+
+  if (!nearResistance && !nearSupport) return null;
+
+  // === VOLUME UPTICK AT BOUNDARY ===
+  const boundaryVolumeUptick = current.volume > compressionVolume * 1.20;
+  if (!boundaryVolumeUptick) return null;
+
+  // === DIRECTION ===
+  const isLong = nearSupport && current.close > current.open;
+  const isShort = nearResistance && current.close < current.open;
+  if (!isLong && !isShort) return null;
+
+  // === REALISTIC TARGETS (2.0R, 3.5R, 4.5R) ===
+  const stopDistance = cfg.slBufferAtr * atr;
+
+  const stopLoss = isLong
+    ? motherBarLow - 0.5 * atr
+    : motherBarHigh + 0.5 * atr;
+
+  return {
+    direction: isLong ? 'LONG' : 'SHORT',
+    entry: current.close,
+    stopLoss,
+    tp1: isLong ? current.close + 2.0 * stopDistance : current.close - 2.0 * stopDistance,
+    tp2: isLong ? current.close + 3.5 * stopDistance : current.close - 3.5 * stopDistance,
+    tp3: isLong ? current.close + 4.5 * stopDistance : current.close - 4.5 * stopDistance,
+    confidence: 0.62,
+    setupType: 'EARLY_COIL_BREAKOUT',
+    coilRange: motherRange,
+    volumeDryup
+  };
+}
+

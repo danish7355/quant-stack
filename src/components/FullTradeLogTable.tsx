@@ -378,7 +378,8 @@ export default function FullTradeLogTable({ logs }: FullTradeLogTableProps) {
             className="w-full bg-gray-950/80 border border-gray-800 rounded-lg px-3 py-2 text-gray-200 focus:outline-none focus:border-cyan-500 text-xs"
           >
             <option value="ALL">All Strategies</option>
-            <option value="EMA5_EXACT_ENTRY_V1">EMA 5 Exact Entry</option>
+            <option value="EMA5_EXACT_ENTRY_V2">EMA 5 Exact Entry V2</option>
+            <option value="EMA5_EXACT_ENTRY_V1">EMA 5 Exact Entry (V1)</option>
             <option value="EMA5_REJECTION_RECLAIM_V1">EMA 5 Rejection Reclaim</option>
             <option value="BINANCE_COMPOSITE">10-Gate Scanner</option>
             <option value="EMA_GAP_PULLBACK">5 EMA Gap Pullback</option>
@@ -493,9 +494,13 @@ export default function FullTradeLogTable({ logs }: FullTradeLogTableProps) {
                       {/* Strategy & Frequency Badges */}
                       <td className="py-3 pr-4">
                         <div className="flex flex-col gap-1">
-                          {strat === 'EMA5_EXACT_ENTRY_V1' ? (
+                          {strat === 'EMA5_EXACT_ENTRY_V2' ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-emerald-950/50 text-emerald-300 border border-emerald-500/50 text-[9.5px] font-bold w-fit">
+                              <Zap className="w-2.5 h-2.5 text-emerald-400" /> EMA 5 Exact V2
+                            </span>
+                          ) : strat === 'EMA5_EXACT_ENTRY_V1' ? (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-emerald-950/50 text-emerald-300 border border-emerald-700/50 text-[9.5px] font-bold w-fit">
-                              <Zap className="w-2.5 h-2.5 text-emerald-400" /> EMA 5 Exact
+                              <Zap className="w-2.5 h-2.5 text-emerald-400" /> EMA 5 Exact V1
                             </span>
                           ) : strat === 'EMA5_REJECTION_RECLAIM_V1' ? (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-amber-950/50 text-amber-300 border border-amber-700/50 text-[9.5px] font-bold w-fit">

@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { AppSettings, StrategyBucketItem, MarketRegimeType, CoinDetail } from '../types';
 import { GATES_REGISTRY, GateImportance } from '../utils/gatesRegistry';
 import { DEFAULT_STRATEGY_BUCKET } from '../utils/strategyBucket';
-import { VcbChecklistPanel } from './VcbChecklistPanel';
+import { StrategyChecklistPanel } from './StrategyChecklistPanel';
 import { ShieldAlert, ShieldCheck, Zap, AlertTriangle, Flame, Info, Check, Cpu, Sparkles, RotateCcw, Layers, ArrowUpRight, Filter, Activity, Target, Compass, Trash2, RefreshCw, Plus } from 'lucide-react';
 
 interface StrategyPanelProps {
@@ -15,7 +15,7 @@ interface StrategyPanelProps {
 }
 
 export const AVAILABLE_STRATEGIES: {
-  id: 'EMA5_EXACT_ENTRY_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'EMA5_REJECTION_RECLAIM_V1' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'SMC_LIQUIDITY_SWEEP' | 'BINANCE_COMPOSITE' | 'EARLY_COIL_BREAKOUT' | 'MACRO_RANGE_BREAKOUT';
+  id: 'EMA5_EXACT_ENTRY_V2' | 'EMA5_EXACT_ENTRY_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'EMA5_REJECTION_RECLAIM_V1' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'SMC_LIQUIDITY_SWEEP' | 'BINANCE_COMPOSITE' | 'EARLY_COIL_BREAKOUT' | 'MACRO_RANGE_BREAKOUT';
   name: string;
   shortName: string;
   type: string;
@@ -24,9 +24,18 @@ export const AVAILABLE_STRATEGIES: {
   icon: any;
 }[] = [
   {
+    id: 'EMA5_EXACT_ENTRY_V2',
+    name: 'EMA 5 Exact Price Action Entry V2',
+    shortName: 'EMA 5 Exact V2',
+    type: 'Exact Alert-Break Entry',
+    badgeBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+    description: 'Exact 5m EMA 5 Alert → Break trigger with 15m structure regime, multi-timeframe level targets (15m, 1h, 1D, 1W), and fee-drag floor.',
+    icon: Zap,
+  },
+  {
     id: 'EMA5_EXACT_ENTRY_V1',
-    name: 'EMA 5 Exact Price Action Entry',
-    shortName: 'EMA 5 Exact',
+    name: 'EMA 5 Exact Price Action Entry (V1)',
+    shortName: 'EMA 5 Exact V1',
     type: 'Exact Price Action Entry',
     badgeBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
     description: 'Exact EMA 5 price-action entry pattern with raw OHLC, EMA 5, volume confirmation, and 15m market structure regime filter.',
@@ -136,12 +145,21 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'checklist' | 'parameters' | 'gates' | 'bucket'>('checklist');
   const [activeChecklistSymbol, setActiveChecklistSymbol] = useState<string>(selectedSymbol || coins[0]?.symbol || 'BTCUSDT');
+  const [selectedChecklistStrategyId, setSelectedChecklistStrategyId] = useState<string>(
+    settings.activeStrategy || 'EMA5_EXACT_ENTRY_V2'
+  );
 
   useEffect(() => {
     if (selectedSymbol) {
       setActiveChecklistSymbol(selectedSymbol);
     }
   }, [selectedSymbol]);
+
+  useEffect(() => {
+    if (settings.activeStrategy) {
+      setSelectedChecklistStrategyId(settings.activeStrategy);
+    }
+  }, [settings.activeStrategy]);
 
   const activeCoin = coins.find(c => c.symbol === activeChecklistSymbol) || coins[0];
 
@@ -395,7 +413,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
     } else if (preset === 'VCB') {
       nextEnabled = ['VOLATILITY_COMPRESSION'].filter(s => !deletedStrategies.includes(s));
     } else if (preset === 'TREND') {
-      nextEnabled = ['VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'TREND_PULLBACK_RETEST', 'EMA_GAP_PULLBACK', 'EMA5_PA_VOLUME_V1', 'EARLY_COIL_BREAKOUT'].filter(s => !deletedStrategies.includes(s));
+      nextEnabled = ['EMA5_EXACT_ENTRY_V2', 'EMA5_EXACT_ENTRY_V1', 'VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'TREND_PULLBACK_RETEST', 'EMA_GAP_PULLBACK', 'EMA5_PA_VOLUME_V1', 'EARLY_COIL_BREAKOUT'].filter(s => !deletedStrategies.includes(s));
     } else if (preset === 'REVERSAL') {
       nextEnabled = ['EMA5_REJECTION_RECLAIM_V1', 'EMA_GAP_PULLBACK', 'BINANCE_COMPOSITE', 'SMC_LIQUIDITY_SWEEP'].filter(s => !deletedStrategies.includes(s));
     } else if (preset === 'CLEAR') {
@@ -404,7 +422,8 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
     const nextSettings = {
       ...settings,
       enabledStrategies: nextEnabled,
-      activeStrategy: (nextEnabled[0] || visibleStrategies[0]?.id || 'VOLATILITY_COMPRESSION') as any,
+      activeStrategy: (nextEnabled[0] || visibleStrategies[0]?.id || 'EMA5_EXACT_ENTRY_V2') as any,
+      eev2Enabled: nextEnabled.includes('EMA5_EXACT_ENTRY_V2'),
       egpEnabled: nextEnabled.includes('EMA_GAP_PULLBACK'),
       errEnabled: nextEnabled.includes('EMA5_REJECTION_RECLAIM_V1'),
       tprEnabled: nextEnabled.includes('TREND_PULLBACK_RETEST'),
@@ -553,7 +572,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                   : 'bg-[#161B22] text-gray-400 hover:text-white border border-[#30363D]'
               }`}
             >
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> VCB Strategy Checklist
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> Strategy Checklist & Live Audit
             </button>
             <button
               onClick={() => setActiveTab('parameters')}
@@ -593,17 +612,20 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
           )}
         </div>
 
-        {/* TAB 0: VCB STRATEGY CHECKLIST (PRIMARY GATE) */}
+        {/* TAB 0: STRATEGY CHECKLIST & LIVE AUDIT (ALL STRATEGIES) */}
         {activeTab === 'checklist' && (
-          <VcbChecklistPanel 
+          <StrategyChecklistPanel 
             settings={settings} 
             onUpdateSetting={handleInputChange}
-            selectedCoinVcbChecklist={selectedCoinVcbChecklist}
+            selectedStrategyId={selectedChecklistStrategyId}
+            onSelectStrategy={setSelectedChecklistStrategyId}
             coins={coins}
+            selectedSymbol={activeChecklistSymbol}
             onSelectSymbol={(sym) => {
               setActiveChecklistSymbol(sym);
               if (onSelectCoin) onSelectCoin(sym);
             }}
+            globalFilterState={globalFilterState}
           />
         )}
 
@@ -635,10 +657,13 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
 
                 <div className="flex items-center gap-2 self-end sm:self-center">
                   <button
-                    onClick={() => setActiveTab('checklist')}
+                    onClick={() => {
+                      setSelectedChecklistStrategyId(settings.activeStrategy || 'EMA5_EXACT_ENTRY_V1');
+                      setActiveTab('checklist');
+                    }}
                     className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs cursor-pointer transition-colors flex items-center gap-1.5 shadow-lg shadow-emerald-900/40"
                   >
-                    <ShieldCheck className="w-3.5 h-3.5" /> OPEN VCB CHECKLIST
+                    <ShieldCheck className="w-3.5 h-3.5" /> OPEN STRATEGY CHECKLIST & LIVE AUDIT
                   </button>
                 </div>
               </div>
@@ -775,24 +800,18 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                         <span className={isActive ? 'text-[#00e696] font-semibold' : 'text-gray-500'}>
                           {isActive ? '● Active in Engine' : '○ Disabled'}
                         </span>
-                        {strat.id === 'VOLATILITY_COMPRESSION' && (
-                          <span className="text-gray-400 font-mono">7 Gates</span>
-                        )}
-                        {strat.id === 'TREND_PULLBACK' && (
-                          <span className="text-gray-400 font-mono">5 Pillars</span>
-                        )}
-                        {strat.id === 'TREND_PULLBACK_RETEST' && (
-                          <span className="text-gray-400 font-mono">State Machine</span>
-                        )}
-                        {strat.id === 'EMA_GAP_PULLBACK' && (
-                          <span className="text-gray-400 font-mono">7 Gates</span>
-                        )}
-                        {strat.id === 'EMA5_PA_VOLUME_V1' && (
-                          <span className="text-gray-400 font-mono">PA + Vol</span>
-                        )}
-                        {strat.id === 'EMA5_REJECTION_RECLAIM_V1' && (
-                          <span className="text-gray-400 font-mono">Reclaim+Disp</span>
-                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedChecklistStrategyId(strat.id);
+                            setActiveTab('checklist');
+                          }}
+                          className="text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1 cursor-pointer bg-emerald-950/40 hover:bg-emerald-900/60 px-2 py-0.5 rounded border border-emerald-500/30 transition-colors"
+                          title={`Open ${strat.shortName} Checklist & Live Audit`}
+                        >
+                          <ShieldCheck className="w-3 h-3" /> Audit Checklist
+                        </button>
                       </div>
                     </div>
                   );
@@ -1046,27 +1065,18 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                         <span className={isActive ? 'text-[#00e696] font-semibold' : 'text-gray-500'}>
                           {isActive ? '● Active in Engine' : '○ Disabled'}
                         </span>
-                        {strat.id === 'VOLATILITY_COMPRESSION' && (
-                          <span className="text-gray-400 font-mono">7 Gates</span>
-                        )}
-                        {strat.id === 'TREND_PULLBACK' && (
-                          <span className="text-gray-400 font-mono">5 Pillars</span>
-                        )}
-                        {strat.id === 'TREND_PULLBACK_RETEST' && (
-                          <span className="text-gray-400 font-mono">State Machine</span>
-                        )}
-                        {strat.id === 'EMA_GAP_PULLBACK' && (
-                          <span className="text-gray-400 font-mono">7 Gates</span>
-                        )}
-                        {strat.id === 'EMA5_PA_VOLUME_V1' && (
-                          <span className="text-gray-400 font-mono">PA + Vol</span>
-                        )}
-                        {strat.id === 'EMA5_EXACT_ENTRY_V1' && (
-                          <span className="text-gray-400 font-mono">Exact PA</span>
-                        )}
-                        {strat.id === 'EMA5_REJECTION_RECLAIM_V1' && (
-                          <span className="text-gray-400 font-mono">Reclaim+Disp</span>
-                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedChecklistStrategyId(strat.id);
+                            setActiveTab('checklist');
+                          }}
+                          className="text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1 cursor-pointer bg-emerald-950/40 hover:bg-emerald-900/60 px-2 py-0.5 rounded border border-emerald-500/30 transition-colors"
+                          title={`Open ${strat.shortName} Checklist & Live Audit`}
+                        >
+                          <ShieldCheck className="w-3 h-3" /> Audit Checklist
+                        </button>
                       </div>
                     </div>
                   );
@@ -1456,13 +1466,124 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
               </div>
             </div>
 
+            {/* EMA 5 Exact Price Action Entry V2 (EMA5_EXACT_ENTRY_V2) Parameters */}
+            <div className="bg-[#161B22] rounded-xl p-6 border border-emerald-500/40 space-y-4 shadow-xl shadow-emerald-950/20">
+              <div className="flex items-center justify-between border-b border-[#30363D] pb-3 flex-wrap gap-2">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-emerald-400" />
+                    <span>EMA 5 Exact Price Action Entry V2 Parameters</span>
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Exact 5m EMA 5 Alert → Break trigger with 15m structure regime, multi-timeframe level ladder targets (15m, 1h, 1D, 1W), and fee-drag floor.</p>
+                </div>
+                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  EXACT ALERT-BREAK V2
+                </span>
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Enable Strategy</span>
+                    <span className="text-xs text-gray-500 mt-1">Allow EMA5_EXACT_ENTRY_V2 to generate live signals</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.eev2Enabled !== false}
+                    onChange={(e) => handleInputChange('eev2Enabled', e.target.checked)}
+                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-emerald-500 focus:ring-0 cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-gray-800/50 gap-4">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Entry Mode</span>
+                    <span className="text-xs text-gray-500 mt-1">CLOSE_CONFIRM (Conservative) vs TOUCH_LIMIT (Retest limit) vs AGGRESSIVE_CLOSE</span>
+                  </div>
+                  <div className="flex bg-gray-900 rounded p-1 border border-gray-700">
+                    {(['CLOSE_CONFIRM', 'TOUCH_LIMIT', 'AGGRESSIVE_CLOSE'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => handleInputChange('eev2EntryMode', mode)}
+                        className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all ${
+                          (settings.eev2EntryMode || 'CLOSE_CONFIRM') === mode
+                            ? 'bg-emerald-600 text-white shadow'
+                            : 'text-gray-400 hover:text-gray-200'
+                        }`}
+                      >
+                        {mode.replace('_', ' ')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-gray-800/50 gap-4">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Exit Mode</span>
+                    <span className="text-xs text-gray-500 mt-1">LEVEL_LADDER (TP1 40%, TP2 40%, Runner 20%) vs RR_FALLBACK</span>
+                  </div>
+                  <div className="flex bg-gray-900 rounded p-1 border border-gray-700">
+                    {(['LEVEL_LADDER', 'RR_FALLBACK'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => handleInputChange('eev2ExitMode', mode)}
+                        className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all ${
+                          (settings.eev2ExitMode || 'LEVEL_LADDER') === mode
+                            ? 'bg-emerald-600 text-white shadow'
+                            : 'text-gray-400 hover:text-gray-200'
+                        }`}
+                      >
+                        {mode.replace('_', ' ')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-gray-800/50 gap-4">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-200">Breakeven Mode</span>
+                    <span className="text-xs text-gray-500 mt-1">AFTER_TP1 (Lock entry when TP1 hit) vs AT_1R vs OFF</span>
+                  </div>
+                  <div className="flex bg-gray-900 rounded p-1 border border-gray-700">
+                    {(['AFTER_TP1', 'AT_1R', 'OFF'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => handleInputChange('eev2BeMode', mode)}
+                        className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all ${
+                          (settings.eev2BeMode || 'AFTER_TP1') === mode
+                            ? 'bg-emerald-600 text-white shadow'
+                            : 'text-gray-400 hover:text-gray-200'
+                        }`}
+                      >
+                        {mode.replace('_', ' ')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <InputRow label="Min Relative Volume Ratio" desc="Trigger candle volume vs 20-period baseline volume (default 1.10x)" value={settings.eev2MinVolumeRatio ?? 1.10} onChange={(v: any) => handleInputChange('eev2MinVolumeRatio', v)} step={0.05} min={0.5} max={3.0} />
+                <InputRow label="Minimum Net R:R" desc="Required net reward-to-risk ratio to allow entry (default 2.5)" value={settings.eev2MinNetRr ?? 2.5} onChange={(v: any) => handleInputChange('eev2MinNetRr', v)} step={0.1} min={1.5} max={6.0} />
+                <InputRow label="Max Fee Drag Floor (feeR)" desc="Maximum fee drag as fraction of stop risk (rejects if feeR > 0.20, default 0.20)" value={settings.eev2MaxFeeR ?? 0.20} onChange={(v: any) => handleInputChange('eev2MaxFeeR', v)} step={0.01} min={0.05} max={0.50} />
+                <InputRow label="SL Anchor Buffer (x AvgRange)" desc="Stop buffer added beyond alert candle extreme (default 0.15)" value={settings.eev2SlBufferAvgRange ?? 0.15} onChange={(v: any) => handleInputChange('eev2SlBufferAvgRange', v)} step={0.05} min={0.05} max={0.50} />
+                <InputRow label="Max Stop Distance (x AvgRange)" desc="Maximum allowable stop distance vs recent average range (default 2.0x)" value={settings.eev2MaxStopAvgRange ?? 2.0} onChange={(v: any) => handleInputChange('eev2MaxStopAvgRange', v)} step={0.1} min={1.0} max={5.0} />
+                <InputRow label="Min Stop Distance (x AvgRange)" desc="Minimum allowable stop distance vs recent average range (default 0.5x)" value={settings.eev2MinStopAvgRange ?? 0.5} onChange={(v: any) => handleInputChange('eev2MinStopAvgRange', v)} step={0.05} min={0.1} max={1.5} />
+                <InputRow label="Fallback Target (R Multiple)" desc="Take-profit multiple when structural levels are unavailable (default 3.0R)" value={settings.eev2FallbackTpR ?? 3.0} onChange={(v: any) => handleInputChange('eev2FallbackTpR', v)} step={0.1} min={1.5} max={6.0} />
+                <InputRow label="Max Entry Drift Cap (in R)" desc="Maximum execution slip beyond trigger level (default 0.15R)" value={settings.eev2MaxEntryDriftR ?? 0.15} onChange={(v: any) => handleInputChange('eev2MaxEntryDriftR', v)} step={0.05} min={0.05} max={0.50} />
+                <InputRow label="15m Regime Pivot Confirmation Bars" desc="Right-bar confirmation lag for 15m swing pivot detection (default 3 bars)" value={settings.eev2RegimePivotN ?? 3} onChange={(v: any) => handleInputChange('eev2RegimePivotN', v)} min={2} max={6} />
+                <InputRow label="Max Position Hold Time (Hours)" desc="Maximum duration before closing stagnant position (default 24h)" value={settings.eev2MaxHoldHours ?? 24} onChange={(v: any) => handleInputChange('eev2MaxHoldHours', v)} min={1} max={72} />
+              </div>
+            </div>
+
             {/* EMA 5 Exact Price Action Entry (EMA5_EXACT_ENTRY_V1) Parameters */}
             <div className="bg-[#161B22] rounded-xl p-6 border border-emerald-500/30 space-y-4 shadow-xl shadow-emerald-950/10">
               <div className="flex items-center justify-between border-b border-[#30363D] pb-3 flex-wrap gap-2">
                 <div>
                   <h3 className="text-base font-bold text-white flex items-center gap-2">
                     <Zap className="w-4 h-4 text-[#00e696]" />
-                    <span>EMA 5 Exact Price Action Entry Parameters</span>
+                    <span>EMA 5 Exact Price Action Entry (V1) Parameters</span>
                   </h3>
                   <p className="text-xs text-gray-400 mt-0.5">Strict 2-stage architecture: Stage A (exact PA setup trigger around EMA 5) + Stage B (15m regime, volume, chop, extension, stop &amp; opposing structure filters).</p>
                 </div>

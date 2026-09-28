@@ -2,7 +2,22 @@ import { StrategyBucketItem, Timeframe } from '../types.js';
 
 export type TradingMode = 'PAPER' | 'TESTNET' | 'LIVE';
 
+export interface GateCustomConfig {
+  enabled: boolean;          // true = evaluated, false = disabled
+  isMandatory: boolean;      // true = mandatory veto gate
+  points: number;            // customized points awarded
+  threshold?: number;        // customized threshold value
+}
+
+export interface StrategyCustomChecklist {
+  strategyId: string;
+  minScore: number;
+  gates: Record<string, GateCustomConfig>;
+  thresholdOverrides?: Record<string, number>;
+}
+
 export interface TradingSettings {
+  customChecklists?: Record<string, StrategyCustomChecklist>;
   // Identity & Metadata
   userId?: string;
   accountId?: string;
@@ -38,8 +53,8 @@ export interface TradingSettings {
   equitySnapshots?: { time: string; balance: number }[];
 
   // Execution & Strategy Engine
-  activeStrategy: 'BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1' | 'EMA5_EXACT_ENTRY_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'AUTO_REGIME' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL';
-  enabledStrategies?: ('BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1' | 'EMA5_EXACT_ENTRY_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL')[];
+  activeStrategy: 'EMA5_EXACT_ENTRY_V2' | 'BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1' | 'EMA5_EXACT_ENTRY_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'AUTO_REGIME' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL';
+  enabledStrategies?: ('EMA5_EXACT_ENTRY_V2' | 'BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1' | 'EMA5_EXACT_ENTRY_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL')[];
   deletedStrategies?: string[];
   strategyBucket?: StrategyBucketItem[];
   tradeFrequency: 'LOW' | 'MEDIUM' | 'HIGH';
@@ -295,6 +310,32 @@ export interface TradingSettings {
   eeeCooldownCandles?: number;            // default 2
   eeeSlBufferPct?: number;                // default 0.0005
   eeeRequireOpposingSpace?: boolean;      // default true
+  eeeChecklistMinScore?: number;          // default 7 out of 10
+  eeeMaxAtrDistance?: number;             // default 2.5
+  errChecklistMinScore?: number;          // default 8 out of 11
+  tpbChecklistMinScore?: number;          // default 7 out of 10
+
+  // EMA 5 Exact Price Action Entry V2 (EMA5_EXACT_ENTRY_V2)
+  eev2Enabled?: boolean;
+  eev2EntryMode?: 'CLOSE_CONFIRM' | 'STOP_ENTRY';
+  eev2ExitMode?: 'LEVEL_LADDER' | 'RR_FIXED';
+  eev2BeMode?: 'AFTER_TP1' | 'R_TRIGGER' | 'OFF';
+  eev2MinVolumeRatio?: number;            // default 1.10
+  eev2RegimePivotN?: number;              // default 3
+  eev2SlBufferAvgRange?: number;          // default 0.15
+  eev2SlBufferMinTicks?: number;          // default 2
+  eev2MaxStopAvgRange?: number;           // default 2.0
+  eev2MinStopAvgRange?: number;           // default 0.5
+  eev2MaxFeeR?: number;                   // default 0.20
+  eev2MinNetRr?: number;                  // default 2.5
+  eev2Tp1MinR?: number;                   // default 1.5
+  eev2Tp2MinR?: number;                   // default 3.0
+  eev2MinRoomR?: number;                  // default 1.0
+  eev2AllowRrFallback?: boolean;          // default false
+  eev2FallbackTpR?: number;               // default 3.0
+  eev2MaxEntryDriftR?: number;            // default 0.15
+  eev2MaxHoldHours?: number;              // default 24
+  eev2ChecklistMinScore?: number;         // default 7 out of 10
 
   // SMC High-Probability Strategy Settings
   smcHtfResolution?: string;
@@ -455,6 +496,17 @@ export const NUMERIC_BOUNDS: Record<string, { min: number; max: number; step?: n
   eeeBreakevenTriggerR: { min: 0.5, max: 3.0, step: 0.1, label: 'EMA5 Exact: Breakeven Trigger (R)' },
   eeeCooldownCandles: { min: 0, max: 20, step: 1, label: 'EMA5 Exact: Cooldown Candles' },
   eeeSlBufferPct: { min: 0.0001, max: 0.01, step: 0.0001, label: 'EMA5 Exact: SL Buffer %' },
+  eev2MinVolumeRatio: { min: 0.5, max: 5.0, step: 0.05, label: 'EMA5 V2: Min Volume Ratio' },
+  eev2RegimePivotN: { min: 2, max: 10, step: 1, label: 'EMA5 V2: 15m Regime Pivot Bars' },
+  eev2SlBufferAvgRange: { min: 0.05, max: 1.0, step: 0.05, label: 'EMA5 V2: SL Buffer (AvgRange mult)' },
+  eev2MaxStopAvgRange: { min: 1.0, max: 5.0, step: 0.1, label: 'EMA5 V2: Max Stop (AvgRange mult)' },
+  eev2MinStopAvgRange: { min: 0.1, max: 2.0, step: 0.05, label: 'EMA5 V2: Min Stop (AvgRange mult)' },
+  eev2MaxFeeR: { min: 0.05, max: 1.0, step: 0.01, label: 'EMA5 V2: Max Fee Drag (in R)' },
+  eev2MinNetRr: { min: 1.5, max: 6.0, step: 0.1, label: 'EMA5 V2: Min Net R:R' },
+  eev2Tp1MinR: { min: 1.0, max: 4.0, step: 0.1, label: 'EMA5 V2: TP1 Min R' },
+  eev2Tp2MinR: { min: 2.0, max: 8.0, step: 0.1, label: 'EMA5 V2: TP2 Min R' },
+  eev2FallbackTpR: { min: 1.5, max: 6.0, step: 0.1, label: 'EMA5 V2: Fallback TP (R)' },
+  eev2MaxHoldHours: { min: 1, max: 72, step: 1, label: 'EMA5 V2: Max Hold Hours' },
 };
 
 export interface ValidationResult {
@@ -588,6 +640,9 @@ export function validateTradingSettings(input: unknown): ValidationResult {
   }
   if (raw.disabledGates && typeof raw.disabledGates === 'object') {
     sanitized.disabledGates = raw.disabledGates;
+  }
+  if (raw.customChecklists && typeof raw.customChecklists === 'object') {
+    sanitized.customChecklists = raw.customChecklists;
   }
   if (raw.equitySnapshots && Array.isArray(raw.equitySnapshots)) {
     sanitized.equitySnapshots = raw.equitySnapshots;
@@ -852,6 +907,27 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   eeeCooldownCandles: 2,
   eeeSlBufferPct: 0.0005,
   eeeRequireOpposingSpace: true,
+
+  eev2Enabled: true,
+  eev2EntryMode: 'CLOSE_CONFIRM',
+  eev2ExitMode: 'LEVEL_LADDER',
+  eev2BeMode: 'AFTER_TP1',
+  eev2MinVolumeRatio: 1.10,
+  eev2RegimePivotN: 3,
+  eev2SlBufferAvgRange: 0.15,
+  eev2SlBufferMinTicks: 2,
+  eev2MaxStopAvgRange: 2.0,
+  eev2MinStopAvgRange: 0.5,
+  eev2MaxFeeR: 0.20,
+  eev2MinNetRr: 2.5,
+  eev2Tp1MinR: 1.5,
+  eev2Tp2MinR: 3.0,
+  eev2MinRoomR: 1.0,
+  eev2AllowRrFallback: false,
+  eev2FallbackTpR: 3.0,
+  eev2MaxEntryDriftR: 0.15,
+  eev2MaxHoldHours: 24,
+  eev2ChecklistMinScore: 7,
 
   rmrMaxAdx: 22,
   rmrMaxAtrRatio: 1.25,

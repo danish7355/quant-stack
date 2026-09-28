@@ -1116,3 +1116,120 @@ export function compareEma5PaVolumeVersions(
 
   return results;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STANDALONE DETECTION FUNCTION (EXPLICIT BODY EXTREME & CLV)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DetectEma5PaVolumeConfig {
+  emaPeriod?: number;        // 5
+  minGapRatio?: number;      // 0.20
+  maxGapRatio?: number;      // 1.00
+  minBodyRatio?: number;     // 0.50
+  minCloseLocation?: number; // 0.65
+  minVolumeRatio?: number;   // 1.10
+  slBufferAvgRange?: number; // 0.15
+}
+
+export interface DetectEma5PaVolumeSignal {
+  direction: 'LONG' | 'SHORT';
+  entry: number;
+  stopLoss: number;
+  tp1: number;
+  confidence: number;
+  setupType: 'EMA5_PA_VOLUME_V1';
+}
+
+export function detectEma5PaVolume(
+  candles: Candle[],
+  htfCandles: Candle[] = [], // 15m for structure
+  config: DetectEma5PaVolumeConfig = {}
+): DetectEma5PaVolumeSignal | null {
+  const cfg = {
+    emaPeriod: config.emaPeriod ?? 5,
+    minGapRatio: config.minGapRatio ?? 0.20,
+    maxGapRatio: config.maxGapRatio ?? 1.00,
+    minBodyRatio: config.minBodyRatio ?? 0.50,
+    minCloseLocation: config.minCloseLocation ?? 0.65,
+    minVolumeRatio: config.minVolumeRatio ?? 1.10,
+    slBufferAvgRange: config.slBufferAvgRange ?? 0.15
+  };
+
+  if (!candles || candles.length < 25) return null;
+
+  const current = candles[candles.length - 1];
+  const closes = candles.map(c => c.close);
+  const ema5Arr = calculateEma5(closes, cfg.emaPeriod);
+  const ema5 = ema5Arr[ema5Arr.length - 1] ?? current.close;
+  const avgRange = calculateAverageRange(candles, 5);
+  const avgVolume = calculateAverageVolume(candles, 20);
+
+  // === FIXED: NORMALIZED GAP RATIO (Explicit body extreme) ===
+  const bodyTop = Math.max(current.open, current.close);
+  const bodyBottom = Math.min(current.open, current.close);
+  const candleRange = Math.max(0.0001, current.high - current.low);
+
+  // For LONG: body extreme = bodyTop (highest point of body)
+  // For SHORT: body extreme = bodyBottom (lowest point of body)
+  const effectiveRefRange = avgRange > 0 ? avgRange : candleRange;
+  const longGapRatio = (bodyTop - ema5) / effectiveRefRange;
+  const shortGapRatio = (ema5 - bodyBottom) / effectiveRefRange;
+
+  // Gap ratio must be in [minGapRatio, maxGapRatio] range
+  const longGapValid = longGapRatio >= cfg.minGapRatio && longGapRatio <= cfg.maxGapRatio && current.close > ema5;
+  const shortGapValid = shortGapRatio >= cfg.minGapRatio && shortGapRatio <= cfg.maxGapRatio && current.close < ema5;
+
+  if (!longGapValid && !shortGapValid) return null;
+
+  // === 15M SWING STRUCTURE ===
+  const htfRegimeInfo = htfCandles && htfCandles.length >= 10 ? determine15mRegime(htfCandles) : { regime: 'BULLISH' };
+  const longStructureValid = htfRegimeInfo.regime === 'BULLISH';
+  const shortStructureValid = htfRegimeInfo.regime === 'BEARISH';
+
+  if (!longStructureValid && !shortStructureValid) return null;
+
+  // === CANDLE HEALTH ===
+  const bodyRatio = Math.abs(current.close - current.open) / candleRange;
+  if (bodyRatio < cfg.minBodyRatio) return null;
+
+  // === Close Location Value (CLV) ===
+  const clv = (current.close - current.low) / candleRange;
+  const longClvValid = clv >= cfg.minCloseLocation;
+  const shortClvValid = (1 - clv) >= cfg.minCloseLocation;
+
+  if (!longClvValid && !shortClvValid) return null;
+
+  // === VOLUME FILTER ===
+  const volumeRatio = current.volume / (avgVolume || 1);
+  if (volumeRatio < cfg.minVolumeRatio) return null;
+
+  // === DIRECTION DETERMINATION ===
+  const isLong = longGapValid && longStructureValid && longClvValid;
+  const isShort = shortGapValid && shortStructureValid && shortClvValid;
+
+  if (!isLong && !isShort) return null;
+
+  // === STOP & TARGET ===
+  const stopDistance = Math.max(
+    candleRange,
+    cfg.slBufferAvgRange * (avgRange || candleRange)
+  );
+
+  const stopLoss = isLong
+    ? current.low - cfg.slBufferAvgRange * (avgRange || candleRange)
+    : current.high + cfg.slBufferAvgRange * (avgRange || candleRange);
+
+  const target = isLong
+    ? current.close + 1.50 * stopDistance
+    : current.close - 1.50 * stopDistance;
+
+  return {
+    direction: isLong ? 'LONG' : 'SHORT',
+    entry: current.close,
+    stopLoss,
+    tp1: target,
+    confidence: 0.65,
+    setupType: 'EMA5_PA_VOLUME_V1'
+  };
+}
+
