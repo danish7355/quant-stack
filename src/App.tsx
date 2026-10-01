@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Menu, PanelLeftOpen, PanelLeftClose,
   TrendingUp, TrendingDown, LayoutDashboard, Settings as SettingsIcon, LineChart, History, ShieldAlert, Terminal,
-  CircleCheck, ChevronRight, AlertTriangle, RefreshCw, Bell, Sun, Moon, Play, Square, Search, Activity, BarChart2, List, GitPullRequest, Zap, GitBranch
+  CircleCheck, ChevronRight, AlertTriangle, RefreshCw, Bell, Sun, Moon, Play, Square, Search, Activity, BarChart2, List, GitPullRequest, Zap, GitBranch, Compass
 } from 'lucide-react';
 import { Timeframe, CoinDetail, Position, TradeLog, AppSettings, EquitySnapshot } from './types';
 import ScannerList from './components/ScannerList';
@@ -16,6 +16,7 @@ import TradingChart from './components/TradingChart';
 import PerformancePage from './components/PerformancePage';
 import StrategyPanel from './components/StrategyPanel';
 import GateManager from './components/GateManager';
+import { RegimeVisualizer } from './components/RegimeVisualizer';
 import { runScoringEngine } from './utils/indicators';
 import { findEmaGapSetup } from './utils/strategies/emaGapPullback';
 import { 
@@ -1611,6 +1612,7 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
 
   const TABS = [
     { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
+    { id: 'regime', label: 'Regime Visualizer', icon: Compass },
     { id: 'scanner', label: 'Scanner', icon: List },
     { id: 'positions', label: 'Positions & Orders', icon: Activity },
     { id: 'signals', label: 'Signals & Rejects', icon: Activity },
@@ -1709,8 +1711,10 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
           dailyLossPct={currentDailyLossPct}
           openRiskPct={openRiskPct}
           engineRunning={engineRunning}
+          regime={settings.coindcxActiveRegime}
           onToggleEngine={toggleEngine}
           onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+          onOpenRegime={() => setActiveTab('regime')}
         />
 
         {/* Deprecated header logic starts here - we can replace this completely or just hide it */}
@@ -1760,6 +1764,7 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
           onToggleEngine={toggleEngine}
           onOpenSettings={() => setActiveTab('settings')}
           onOpenStrategy={() => setActiveTab('strategy')}
+          onOpenRegime={() => setActiveTab('regime')}
           onRetrySettings={handleRetrySettings}
           onRefreshFeed={handleRefreshFeed}
           onDisableKillSwitch={handleDisableKillSwitch}
@@ -1767,6 +1772,16 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
 
         {/* Scrollable Area */}
         <main className="flex-1 overflow-auto p-3 sm:p-4 md:p-6">
+          {activeTab === 'regime' && (
+            <RegimeVisualizer 
+              settings={settings}
+              setSettings={setSettings}
+              coins={coins}
+              selectedSymbol={selectedSymbol}
+              onSelectCoin={setSelectedSymbol}
+              fetchKlines={fetchKlines}
+            />
+          )}
           {activeTab === 'scanner' && (
             <div className="space-y-4 max-w-7xl mx-auto">
               <div className="flex items-center justify-between">

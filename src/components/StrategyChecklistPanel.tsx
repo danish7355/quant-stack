@@ -81,30 +81,6 @@ export const STRATEGY_DEFINITIONS: Array<{
     defaultMinScore: 8
   },
   {
-    id: 'EMA5_EXACT_ENTRY_V1',
-    name: 'EMA 5 Exact Price Action Entry (V1)',
-    shortName: 'EMA 5 Exact V1',
-    tag: 'EXACT ENTRY',
-    badgeBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
-    icon: Zap,
-    description: 'Exact EMA 5 price-action entry pattern with raw OHLC, volume confirmation, and 15m market structure regime filter.',
-    entryGateDescription: 'The exact EMA 5 price-action touch/wick is the ENTRY TRIGGER. 15m market structure, volume, liquidity, and extension are strict risk filters.',
-    maxScore: 10,
-    defaultMinScore: 7
-  },
-  {
-    id: 'EMA5_REJECTION_RECLAIM_V1',
-    name: 'EMA 5 Rejection → Reclaim → Displacement',
-    shortName: 'EMA 5 Reclaim',
-    tag: 'REVERSAL/RECLAIM',
-    badgeBg: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
-    icon: Zap,
-    description: 'Sequence: Approach → Sweep/Rejection wick → EMA 5 Reclaim → Displacement candle → Volume confirmation.',
-    entryGateDescription: 'Enforces the sequential 5-phase reclaim pattern. Rejects random crossover candles and requires aggressive displacement body expansion.',
-    maxScore: 11,
-    defaultMinScore: 8
-  },
-  {
     id: 'VOLATILITY_COMPRESSION',
     name: 'Volatility Compression Breakout (VCB)',
     shortName: 'VCB Breakout',
@@ -141,30 +117,6 @@ export const STRATEGY_DEFINITIONS: Array<{
     defaultMinScore: 8
   },
   {
-    id: 'EMA_GAP_PULLBACK',
-    name: '5 EMA Gap Pullback Continuation',
-    shortName: '5 EMA Gap',
-    tag: 'PULLBACK',
-    badgeBg: 'bg-teal-500/20 text-teal-300 border-teal-500/40',
-    icon: Zap,
-    description: '5 EMA gap candle breakout following structured pullback with HTF 50 EMA trend alignment and anti-overextension guard.',
-    entryGateDescription: 'Detects clean gap candles isolated from EMA 5, validating structural exhaustion prior to explosive trend continuation.',
-    maxScore: 10,
-    defaultMinScore: 7
-  },
-  {
-    id: 'EMA5_PA_VOLUME_V1',
-    name: 'EMA 5 Price Action Gap + Volume',
-    shortName: 'EMA 5 PA Vol',
-    tag: 'PRICE ACTION',
-    badgeBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
-    icon: Zap,
-    description: 'Standalone 5m pure price action + volume gap strategy strictly filtered by 15m market structure swings.',
-    entryGateDescription: 'Zero lagging indicators. Pure candlestick anatomy, raw price gaps, and relative volume surges filtered by higher-timeframe swing pivots.',
-    maxScore: 10,
-    defaultMinScore: 7
-  },
-  {
     id: 'SMC_LIQUIDITY_SWEEP',
     name: 'Smart Money Concepts (SMC Sweep)',
     shortName: 'SMC Liquidity',
@@ -197,18 +149,6 @@ export const STRATEGY_DEFINITIONS: Array<{
     icon: Flame,
     description: 'Fractal coil compression that triggers early at the boundary of narrowing consolidation triangles.',
     entryGateDescription: 'Pre-blast micro-consolidation detection for early high-conviction breakout entries with asymmetric 1:5+ R:R potential.',
-    maxScore: 10,
-    defaultMinScore: 7
-  },
-  {
-    id: 'MACRO_RANGE_BREAKOUT',
-    name: 'Macro Range Box Breakout',
-    shortName: 'Macro Range',
-    tag: 'ACCUMULATION',
-    badgeBg: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
-    icon: Compass,
-    description: 'Darvas box accumulation breakout targeting long-term trending expansions above multi-week range highs.',
-    entryGateDescription: 'Captures decisive breakouts out of multi-week accumulation boxes backed by high institutional volume expansion.',
     maxScore: 10,
     defaultMinScore: 7
   }
@@ -621,70 +561,110 @@ export function computeStrategyLiveAudit(
 
     case 'TREND_PULLBACK': {
       minScoreRequired = settings.tpbChecklistMinScore ?? 7;
-      const trendPass = emaFast > emaSlow;
-      const adxPass = adxVal >= (settings.tpbAdxMin ?? 20);
-      const inPocket = Math.min(emaFast, emaSlow) * 0.995 <= price && price <= Math.max(emaFast, emaSlow) * 1.015;
-      const bouncePass = (coin?.score || 0) >= 55 || coin?.status === 'STRONG_TREND';
-      const volPass = volRatio >= 0.85;
+      const slopeBars = customConfig?.thresholdOverrides?.tpbSlopeLookbackBars ?? settings.tpbSlopeLookbackBars ?? 5;
+      const prevSlopeCandle = candles.length > slopeBars ? candles[candles.length - 1 - slopeBars] : null;
+      const emaFastPrev = prevSlopeCandle ? prevSlopeCandle.close : emaFast;
+      const slopeUp = emaFast >= emaFastPrev;
+      const slopeDown = emaFast <= emaFastPrev;
+      const isUptrend = emaFast > emaSlow && slopeUp;
+      const isDowntrend = emaFast < emaSlow && slopeDown;
+      const trendPass = isUptrend || isDowntrend;
+
+      const targetAdx = customConfig?.thresholdOverrides?.tpbAdxMin ?? customConfig?.gates?.['tpb_adx_momentum']?.threshold ?? settings.tpbAdxMin ?? 22;
+      const adxPass = adxVal >= targetAdx;
+
+      const depthAtr = customConfig?.thresholdOverrides?.tpbPullbackDepthAtr ?? settings.tpbPullbackDepthAtr ?? 0.25;
+      const inPocket = Math.abs(price - emaFast) <= depthAtr * atr;
+
+      const candleRange = lastCandle ? Math.max(0.0001, lastCandle.high - lastCandle.low) : 1;
+      const bodyRatio = lastCandle ? Math.abs(lastCandle.close - lastCandle.open) / candleRange : 0.5;
+      const bouncePass = bodyRatio >= 0.50 || (coin?.score || 0) >= 55;
+
+      const targetVol = customConfig?.thresholdOverrides?.tpbMinVolumeRatio ?? settings.tpbMinVolumeRatio ?? 1.0;
+      const volPass = volRatio >= targetVol;
       const rrPass = true;
 
       items = [
         {
           id: 'tpb_htf_trend',
-          name: 'HTF Trend Alignment (EMA 20 > EMA 50)',
+          name: 'HTF Trend Alignment (EMA 20/50 & Slope Lookback 5 Bars)',
           points: trendPass ? 2 : 0,
           maxPoints: 2,
           passed: trendPass,
           isMandatoryGate: true,
           category: 'STRUCTURE',
-          detail: trendPass 
-            ? `Bullish Trend: EMA 20 (${emaFast.toFixed(2)}) > EMA 50 (${emaSlow.toFixed(2)})`
-            : `Moving averages neutral or opposing`
+          detail: isUptrend 
+            ? `Bullish Trend: EMA 20 (${emaFast.toFixed(2)}) > EMA 50 (${emaSlow.toFixed(2)}) with upward slope over ${slopeBars} bars`
+            : isDowntrend
+            ? `Bearish Trend: EMA 20 (${emaFast.toFixed(2)}) < EMA 50 (${emaSlow.toFixed(2)}) with downward slope over ${slopeBars} bars`
+            : `Moving averages flat, choppy, or opposing slope`
         },
         {
           id: 'tpb_adx_momentum',
-          name: 'ADX Trend Momentum Strength (ADX ≥ 20)',
+          name: `ADX Trend Momentum Strength (ADX ≥ ${targetAdx})`,
           points: adxPass ? 2 : 0,
           maxPoints: 2,
           passed: adxPass,
           category: 'STRUCTURE',
-          detail: `ADX reading: ${adxVal.toFixed(1)} (min ${settings.tpbAdxMin ?? 20} required)`
+          threshold: targetAdx,
+          thresholdLabel: 'Min ADX',
+          thresholdMin: 10,
+          thresholdMax: 50,
+          thresholdStep: 1,
+          thresholdUnit: '',
+          detail: `ADX reading: ${adxVal.toFixed(1)} (min ${targetAdx} required)`
         },
         {
           id: 'tpb_value_pocket',
-          name: 'Pullback into EMA 20/50 Value Zone',
+          name: `Pullback into EMA 20 Value Pocket (±${depthAtr.toFixed(2)}x ATR)`,
           points: inPocket ? 2 : 0,
           maxPoints: 2,
           passed: inPocket,
           category: 'TRIGGER',
-          detail: inPocket ? 'Price currently positioned in dynamic EMA value pocket' : 'Price outside dynamic pullback pocket'
+          threshold: depthAtr,
+          thresholdLabel: 'Pullback Depth ATR',
+          thresholdMin: 0.05,
+          thresholdMax: 1.0,
+          thresholdStep: 0.05,
+          thresholdUnit: 'x ATR',
+          detail: inPocket 
+            ? `Price (${price.toFixed(2)}) within ±${depthAtr.toFixed(2)}x ATR tolerance from EMA 20 (${emaFast.toFixed(2)})`
+            : `Price distance ${(Math.abs(price - emaFast) / (atr || 1)).toFixed(2)}x ATR exceeds ±${depthAtr.toFixed(2)}x ATR pocket`
         },
         {
           id: 'tpb_bounce_confirmation',
-          name: 'Reaction Confirmation Bar / Score',
+          name: 'Reaction Confirmation Bar (Body ≥ 50%)',
           points: bouncePass ? 2 : 0,
           maxPoints: 2,
           passed: bouncePass,
           category: 'TRIGGER',
-          detail: bouncePass ? `Score: ${coin?.score || 0}/100 confirms reaction bounce` : 'Waiting for confirmation bounce candle'
+          detail: bouncePass 
+            ? `Reaction confirmed with ${(bodyRatio * 100).toFixed(0)}% body ratio (min 50%)`
+            : `Waiting for confirmation bounce candle (body ${(bodyRatio * 100).toFixed(0)}% < 50%)`
         },
         {
           id: 'tpb_orderly_volume',
-          name: 'Orderly Pullback Volume (No Panic Dump)',
+          name: `Volume Surge Confirmation (≥ ${targetVol.toFixed(2)}x)`,
           points: volPass ? 1 : 0,
           maxPoints: 1,
           passed: volPass,
           category: 'VOLUME',
-          detail: `Volume ratio: ${volRatio.toFixed(2)}x`
+          threshold: targetVol,
+          thresholdLabel: 'Min Volume Ratio',
+          thresholdMin: 0.5,
+          thresholdMax: 3.0,
+          thresholdStep: 0.1,
+          thresholdUnit: 'x',
+          detail: `Volume ratio: ${volRatio.toFixed(2)}x (min ${targetVol.toFixed(2)}x required)`
         },
         {
           id: 'tpb_defined_risk',
-          name: 'Target Structure Clearance (≥ 1.5R)',
+          name: 'Target Structure Clearance (≥ 1.5R to 3.0R TP2)',
           points: rrPass ? 1 : 0,
           maxPoints: 1,
           passed: rrPass,
           category: 'RISK',
-          detail: `Clean target available to prior swing high`
+          detail: `Clean target available to prior swing level with 1.5R TP1 and 3.0R TP2`
         }
       ];
       break;

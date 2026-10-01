@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { 
   Zap, AlertTriangle, ShieldAlert, Play, Square, Settings as SettingsIcon, 
   RefreshCw, GitBranch, ChevronDown, ChevronUp, CheckCircle2, XCircle, Clock,
-  X, ShieldCheck, Activity, HelpCircle, Shield
+  X, ShieldCheck, Activity, HelpCircle, Shield, Compass
 } from 'lucide-react';
 import { AppSettings, SystemHealth } from '../types';
 
@@ -17,6 +17,7 @@ export interface TradeEngineBannerProps {
   onToggleEngine: () => void;
   onOpenSettings?: () => void;
   onOpenStrategy?: () => void;
+  onOpenRegime?: () => void;
   onRetrySettings?: () => void;
   onRefreshFeed?: () => void;
   onDisableKillSwitch?: () => void;
@@ -729,6 +730,7 @@ export function TradeEngineBanner({
   onToggleEngine,
   onOpenSettings,
   onOpenStrategy,
+  onOpenRegime,
   onRetrySettings,
   onRefreshFeed,
   onDisableKillSwitch
@@ -983,6 +985,15 @@ export function TradeEngineBanner({
                 <span className={`px-1.5 py-0.5 rounded font-bold border ${isLive ? 'bg-red-500/10 text-red-400 border-red-500/40' : 'bg-blue-500/10 text-blue-400 border-blue-500/40'}`}>
                   {modeLabel}
                 </span>
+                {settings.autoActivateRegimeStrategies && (
+                  <>
+                    <span>•</span>
+                    <span className="px-1.5 py-0.5 rounded font-bold border bg-emerald-500/10 text-emerald-400 border-emerald-500/40 flex items-center gap-1">
+                      <Compass size={10} className="text-emerald-400 animate-spin" />
+                      <span>{settings.coindcxActiveRegime?.replace('_', ' ') || 'AUTO REGIME'}</span>
+                    </span>
+                  </>
+                )}
               </div>
 
               {/* Mobile quick metric chip */}
@@ -1034,6 +1045,17 @@ export function TradeEngineBanner({
                 >
                   <GitBranch size={12} />
                   <span>Strategy Rules</span>
+                </button>
+              )}
+
+              {onOpenRegime && (
+                <button
+                  onClick={onOpenRegime}
+                  className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-[#161B22] hover:bg-[#21262D] text-emerald-400 hover:text-emerald-300 rounded border border-emerald-500/30 font-semibold text-[11px] transition cursor-pointer"
+                  title="Open CoinDCX Regime Visualizer & Setups"
+                >
+                  <Compass size={12} className={settings.autoActivateRegimeStrategies ? "animate-spin text-emerald-400" : ""} />
+                  <span>Regime {settings.coindcxActiveRegime ? `(${settings.coindcxActiveRegime.replace('_', ' ')})` : ''}</span>
                 </button>
               )}
 
@@ -1103,7 +1125,7 @@ export function TradeEngineBanner({
                   )}
                   {evaluation.activeStrategies.some(s => s.id === 'TREND_PULLBACK') && (
                     <p>
-                      <strong className="text-blue-400">Trend Pullback:</strong> ADX &ge; {settings.tpbAdxMin ?? 25} • EMA {settings.tpbEmaFast ?? 20}/{settings.tpbEmaSlow ?? 50}
+                      <strong className="text-blue-400">Trend Pullback:</strong> ADX &ge; {settings.tpbAdxMin ?? 22} • EMA {settings.tpbEmaFast ?? 20}/{settings.tpbEmaSlow ?? 50}
                     </p>
                   )}
                   {evaluation.activeStrategies.some(s => s.id === 'SMC_LIQUIDITY_SWEEP' || s.id === 'LIQUIDITY_SWEEP_REVERSAL') && (

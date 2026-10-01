@@ -255,6 +255,16 @@ async function startServer() {
       res.status(500).json({ error: String(e) });
     }
   });
+
+  app.get("/api/regime/threelayer", async (req, res) => {
+    try {
+      const force = req.query.force === 'true';
+      const regime = await autoTrader.getThreeLayerRegime(force);
+      res.json(regime);
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
   
   app.get("/api/bot/symbols", async (req, res) => {
     try {
@@ -366,6 +376,34 @@ async function startServer() {
       const force = req.query.refresh === 'true';
       const regime = await autoTrader.getGlobalRegime(force);
       res.json(regime);
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.get("/api/coindcx/regime", async (req, res) => {
+    try {
+      const symbol = (req.query.symbol as string) || autoTrader.getSettings().coindcxRegimeSymbol || 'BTCUSDT';
+      const regimeData = await autoTrader.getCoinDcxRegime(symbol);
+      res.json(regimeData);
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.post("/api/coindcx/regime/apply", async (req, res) => {
+    try {
+      const { settingsToApply } = req.body;
+      if (!settingsToApply || typeof settingsToApply !== 'object') {
+        return res.status(400).json({ error: 'settingsToApply object required' });
+      }
+      const current = autoTrader.getSettings();
+      const updated = await autoTrader.saveSettings({
+        ...current,
+        ...settingsToApply,
+        updatedAt: new Date().toISOString()
+      }, 'FRONTEND');
+      res.json({ success: true, settings: updated });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }

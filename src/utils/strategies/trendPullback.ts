@@ -2532,7 +2532,8 @@ export interface TrendPullbackConfig {
   emaLong?: number;         // 50
   adxPeriod?: number;       // 14
   minAdx?: number;          // 22 (FIXED: was 18)
-  pullbackDepthAtr?: number; // 0.25
+  slopeLookbackBars?: number; // 5 (bars back to compare EMA20 for slope)
+  pullbackDepthAtr?: number; // 0.25 (multiplies ATR, not price)
   volumeRatio?: number;     // 1.0
   atrMultiplier?: number;   // 0.30
 }
@@ -2545,6 +2546,8 @@ export interface TrendPullbackSignal {
   tp2: number;
   trailingEma: number;
   confidence: number;
+  expectedRR?: number;
+  volumeRatio?: number;
   setupType: 'TREND_PULLBACK';
 }
 
@@ -2557,12 +2560,13 @@ export function detectTrendPullback(
     emaLong: config.emaLong ?? 50,
     adxPeriod: config.adxPeriod ?? 14,
     minAdx: config.minAdx ?? 22,
+    slopeLookbackBars: config.slopeLookbackBars ?? 5,
     pullbackDepthAtr: config.pullbackDepthAtr ?? 0.25,
     volumeRatio: config.volumeRatio ?? 1.0,
     atrMultiplier: config.atrMultiplier ?? 0.30
   };
 
-  if (!candles || candles.length < Math.max(cfg.emaLong + 5, 30)) return null;
+  if (!candles || candles.length <= cfg.slopeLookbackBars || candles.length < Math.max(cfg.emaLong + 5, 30)) return null;
 
   const current = candles[candles.length - 1];
   const prev = candles[candles.length - 2];
@@ -2579,36 +2583,40 @@ export function detectTrendPullback(
 
   const lastIdx = candles.length - 1;
   const ema20 = emaShortArr[lastIdx] ?? current.close;
-  const ema20Prev = emaShortArr[Math.max(0, lastIdx - 1)] ?? ema20;
+  const ema20Prev = emaShortArr[Math.max(0, lastIdx - cfg.slopeLookbackBars)] ?? ema20;
   const ema50 = emaLongArr[lastIdx] ?? current.close;
   const adx = adxResult.adx[lastIdx] ?? 0;
   const atr = atrArr[lastIdx] ?? (current.close * 0.015);
   const avgVolume = avgVolArr[lastIdx] ?? (current.volume || 1);
 
-  // === TREND BASELINE ===
-  const isUptrend = ema20 > ema50 && ema20 >= ema20Prev * 0.995;
-  const isDowntrend = ema20 < ema50 && ema20 <= ema20Prev * 1.005;
+  // FIX: slope comparison against ema20 from slopeLookbackBars bars ago
+  const emaSlopeUp = ema20 > ema20Prev;
+  const emaSlopeDown = ema20 < ema20Prev;
+
+  const isUptrend = ema20 > ema50 && emaSlopeUp;
+  const isDowntrend = ema20 < ema50 && emaSlopeDown;
+
+  if (!isUptrend && !isDowntrend) return null;
 
   if (adx < cfg.minAdx) {
     return null; // ADX >= 22 required
   }
 
-  // === PULLBACK DETECTION (Clear wick vs body logic) ===
+  // === PULLBACK DETECTION ===
+  // FIX: pullbackDepthAtr applied directly to ATR (ema20 ± pullbackDepthAtr * atr)
   let pullbackValid = false;
 
   if (isUptrend) {
-    // LONG: Wick touches EMA20, but close holds above EMA50
     const wickTouchesEma20 =
-      prev.low <= ema20 * (1 + cfg.pullbackDepthAtr * (atr / (ema20 || 1))) &&
-      prev.low >= ema20 * (1 - cfg.pullbackDepthAtr * (atr / (ema20 || 1)));
+      prev.low <= ema20 + cfg.pullbackDepthAtr * atr &&
+      prev.low >= ema20 - cfg.pullbackDepthAtr * atr;
 
     const closeAboveEma50 = prev.close > ema50;
     pullbackValid = wickTouchesEma20 && closeAboveEma50;
   } else if (isDowntrend) {
-    // SHORT: Wick touches EMA20, but close holds below EMA50
     const wickTouchesEma20 =
-      prev.high >= ema20 * (1 - cfg.pullbackDepthAtr * (atr / (ema20 || 1))) &&
-      prev.high <= ema20 * (1 + cfg.pullbackDepthAtr * (atr / (ema20 || 1)));
+      prev.high >= ema20 - cfg.pullbackDepthAtr * atr &&
+      prev.high <= ema20 + cfg.pullbackDepthAtr * atr;
 
     const closeBelowEma50 = prev.close < ema50;
     pullbackValid = wickTouchesEma20 && closeBelowEma50;
@@ -2658,6 +2666,8 @@ export function detectTrendPullback(
     tp2,
     trailingEma: ema20,
     confidence: 0.72,
+    expectedRR: (isUptrend ? tp2 - current.close : current.close - tp2) / stopDistance,
+    volumeRatio,
     setupType: 'TREND_PULLBACK'
   };
 }

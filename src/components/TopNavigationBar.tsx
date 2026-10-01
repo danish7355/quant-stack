@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, ShieldAlert, Wifi, ZapOff, Play, Clock, AlertTriangle, Menu } from 'lucide-react';
+import { Activity, ShieldAlert, Wifi, ZapOff, Play, Clock, AlertTriangle, Menu, Compass } from 'lucide-react';
 import { TradingMode, SystemHealth } from '../types.js';
 
 interface Props {
@@ -8,11 +8,13 @@ interface Props {
   dailyLossPct: number;
   openRiskPct: number;
   engineRunning: boolean;
+  regime?: string;
   onToggleEngine: () => void;
   onToggleSidebar?: () => void;
+  onOpenRegime?: () => void;
 }
 
-export function TopNavigationBar({ mode, health, dailyLossPct, openRiskPct, engineRunning, onToggleEngine, onToggleSidebar }: Props) {
+export function TopNavigationBar({ mode, health, dailyLossPct, openRiskPct, engineRunning, regime, onToggleEngine, onToggleSidebar, onOpenRegime }: Props) {
   const isStale = health.marketData === 'STALE';
   const isBlocked = health.tradingBlocked;
 
@@ -39,6 +41,18 @@ export function TopNavigationBar({ mode, health, dailyLossPct, openRiskPct, engi
         }`}>
           {mode} MODE
         </div>
+
+        {regime && (
+          <button
+            onClick={onOpenRegime}
+            className="flex items-center gap-1.5 px-2 py-1 text-[9px] sm:text-[10px] font-bold rounded-sm border border-emerald-500/40 text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 transition cursor-pointer"
+            title="Current CoinDCX Regime (Click to open Regime Visualizer)"
+          >
+            <Compass size={12} className="text-emerald-400" />
+            <span className="hidden sm:inline">REGIME:</span>
+            <span>{regime.replace('_', ' ')}</span>
+          </button>
+        )}
 
         <div className="flex items-center gap-3 hidden md:flex">
           <div className="flex items-center gap-1.5" title={isStale ? "Market Data is STALE - No updates >10s" : "Market Data Connected"}>

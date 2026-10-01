@@ -55,6 +55,10 @@ export interface TradingSettings {
   // Execution & Strategy Engine
   activeStrategy: 'EMA5_EXACT_ENTRY_V2' | 'BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1' | 'EMA5_EXACT_ENTRY_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'AUTO_REGIME' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL';
   enabledStrategies?: ('EMA5_EXACT_ENTRY_V2' | 'BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1' | 'EMA5_EXACT_ENTRY_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL')[];
+  autoActivateRegimeStrategies?: boolean; // When true, trading engine auto-aligns active strategies with detected regime
+  coindcxRegimeMode?: boolean;           // Enables CoinDCX intraday fee and risk defaults
+  coindcxActiveRegime?: 'BULL_TREND' | 'BEAR_TREND' | 'RANGE_CHOP' | 'HIGH_VOL';
+  coindcxRegimeSymbol?: string;          // Symbol used for regime check (default BTCUSDT)
   deletedStrategies?: string[];
   strategyBucket?: StrategyBucketItem[];
   tradeFrequency: 'LOW' | 'MEDIUM' | 'HIGH';
@@ -229,6 +233,8 @@ export interface TradingSettings {
   tpbEmaFast?: number;
   tpbEmaSlow?: number;
   tpbAdxMin?: number;
+  tpbSlopeLookbackBars?: number;          // Bars back to compare EMA20 for slope (default: 5)
+  tpbPullbackDepthAtr?: number;           // Pullback tolerance band around EMA20 in ATR units (default: 0.25)
   tpbVolumeSmaPeriod?: number;
   tpbMinVolumeRatio?: number;
   tpbRequireVolume?: boolean;
@@ -390,6 +396,8 @@ export const NUMERIC_BOUNDS: Record<string, { min: number; max: number; step?: n
   tpbEmaFast: { min: 5, max: 100, step: 1, label: 'Trend Pullback Fast EMA' },
   tpbEmaSlow: { min: 20, max: 200, step: 5, label: 'Trend Pullback Slow EMA' },
   tpbAdxMin: { min: 10, max: 50, step: 1, label: 'Trend Pullback Min ADX' },
+  tpbSlopeLookbackBars: { min: 2, max: 20, step: 1, label: 'Trend Pullback Slope Lookback Bars' },
+  tpbPullbackDepthAtr: { min: 0.05, max: 1.5, step: 0.05, label: 'Trend Pullback Depth ATR Multiple' },
   tpbMinVolumeRatio: { min: 0.5, max: 5.0, step: 0.1, label: 'Trend Pullback Min Volume Ratio' },
   tpbMaxEntryDistanceAtr: { min: 0.1, max: 3.0, step: 0.05, label: 'Trend Pullback Max Entry Distance (ATR)' },
   tpbMinStopDistanceAtr: { min: 0.2, max: 2.0, step: 0.1, label: 'Trend Pullback Min Stop Distance (ATR)' },
@@ -561,7 +569,9 @@ export function validateTradingSettings(input: unknown): ValidationResult {
     'egpStrictGapOnly', 'ema5PaEnabled', 'ema5PaBreakevenEnabled', 'ema5PaRequireStructureBreak',
     'tprEnabled', 'tprTrailingEnabled', 'tprBreakevenEnabled', 'tprAllowLongs', 'tprAllowShorts',
     'errEnabled', 'errRequireStructureBreak', 'errAllowReclaimAsDisplacement', 'errBreakevenEnabled',
-    'eeeEnabled', 'eeeBreakevenEnabled', 'eeeRequireOpposingSpace'
+    'eeeEnabled', 'eeeBreakevenEnabled', 'eeeRequireOpposingSpace',
+    'tpbAllowLongs', 'tpbAllowShorts', 'tpbAllowBroadStop', 'tpbAllowUnconfirmedVolume',
+    'autoActivateRegimeStrategies', 'coindcxRegimeMode'
   ];
   for (const bKey of booleanKeys) {
     if (raw[bKey] !== undefined) {
@@ -615,7 +625,7 @@ export function validateTradingSettings(input: unknown): ValidationResult {
     'activeStrategy', 'timeframe', 'theme', 'globalFilterSymbol',
     'telegramBotToken', 'telegramChatId', 'binanceApiKey', 'binanceApiSecret',
     'githubPat', 'githubRepoUrl', 'customWatchlist', 'alertFormat',
-    'smcHtfResolution'
+    'smcHtfResolution', 'coindcxActiveRegime', 'coindcxRegimeSymbol'
   ];
   for (const sKey of stringKeys) {
     if (raw[sKey] !== undefined && typeof raw[sKey] === 'string') {
@@ -667,6 +677,10 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   tradingMode: 'PAPER',
   activeStrategy: 'VOLATILITY_COMPRESSION',
   enabledStrategies: ['VOLATILITY_COMPRESSION'],
+  autoActivateRegimeStrategies: false,
+  coindcxRegimeMode: true,
+  coindcxActiveRegime: 'RANGE_CHOP',
+  coindcxRegimeSymbol: 'BTCUSDT',
   tradeFrequency: 'LOW',
   timeframe: '5m',
   autoTradeThreshold: 75,
@@ -828,7 +842,9 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
 
   tpbEmaFast: 20,
   tpbEmaSlow: 50,
-  tpbAdxMin: 18,
+  tpbAdxMin: 22,
+  tpbSlopeLookbackBars: 5,
+  tpbPullbackDepthAtr: 0.25,
   tpbVolumeSmaPeriod: 20,
   tpbMinVolumeRatio: 1.0,
   tpbRequireVolume: true,

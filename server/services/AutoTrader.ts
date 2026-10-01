@@ -56,6 +56,12 @@ import {
   MarketRegimeType
 } from '../../src/utils/strategyBucket.js';
 import { TradingSettings, CANONICAL_DEFAULT_SETTINGS } from '../../src/shared/TradingSettings.js';
+import { analyzeCoinDcxRegime, CoinDcxRegimeResult } from '../../src/utils/coindcxRegimeAnalyzer.js';
+import { 
+  analyzeThreeLayerRegime, 
+  ThreeLayerRegimeState, 
+  CoreRegimeType 
+} from '../../src/utils/regime/threeLayerRegime.js';
 
 export type ServerBotSettings = TradingSettings;
 
@@ -83,6 +89,14 @@ export class AutoTrader {
   }>();
   private cachedGlobalRegime: GlobalMarketRegime | null = null;
   private lastGlobalRegimeTime = 0;
+  private cachedThreeLayerRegime: ThreeLayerRegimeState | null = null;
+  private lastThreeLayerRegimeTime = 0;
+  private threeLayerHysteresis = {
+    lastConfirmedRegime: 'RANGE' as CoreRegimeType,
+    lastCandidateRegime: 'RANGE' as CoreRegimeType,
+    consecutiveCandles: 2,
+    regimeAgeBars: 12
+  };
   private globalFilterBlockActive = false;
   private globalFilterBlockReason = '';
   // Per-symbol state machine state for TREND_PULLBACK_RETEST
@@ -719,6 +733,215 @@ export class AutoTrader {
     }
   }
 
+  public async getCoinDcxRegime(symbol: string = 'BTCUSDT'): Promise<CoinDcxRegimeResult> {
+    try {
+      const klines15m = await this.getKlines(symbol, '15m');
+      const klines5m = await this.getKlines(symbol, '5m');
+
+      let fundingRate = 0.0001;
+      try {
+        const response = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`);
+        if (response.ok) {
+          const data: any = await response.json();
+          if (data && data.lastFundingRate) {
+            fundingRate = parseFloat(data.lastFundingRate);
+          }
+        }
+      } catch (err) {
+        // Fallback default
+      }
+
+      const regimeResult = analyzeCoinDcxRegime(klines15m, klines5m, fundingRate, symbol);
+
+      // If Auto-Activate Recommended Strategies is enabled, synchronize the engine settings
+      if (this.settings.autoActivateRegimeStrategies && regimeResult.suggestedSettings) {
+        const currentActive = this.settings.activeStrategy;
+        const targetActive = regimeResult.suggestedSettings.activeStrategy;
+        const currentRegime = this.settings.coindcxActiveRegime;
+        const targetRegime = regimeResult.regime;
+
+        if (targetActive && (currentRegime !== targetRegime || currentActive !== targetActive)) {
+          console.log(`🧭 [CoinDCX Regime Auto-Sync] Regime: ${currentRegime} -> ${targetRegime}. Auto-activating: ${targetActive}`);
+          const updatedSettings = {
+            ...this.settings,
+            ...regimeResult.suggestedSettings,
+            coindcxActiveRegime: targetRegime,
+            coindcxRegimeSymbol: symbol,
+            updatedAt: new Date().toISOString()
+          };
+          await this.saveSettings(updatedSettings, 'SYSTEM');
+        }
+      }
+
+      return regimeResult;
+    } catch (e) {
+      console.warn(`[AutoTrader] getCoinDcxRegime error for ${symbol}:`, e);
+      return analyzeCoinDcxRegime([], [], 0.0001, symbol);
+    }
+  }
+
+  /**
+   * 3-Layer Quantitative Regime Engine (Direction Bias, Core Market Regime, Tradeability Gate)
+   * Anchors on BTCUSDT with ETH confirmation across 1D/4H/1H closed bars with 2-bar hysteresis.
+   */
+  public async getThreeLayerRegime(forceRefresh = false): Promise<ThreeLayerRegimeState> {
+    const now = Date.now();
+    if (!forceRefresh && this.cachedThreeLayerRegime && (now - this.lastThreeLayerRegimeTime < 60000)) {
+      return this.cachedThreeLayerRegime;
+    }
+
+    try {
+      const [btc1dRaw, btc4hRaw, btc1hRaw, eth1dRaw, eth4hRaw] = await Promise.all([
+        this.getKlines('BTCUSDT', '1d'),
+        this.getKlines('BTCUSDT', '4h'),
+        this.getKlines('BTCUSDT', '1h'),
+        this.getKlines('ETHUSDT', '1d'),
+        this.getKlines('ETHUSDT', '4h')
+      ]);
+
+      const btc1dClosed = btc1dRaw && btc1dRaw.length > 1 ? btc1dRaw.slice(0, -1) : (btc1dRaw || []);
+      const btc4hClosed = btc4hRaw && btc4hRaw.length > 1 ? btc4hRaw.slice(0, -1) : (btc4hRaw || []);
+      const btc1hClosed = btc1hRaw && btc1hRaw.length > 1 ? btc1hRaw.slice(0, -1) : (btc1hRaw || []);
+      const eth1dClosed = eth1dRaw && eth1dRaw.length > 1 ? eth1dRaw.slice(0, -1) : (eth1dRaw || []);
+      const eth4hClosed = eth4hRaw && eth4hRaw.length > 1 ? eth4hRaw.slice(0, -1) : (eth4hRaw || []);
+
+      const currentPrice = priceStream.getPrice('BTCUSDT') || (btc4hClosed.length > 0 ? btc4hClosed[btc4hClosed.length - 1].close : 68000);
+
+      // 1. Funding rate 30d history
+      let currentFundingRate = 0.0001;
+      let fundingRate30dHistory: number[] = [];
+      try {
+        const frRes = await fetch('https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT&limit=90');
+        if (frRes.ok) {
+          const frData: any = await frRes.json();
+          if (Array.isArray(frData) && frData.length > 0) {
+            fundingRate30dHistory = frData.map((d: any) => parseFloat(d.fundingRate || '0'));
+            currentFundingRate = fundingRate30dHistory[fundingRate30dHistory.length - 1] || 0.0001;
+          }
+        }
+      } catch (e) {}
+
+      // 2. Open interest 4H
+      let openInterest4h = { priceChangePct: 0, oiChangePct: 0 };
+      try {
+        const oiRes = await fetch('https://fapi.binance.com/fapi/v1/openInterestHist?symbol=BTCUSDT&period=4h&limit=5');
+        if (oiRes.ok) {
+          const oiData: any = await oiRes.json();
+          if (Array.isArray(oiData) && oiData.length >= 2) {
+            const latest = oiData[oiData.length - 1];
+            const prev = oiData[oiData.length - 2];
+            const pLatest = parseFloat(latest.sumOpenInterestValue || latest.sumOpenInterest || '1');
+            const pPrev = parseFloat(prev.sumOpenInterestValue || prev.sumOpenInterest || '1');
+            const oiChangePct = pPrev > 0 ? ((pLatest - pPrev) / pPrev) * 100 : 0;
+            const btc4hCloses = btc4hClosed.map(k => k.close);
+            const priceChangePct = btc4hCloses.length >= 2 
+              ? ((btc4hCloses[btc4hCloses.length - 1] - btc4hCloses[btc4hCloses.length - 2]) / btc4hCloses[btc4hCloses.length - 2]) * 100 
+              : 0;
+            openInterest4h = { priceChangePct, oiChangePct };
+          }
+        }
+      } catch (e) {}
+
+      // 3. Taker CVD / Long-Short ratio
+      let takerCvd4h = { isRising: true, netDelta: 50 };
+      try {
+        const cvdRes = await fetch('https://fapi.binance.com/futures/data/takerlongshortRatio?symbol=BTCUSDT&period=4h&limit=5');
+        if (cvdRes.ok) {
+          const cvdData: any = await cvdRes.json();
+          if (Array.isArray(cvdData) && cvdData.length >= 2) {
+            const latestRatio = parseFloat(cvdData[cvdData.length - 1].buySellRatio || '1.0');
+            const prevRatio = parseFloat(cvdData[cvdData.length - 2].buySellRatio || '1.0');
+            takerCvd4h = {
+              isRising: latestRatio >= prevRatio,
+              netDelta: (latestRatio - 1.0) * 100
+            };
+          }
+        }
+      } catch (e) {}
+
+      // 4. Breadth approximation: % of top perps above 4H EMA50
+      let breadthTop30PctAboveEma50 = 55;
+      try {
+        const sampleSymbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'SUIUSDT'];
+        let aboveCount = 0;
+        for (const s of sampleSymbols) {
+          const p = priceStream.getPrice(s);
+          const klines = await this.getKlines(s, '4h');
+          if (klines && klines.length >= 50) {
+            const closes = klines.map(k => k.close);
+            const ema50 = calculateEMA(closes, 50);
+            const lastEma50 = ema50[ema50.length - 1];
+            if ((p || closes[closes.length - 1]) > lastEma50) {
+              aboveCount++;
+            }
+          }
+        }
+        breadthTop30PctAboveEma50 = Math.round((aboveCount / sampleSymbols.length) * 100);
+      } catch (e) {}
+
+      const result = analyzeThreeLayerRegime({
+        btc1d: {
+          closes: btc1dClosed.map(k => k.close),
+          highs: btc1dClosed.map(k => k.high),
+          lows: btc1dClosed.map(k => k.low),
+          open: btc1dClosed.length > 0 ? btc1dClosed[btc1dClosed.length - 1].open : currentPrice,
+          klines: btc1dClosed
+        },
+        btc4h: {
+          closes: btc4hClosed.map(k => k.close),
+          highs: btc4hClosed.map(k => k.high),
+          lows: btc4hClosed.map(k => k.low),
+          volumes: btc4hClosed.map(k => k.volume),
+          klines: btc4hClosed
+        },
+        btc1h: {
+          closes: btc1hClosed.map(k => k.close),
+          highs: btc1hClosed.map(k => k.high),
+          lows: btc1hClosed.map(k => k.low),
+          klines: btc1hClosed
+        },
+        eth1d: {
+          closes: eth1dClosed.map(k => k.close)
+        },
+        eth4h: {
+          closes: eth4hClosed.map(k => k.close)
+        },
+        currentPrice,
+        currentFundingRate,
+        fundingRate30dHistory,
+        openInterest4h,
+        takerCvd4h,
+        breadthTop30PctAboveEma50,
+        lastConfirmedRegime: this.threeLayerHysteresis.lastConfirmedRegime,
+        lastCandidateRegime: this.threeLayerHysteresis.lastCandidateRegime,
+        consecutiveCandles: this.threeLayerHysteresis.consecutiveCandles,
+        regimeAgeBars: this.threeLayerHysteresis.regimeAgeBars
+      });
+
+      this.threeLayerHysteresis = {
+        lastConfirmedRegime: result.regime.confirmedRegime,
+        lastCandidateRegime: result.regime.candidateRegime,
+        consecutiveCandles: result.regime.consecutiveCandles,
+        regimeAgeBars: result.regime.regimeAgeBars
+      };
+
+      this.cachedThreeLayerRegime = result;
+      this.lastThreeLayerRegimeTime = now;
+      return result;
+    } catch (err) {
+      console.warn('[AutoTrader] getThreeLayerRegime error:', err);
+      if (this.cachedThreeLayerRegime) {
+        return this.cachedThreeLayerRegime;
+      }
+      const fallbackPrice = priceStream.getPrice('BTCUSDT') || 68000;
+      return analyzeThreeLayerRegime({
+        btc1d: { closes: [fallbackPrice], highs: [fallbackPrice], lows: [fallbackPrice], open: fallbackPrice, klines: [] },
+        btc4h: { closes: [fallbackPrice], highs: [fallbackPrice], lows: [fallbackPrice], volumes: [1000], klines: [] },
+        currentPrice: fallbackPrice
+      });
+    }
+  }
+
   public updateDemoBalance(pnl: number) {
     const current = this.settings.demoBalance !== undefined ? this.settings.demoBalance : (this.settings.startingBalance || 10000);
     this.settings.demoBalance = current + pnl;
@@ -885,6 +1108,11 @@ export class AutoTrader {
 
       // 0. Macro Market Safety: Hybrid Global BTC/ETH Regime Filter
       const useGlobalFilter = this.settings.useGlobalBtcFilter !== false;
+      if (this.settings.autoActivateRegimeStrategies) {
+        try {
+          await this.getCoinDcxRegime(this.settings.coindcxRegimeSymbol || 'BTCUSDT');
+        } catch (e) {}
+      }
       if (useGlobalFilter) {
         const globalRegime = await this.getGlobalRegime();
         if (!globalRegime.isTradable || globalRegime.regime === 'PANIC' || globalRegime.macroColor === 'RED') {

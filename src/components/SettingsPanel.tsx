@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { AppSettings, Timeframe, NUMERIC_BOUNDS } from '../types';
-import { RefreshCw, Eye, EyeOff, Github, UploadCloud, AlertTriangle, CheckCircle2, ArrowRight, ShieldAlert, Activity, History } from 'lucide-react';
+import { RefreshCw, Eye, EyeOff, Github, UploadCloud, AlertTriangle, CheckCircle2, ArrowRight, ShieldAlert, Activity, History, Compass } from 'lucide-react';
 import { SettingsHealthPanel } from './SettingsHealthPanel';
 import { SettingsAuditLog } from './SettingsAuditLog';
 
@@ -1142,6 +1142,61 @@ export default function SettingsPanel({
               </div>
             </div>
 
+            {/* CoinDCX Futures Regime Auto-Pilot Configuration */}
+            <div className="bg-[#0E1117]/90 border border-[#30363D] rounded-xl p-5 space-y-4">
+              <div className="flex items-center justify-between border-b border-[#30363D] pb-3">
+                <div>
+                  <h3 className="text-sm font-bold text-gray-100 flex items-center gap-2">
+                    <Compass className="w-4 h-4 text-emerald-400" />
+                    <span>CoinDCX Futures & Intraday Regime Auto-Pilot</span>
+                  </h3>
+                  <p className="text-[11px] text-gray-400 mt-0.5">
+                    Multi-timeframe 15m trend + 5m entry regime analyzer that automatically coordinates 1–2 matching core setups.
+                  </p>
+                </div>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                  settings.autoActivateRegimeStrategies
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    : 'bg-gray-800 text-gray-400 border-gray-700'
+                }`}>
+                  {settings.autoActivateRegimeStrategies ? 'AUTO-PILOT ACTIVE' : 'MANUAL'}
+                </span>
+              </div>
+
+              <div className="divide-y divide-[#30363D]/40">
+                <ToggleRow
+                  label="Auto-Activate Recommended Setups by Regime"
+                  desc="When active, the engine dynamically adjusts enabledStrategies, activeStrategy, and long/short permissions to match the CoinDCX regime analysis."
+                  checked={settings.autoActivateRegimeStrategies}
+                  onChange={(v: boolean) => handleInputChange('autoActivateRegimeStrategies', v)}
+                  activeBadgeText="AUTO-PILOT ON"
+                  inactiveBadgeText="MANUAL"
+                  highRisk={false}
+                />
+                <ToggleRow
+                  label="CoinDCX Futures Risk & Fee Profile"
+                  desc="Enforces CoinDCX best practices: 2–5x moderate leverage, 0.25–0.5% risk per trade, 2% daily loss circuit breaker, and 0.177% round-trip fee breakeven buffer."
+                  checked={settings.coindcxRegimeMode}
+                  onChange={(v: boolean) => handleInputChange('coindcxRegimeMode', v)}
+                  activeBadgeText="ENFORCED"
+                  inactiveBadgeText="OFF"
+                  highRisk={false}
+                />
+                <div className="flex justify-between items-center py-3.5 border-b border-[#30363D]/40">
+                  <div className="flex flex-col pr-4">
+                    <span className="text-sm font-bold text-gray-100">CoinDCX Session Anchor Pair</span>
+                    <span className="text-[11px] text-gray-400">Anchor pair evaluated for session trend (defaults to BTCUSDT).</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={settings.coindcxRegimeSymbol || 'BTCUSDT'}
+                    onChange={(e) => handleInputChange('coindcxRegimeSymbol', e.target.value.toUpperCase())}
+                    className="w-32 bg-gray-900 border border-gray-700 rounded px-2.5 py-1 text-sm font-mono text-right text-gray-200 focus:outline-none focus:border-emerald-400 uppercase"
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* SECTION 1: SMC High-Probability Strategy */}
             <div className="bg-[#0E1117]/90 border border-[#30363D] rounded-xl p-5 space-y-4">
               <div className="flex items-center justify-between border-b border-[#30363D] pb-3">
@@ -1312,7 +1367,9 @@ export default function SettingsPanel({
               <div className="divide-y divide-[#30363D]/40">
                 <InputRow label="Fast EMA Period" desc="Fast EMA period for dynamic pullback detection (default: 20)" value={settings.tpbEmaFast ?? 20} onChange={(v: any) => handleInputChange('tpbEmaFast', v)} min={5} max={100} />
                 <InputRow label="Slow EMA Period" desc="Slow baseline EMA period for trend direction (default: 50)" value={settings.tpbEmaSlow ?? 50} onChange={(v: any) => handleInputChange('tpbEmaSlow', v)} min={20} max={200} />
-                <InputRow label="Minimum ADX Momentum" desc="ADX must be above this threshold to confirm strong directional trend (default: 18)" value={settings.tpbAdxMin ?? 18} onChange={(v: any) => handleInputChange('tpbAdxMin', v)} min={10} max={50} />
+                <InputRow label="Minimum ADX Momentum" desc="ADX must be above this threshold to confirm strong directional trend (default: 22)" value={settings.tpbAdxMin ?? 22} onChange={(v: any) => handleInputChange('tpbAdxMin', v)} min={10} max={50} />
+                <InputRow label="EMA Slope Lookback (Bars)" desc="Bars back to compare Fast EMA for trend slope confirmation (default: 5)" value={settings.tpbSlopeLookbackBars ?? 5} onChange={(v: any) => handleInputChange('tpbSlopeLookbackBars', v)} min={2} max={20} />
+                <InputRow label="Pullback Depth Tolerance (x ATR)" desc="Tolerance band around EMA 20 in ATR units (default: 0.25)" value={settings.tpbPullbackDepthAtr ?? 0.25} onChange={(v: any) => handleInputChange('tpbPullbackDepthAtr', v)} min={0.05} max={1.5} />
                 <InputRow label="Volume SMA Lookback Period" desc="Lookback period for baseline volume moving average (default: 20)" value={settings.tpbVolumeSmaPeriod ?? 20} onChange={(v: any) => handleInputChange('tpbVolumeSmaPeriod', v)} min={5} max={50} />
                 <InputRow label="Min Volume Surge Ratio" desc="Retest bounce candle volume vs SMA ratio (default: 1.0x)" value={settings.tpbMinVolumeRatio ?? 1.0} onChange={(v: any) => handleInputChange('tpbMinVolumeRatio', v)} min={0.5} max={5.0} />
                 <InputRow label="Max Entry Distance from EMA (x ATR)" desc="Maximum allowable price extension from Fast EMA to trigger entry (default: 0.25)" value={settings.tpbMaxEntryDistanceAtr ?? 0.25} onChange={(v: any) => handleInputChange('tpbMaxEntryDistanceAtr', v)} min={0.1} max={3.0} />
