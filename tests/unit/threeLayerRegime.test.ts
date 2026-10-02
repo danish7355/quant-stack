@@ -191,6 +191,33 @@ describe('3-Layer Quantitative Regime Engine', () => {
       expect(tradeability.feeDragPctOfR).toBeLessThanOrEqual(15.0);
       expect(tradeability.isTradeable).toBe(true);
       expect(tradeability.isLowEdgeDay).toBe(false);
+      expect(tradeability.isLayer3Enabled).toBe(true);
+      expect(tradeability.isGateBypassed).toBe(false);
+    });
+
+    it('allows turning OFF Layer 3 gate so low edge fee drag days are bypassed and tradeable', () => {
+      // Compressed candles where fee drag would ordinarily block entries
+      const btc1h = makeKlines(30, 80000, 0);
+      for (let i = 0; i < 30; i++) {
+        btc1h.highs[i] = 80100;
+        btc1h.lows[i] = 79900;
+      }
+
+      const tradeabilityBypassed = evaluateTradeabilityGate({
+        btc1hCloses: btc1h.closes,
+        btc1hHighs: btc1h.highs,
+        btc1hLows: btc1h.lows,
+        currentPrice: 80000,
+        enableLayer3Gate: false // User turned Layer 3 gate OFF
+      });
+
+      // Even with fee drag > 15%, isTradeable is permitted because gate is turned OFF
+      expect(tradeabilityBypassed.feeDragPctOfR).toBeGreaterThan(15.0);
+      expect(tradeabilityBypassed.isTradeable).toBe(true);
+      expect(tradeabilityBypassed.isLayer3Enabled).toBe(false);
+      expect(tradeabilityBypassed.isGateBypassed).toBe(true);
+      expect(tradeabilityBypassed.blockedReason).toBeUndefined();
+      expect(tradeabilityBypassed.gateReason).toContain('BYPASSED');
     });
   });
 

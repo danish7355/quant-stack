@@ -138,6 +138,13 @@ export function getStrategyDisplayName(strategyKey?: string): {
         description: 'Dynamically routes market conditions to the optimal strategy algorithm per asset regime.'
       };
     case 'BINANCE_COMPOSITE':
+      return {
+        name: 'Range Mean Reversion',
+        shortName: 'Mean Reversion',
+        tag: 'RANGE-FADE',
+        badgeBg: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
+        description: 'Fades 2-sigma Bollinger Band extremes back to 200 SMA mean in verified horizontal ranges.'
+      };
     default:
       return {
         name: 'Binance Composite Technical Scoring',

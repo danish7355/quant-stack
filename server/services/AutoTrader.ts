@@ -753,26 +753,8 @@ export class AutoTrader {
 
       const regimeResult = analyzeCoinDcxRegime(klines15m, klines5m, fundingRate, symbol);
 
-      // If Auto-Activate Recommended Strategies is enabled, synchronize the engine settings
-      if (this.settings.autoActivateRegimeStrategies && regimeResult.suggestedSettings) {
-        const currentActive = this.settings.activeStrategy;
-        const targetActive = regimeResult.suggestedSettings.activeStrategy;
-        const currentRegime = this.settings.coindcxActiveRegime;
-        const targetRegime = regimeResult.regime;
-
-        if (targetActive && (currentRegime !== targetRegime || currentActive !== targetActive)) {
-          console.log(`🧭 [CoinDCX Regime Auto-Sync] Regime: ${currentRegime} -> ${targetRegime}. Auto-activating: ${targetActive}`);
-          const updatedSettings = {
-            ...this.settings,
-            ...regimeResult.suggestedSettings,
-            coindcxActiveRegime: targetRegime,
-            coindcxRegimeSymbol: symbol,
-            updatedAt: new Date().toISOString()
-          };
-          await this.saveSettings(updatedSettings, 'SYSTEM');
-        }
-      }
-
+      // Note: Centralized auto-sync is handled by 3-Layer Quantitative Regime Engine (getThreeLayerRegime)
+      // to avoid 15m/4H regime conflicts and enforce 2-closed-candle hysteresis.
       return regimeResult;
     } catch (e) {
       console.warn(`[AutoTrader] getCoinDcxRegime error for ${symbol}:`, e);
@@ -915,7 +897,8 @@ export class AutoTrader {
         lastConfirmedRegime: this.threeLayerHysteresis.lastConfirmedRegime,
         lastCandidateRegime: this.threeLayerHysteresis.lastCandidateRegime,
         consecutiveCandles: this.threeLayerHysteresis.consecutiveCandles,
-        regimeAgeBars: this.threeLayerHysteresis.regimeAgeBars
+        regimeAgeBars: this.threeLayerHysteresis.regimeAgeBars,
+        enableLayer3Gate: this.settings.enableRegimeLayer3Gate !== false
       });
 
       this.threeLayerHysteresis = {
@@ -927,6 +910,16 @@ export class AutoTrader {
 
       this.cachedThreeLayerRegime = result;
       this.lastThreeLayerRegimeTime = now;
+
+      // Keep settings.coindcxActiveRegime synchronized with confirmed 3-Layer regime
+      if (result.regime && result.regime.confirmedRegime) {
+        const confirmed = result.regime.confirmedRegime;
+        if (this.settings.coindcxActiveRegime !== confirmed) {
+          this.settings.coindcxActiveRegime = confirmed as any;
+          this.saveSettings(this.settings, 'SYSTEM').catch(() => {});
+        }
+      }
+
       return result;
     } catch (err) {
       console.warn('[AutoTrader] getThreeLayerRegime error:', err);
@@ -937,7 +930,8 @@ export class AutoTrader {
       return analyzeThreeLayerRegime({
         btc1d: { closes: [fallbackPrice], highs: [fallbackPrice], lows: [fallbackPrice], open: fallbackPrice, klines: [] },
         btc4h: { closes: [fallbackPrice], highs: [fallbackPrice], lows: [fallbackPrice], volumes: [1000], klines: [] },
-        currentPrice: fallbackPrice
+        currentPrice: fallbackPrice,
+        enableLayer3Gate: this.settings.enableRegimeLayer3Gate !== false
       });
     }
   }
@@ -1107,12 +1101,36 @@ export class AutoTrader {
       }
 
       // 0. Macro Market Safety: Hybrid Global BTC/ETH Regime Filter
-      const useGlobalFilter = this.settings.useGlobalBtcFilter !== false;
+      // 0a. 3-Layer Quantitative Regime Sync (Layer 2 confirmed regime + Favored Strategy Alignment)
       if (this.settings.autoActivateRegimeStrategies) {
         try {
-          await this.getCoinDcxRegime(this.settings.coindcxRegimeSymbol || 'BTCUSDT');
-        } catch (e) {}
+          const threeLayer = await this.getThreeLayerRegime();
+          const confirmedRegime = threeLayer.regime.confirmedRegime;
+          const topFavored = threeLayer.recommendedStrategies?.find(s => s.suitability === 'FAVORED') || threeLayer.recommendedStrategies?.[0];
+
+          if (topFavored) {
+            const currentRegime = this.settings.coindcxActiveRegime;
+            const currentActive = this.settings.activeStrategy;
+            const targetActive = topFavored.strategyId as any;
+
+            if (currentRegime !== confirmedRegime || currentActive !== targetActive) {
+              console.log(`🧭 [3-Layer Quantitative Regime Auto-Sync] Regime: ${currentRegime} -> ${confirmedRegime}. Auto-activating favored strategy: ${targetActive} (${topFavored.name})`);
+              const updatedSettings = {
+                ...this.settings,
+                activeStrategy: targetActive,
+                enabledStrategies: [targetActive],
+                coindcxActiveRegime: confirmedRegime as any,
+                coindcxRegimeSymbol: this.settings.coindcxRegimeSymbol || 'BTCUSDT',
+                updatedAt: new Date().toISOString()
+              };
+              await this.saveSettings(updatedSettings, 'SYSTEM');
+            }
+          }
+        } catch (e) {
+          console.warn('[AutoTrader] 3-layer regime auto-sync error:', e);
+        }
       }
+      const useGlobalFilter = this.settings.useGlobalBtcFilter !== false;
       if (useGlobalFilter) {
         const globalRegime = await this.getGlobalRegime();
         if (!globalRegime.isTradable || globalRegime.regime === 'PANIC' || globalRegime.macroColor === 'RED') {
@@ -1139,6 +1157,23 @@ export class AutoTrader {
       } else {
         this.globalFilterBlockActive = false;
         this.globalFilterBlockReason = null;
+      }
+
+      // 0b. Layer 3 Quantitative Regime Gate (Fee Drag / Friction Filter)
+      if (this.settings.enableRegimeLayer3Gate !== false) {
+        try {
+          const threeLayer = await this.getThreeLayerRegime();
+          if (!threeLayer.tradeability.isTradeable) {
+            this.globalFilterBlockActive = true;
+            this.globalFilterBlockReason = `Regime Layer 3 Gate Blocked: ${threeLayer.tradeability.gateReason}`;
+            this.lastScanCompletedTime = Date.now();
+            this.lastScanSummary = `Layer 3 Tradeability Gate Active (${threeLayer.tradeability.tradeabilityState}): ${threeLayer.tradeability.gateReason}`;
+            console.log(`🛡️ [Regime Layer 3 Gate] Tradeability block active: ${threeLayer.tradeability.gateReason}`);
+            return;
+          }
+        } catch (e) {
+          // Fall through if 3-layer calculation fails
+        }
       }
 
       // 1. Fetch top volume futures tickers (supports up to 100 coins adhering to user settings)

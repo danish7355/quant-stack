@@ -183,6 +183,41 @@ export function RegimeVisualizer({
     }
   };
 
+  // Toggle Layer 3 Tradeability Gate
+  const handleToggleLayer3Gate = async () => {
+    const isCurrentlyActive = settings.enableRegimeLayer3Gate !== false;
+    const nextVal = !isCurrentlyActive;
+    const nextSettings = {
+      ...settings,
+      enableRegimeLayer3Gate: nextVal,
+      updatedAt: new Date().toISOString()
+    };
+    setSettings(nextSettings);
+
+    try {
+      await fetch('/api/bot/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(nextSettings)
+      });
+      addToast({
+        title: nextVal ? 'Layer 3 Gate: ACTIVE' : 'Layer 3 Gate: BYPASSED (OFF)',
+        description: nextVal 
+          ? 'Tradeability gate enforced. Low edge trades (fee drag > 15% of 1R) will be blocked.'
+          : 'Tradeability gate bypassed. Orders permitted across all volatility and fee environments.',
+        type: nextVal ? 'success' : 'warning'
+      });
+    } catch (e) {
+      addToast({
+        title: 'Updated Locally',
+        description: 'Layer 3 state updated in UI.',
+        type: 'info'
+      });
+    }
+
+    fetchRegime(true);
+  };
+
   // Simulated fee drag calculation
   const simFeeDragPctOfR = useMemo(() => {
     if (simulatedStopPct <= 0) return 100;
@@ -274,6 +309,29 @@ export function RegimeVisualizer({
               <>
                 <ZapOff className="w-3.5 h-3.5 text-slate-400" />
                 <span>Auto-Arm Engine: OFF</span>
+              </>
+            )}
+          </button>
+
+          {/* Layer 3 Gate Toggle */}
+          <button
+            onClick={handleToggleLayer3Gate}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-semibold transition-all ${
+              settings.enableRegimeLayer3Gate !== false
+                ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300 shadow-lg shadow-indigo-500/10'
+                : 'bg-amber-500/20 border-amber-500/40 text-amber-300 shadow-lg shadow-amber-500/10'
+            }`}
+            title="Toggle Layer 3 Tradeability & Fee Drag Gate"
+          >
+            {settings.enableRegimeLayer3Gate !== false ? (
+              <>
+                <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Layer 3 Gate: ON</span>
+              </>
+            ) : (
+              <>
+                <ShieldAlert className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                <span>Layer 3 Gate: OFF (Bypassed)</span>
               </>
             )}
           </button>
@@ -465,16 +523,33 @@ export function RegimeVisualizer({
 
             {/* 4. Tradeability Gate */}
             <div className="bg-slate-950/60 border border-slate-800/80 rounded-lg p-3">
-              <span className="text-[10px] font-mono tracking-wider text-slate-400 uppercase block mb-1">
-                Layer 3: Tradeability Gate
-              </span>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] font-mono tracking-wider text-slate-400 uppercase">
+                  Layer 3: Tradeability Gate
+                </span>
+                <button
+                  onClick={handleToggleLayer3Gate}
+                  className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border transition-colors ${
+                    settings.enableRegimeLayer3Gate !== false
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                      : 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                  }`}
+                  title="Click to toggle Layer 3 Tradeability Gate"
+                >
+                  {settings.enableRegimeLayer3Gate !== false ? 'GATE: ON' : 'GATE: OFF'}
+                </button>
+              </div>
               <div className="flex items-center justify-between">
                 <span className={`text-xs px-2 py-0.5 rounded font-bold border flex items-center gap-1 ${
-                  regimeState.tradeability.isTradeable
+                  settings.enableRegimeLayer3Gate === false
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    : regimeState.tradeability.isTradeable
                     ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                     : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
                 }`}>
-                  {regimeState.tradeability.isTradeable ? (
+                  {settings.enableRegimeLayer3Gate === false ? (
+                    <><ShieldAlert className="w-3 h-3 text-amber-400" /> BYPASSED</>
+                  ) : regimeState.tradeability.isTradeable ? (
                     <><CheckCircle2 className="w-3 h-3 text-emerald-400" /> PASS</>
                   ) : (
                     <><ShieldAlert className="w-3 h-3 text-rose-400" /> LOW EDGE</>
@@ -815,14 +890,52 @@ export function RegimeVisualizer({
                   <ShieldAlert className="w-5 h-5 text-amber-400" />
                   <h3 className="font-bold text-sm tracking-wide text-white">LAYER 3: TRADEABILITY GATE</h3>
                 </div>
-                <span className={`text-xs px-2.5 py-0.5 rounded border font-bold ${
-                  regimeState.tradeability.isTradeable
-                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                    : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-                }`}>
-                  {regimeState.tradeability.isTradeable ? 'GATE PASSED' : 'GATE BLOCKED'}
-                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleToggleLayer3Gate}
+                    className={`text-xs px-2.5 py-1 rounded-lg border font-bold flex items-center gap-1.5 transition-all ${
+                      settings.enableRegimeLayer3Gate !== false
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                        : 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                    }`}
+                    title="Click to toggle Layer 3 Tradeability Gate ON/OFF"
+                  >
+                    {settings.enableRegimeLayer3Gate !== false ? (
+                      <>
+                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>GATE: ON</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldAlert className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                        <span>GATE: BYPASSED (OFF)</span>
+                      </>
+                    )}
+                  </button>
+                  <span className={`text-xs px-2.5 py-1 rounded-lg border font-bold ${
+                    settings.enableRegimeLayer3Gate === false
+                      ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                      : regimeState.tradeability.isTradeable
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                      : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                  }`}>
+                    {settings.enableRegimeLayer3Gate === false ? 'OVERRIDE' : regimeState.tradeability.isTradeable ? 'PASSED' : 'BLOCKED'}
+                  </span>
+                </div>
               </div>
+
+              {/* Bypass Banner when Layer 3 is turned OFF */}
+              {settings.enableRegimeLayer3Gate === false && (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl mb-4 text-xs text-amber-200 flex items-start gap-2.5">
+                  <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="block text-amber-300 font-semibold mb-0.5">Layer 3 Tradeability Gate: Disabled (Bypassed)</strong>
+                    <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                      Orders will not be paused or blocked by fee drag (current: {regimeState.tradeability.feeDragPctOfR}% of 1R) or stop distance compression. All metrics and simulator below remain live for risk awareness.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Fee Drag Banner */}
               <div className={`p-4 rounded-xl border mb-4 ${
@@ -913,7 +1026,7 @@ export function RegimeVisualizer({
               </div>
 
               {/* Blocked reason banner if not tradeable */}
-              {!regimeState.tradeability.isTradeable && (
+              {!regimeState.tradeability.isTradeable && settings.enableRegimeLayer3Gate !== false && (
                 <div className="mt-4 p-2.5 bg-rose-950/40 border border-rose-800/60 rounded-lg text-rose-300 text-xs flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
                   <span>{regimeState.tradeability.gateReason || regimeState.tradeability.blockedReason || 'Low edge conditions active (Fee drag > 15%)'}</span>

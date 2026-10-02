@@ -45,10 +45,15 @@ export function TopNavigationBar({ mode, health, dailyLossPct, openRiskPct, engi
         {regime && (
           <button
             onClick={onOpenRegime}
-            className="flex items-center gap-1.5 px-2 py-1 text-[9px] sm:text-[10px] font-bold rounded-sm border border-emerald-500/40 text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 transition cursor-pointer"
-            title="Current CoinDCX Regime (Click to open Regime Visualizer)"
+            className={`flex items-center gap-1.5 px-2 py-1 text-[9px] sm:text-[10px] font-bold rounded-sm border transition cursor-pointer ${
+              regime.includes('TREND') ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20' :
+              regime.includes('COMPRESSION') ? 'border-indigo-500/40 text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20' :
+              regime.includes('EXPANSION') || regime.includes('HIGH_VOL') ? 'border-amber-500/40 text-amber-300 bg-amber-500/10 hover:bg-amber-500/20' :
+              'border-cyan-500/40 text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20'
+            }`}
+            title="Current Market Regime (Click to open Quantitative Regime Visualizer)"
           >
-            <Compass size={12} className="text-emerald-400" />
+            <Compass size={12} className={regime.includes('TREND') ? "text-emerald-400" : regime.includes('COMPRESSION') ? "text-indigo-400" : "text-cyan-400"} />
             <span className="hidden sm:inline">REGIME:</span>
             <span>{regime.replace('_', ' ')}</span>
           </button>

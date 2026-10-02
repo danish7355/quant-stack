@@ -99,6 +99,8 @@ export interface TradeabilityAnalysis {
     timing: string;
     impact: 'HIGH' | 'MEDIUM' | 'LOW';
   }[];
+  isLayer3Enabled?: boolean; // false when Layer 3 gate is bypassed
+  isGateBypassed?: boolean;  // true when Layer 3 gate is bypassed
 }
 
 export interface RegimeStrategyRecommendation {
@@ -734,8 +736,10 @@ export function evaluateTradeabilityGate(params: {
   currentPrice: number;
   relativeVolume20?: number;
   spreadPct?: number;
+  enableLayer3Gate?: boolean;
 }): TradeabilityAnalysis {
   const { btc1hCloses, btc1hHighs, btc1hLows, currentPrice } = params;
+  const isLayer3Enabled = params.enableLayer3Gate !== false;
 
   // 1. Calculate 1H Median ATR%
   const atrSeries = calculateATR(btc1hHighs, btc1hLows, btc1hCloses, 14);
@@ -792,14 +796,19 @@ export function evaluateTradeabilityGate(params: {
 
   if (!isFeeDragAcceptable) {
     state = 'LOW_EDGE';
-    isTradeable = false;
-    reason = `LOW EDGE DAY: Fee drag is ${feeDragPctOfR}% of 1R (> 15% ceiling). Stop distance (${typicalStopPct}%) is too compressed for 0.118% round-trip friction.`;
+    isTradeable = !isLayer3Enabled;
+    reason = isLayer3Enabled
+      ? `LOW EDGE DAY: Fee drag is ${feeDragPctOfR}% of 1R (> 15% ceiling). Stop distance (${typicalStopPct}%) is too compressed for 0.118% round-trip friction.`
+      : `LOW EDGE DAY (BYPASSED): Fee drag is ${feeDragPctOfR}% of 1R (> 15% ceiling). Tradeability gate is disabled by user setting — trading permitted.`;
   } else if (spread > 0.06) {
     state = 'ACCEPTABLE';
     reason = `Wide spread detected (${spread.toFixed(3)}%). Limit entry execution mandatory.`;
   } else if (rvol < 0.60) {
     state = 'LOW_EDGE';
-    reason = `Volume is thin (${(rvol * 100).toFixed(0)}% of 20-day average). Risk of slippage and false breakouts.`;
+    isTradeable = !isLayer3Enabled;
+    reason = isLayer3Enabled
+      ? `Volume is thin (${(rvol * 100).toFixed(0)}% of 20-day average). Risk of slippage and false breakouts.`
+      : `Volume is thin (${(rvol * 100).toFixed(0)}% of 20-day average). Tradeability gate is disabled by user setting — trading permitted.`;
   }
 
   return {
@@ -818,7 +827,9 @@ export function evaluateTradeabilityGate(params: {
     spreadPct: spread,
     nextFundingHours: parseFloat(nextFundingHours.toFixed(1)),
     nextFundingTime,
-    eventFlags: events
+    eventFlags: events,
+    isLayer3Enabled,
+    isGateBypassed: !isLayer3Enabled
   };
 }
 
@@ -985,6 +996,7 @@ export function analyzeThreeLayerRegime(input: {
   lastCandidateRegime?: CoreRegimeType;
   consecutiveCandles?: number;
   regimeAgeBars?: number;
+  enableLayer3Gate?: boolean;
 }): ThreeLayerRegimeState {
   const timestamp = Date.now();
   const currentPrice = input.currentPrice;
@@ -1023,7 +1035,8 @@ export function analyzeThreeLayerRegime(input: {
     btc1hLows: input.btc1h?.lows || input.btc4h.lows,
     currentPrice,
     relativeVolume20: input.relativeVolume20,
-    spreadPct: input.spreadPct
+    spreadPct: input.spreadPct,
+    enableLayer3Gate: input.enableLayer3Gate
   });
 
   // Strategy Recommendations

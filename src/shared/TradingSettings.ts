@@ -57,8 +57,9 @@ export interface TradingSettings {
   enabledStrategies?: ('EMA5_EXACT_ENTRY_V2' | 'BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1' | 'EMA5_EXACT_ENTRY_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL')[];
   autoActivateRegimeStrategies?: boolean; // When true, trading engine auto-aligns active strategies with detected regime
   coindcxRegimeMode?: boolean;           // Enables CoinDCX intraday fee and risk defaults
-  coindcxActiveRegime?: 'BULL_TREND' | 'BEAR_TREND' | 'RANGE_CHOP' | 'HIGH_VOL';
+  coindcxActiveRegime?: 'TREND' | 'RANGE' | 'COMPRESSION' | 'EXPANSION' | 'BULL_TREND' | 'BEAR_TREND' | 'RANGE_CHOP' | 'HIGH_VOL';
   coindcxRegimeSymbol?: string;          // Symbol used for regime check (default BTCUSDT)
+  enableRegimeLayer3Gate?: boolean;      // When true (default), Layer 3 Tradeability Gate enforces fee drag & friction ceiling; when false, Layer 3 is bypassed
   deletedStrategies?: string[];
   strategyBucket?: StrategyBucketItem[];
   tradeFrequency: 'LOW' | 'MEDIUM' | 'HIGH';
@@ -571,7 +572,7 @@ export function validateTradingSettings(input: unknown): ValidationResult {
     'errEnabled', 'errRequireStructureBreak', 'errAllowReclaimAsDisplacement', 'errBreakevenEnabled',
     'eeeEnabled', 'eeeBreakevenEnabled', 'eeeRequireOpposingSpace',
     'tpbAllowLongs', 'tpbAllowShorts', 'tpbAllowBroadStop', 'tpbAllowUnconfirmedVolume',
-    'autoActivateRegimeStrategies', 'coindcxRegimeMode'
+    'autoActivateRegimeStrategies', 'coindcxRegimeMode', 'enableRegimeLayer3Gate'
   ];
   for (const bKey of booleanKeys) {
     if (raw[bKey] !== undefined) {
@@ -681,6 +682,7 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   coindcxRegimeMode: true,
   coindcxActiveRegime: 'RANGE_CHOP',
   coindcxRegimeSymbol: 'BTCUSDT',
+  enableRegimeLayer3Gate: true,
   tradeFrequency: 'LOW',
   timeframe: '5m',
   autoTradeThreshold: 75,

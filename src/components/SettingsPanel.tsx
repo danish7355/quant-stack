@@ -1182,6 +1182,15 @@ export default function SettingsPanel({
                   inactiveBadgeText="OFF"
                   highRisk={false}
                 />
+                <ToggleRow
+                  label="Regime Layer 3 Tradeability & Fee Drag Gate"
+                  desc="When active, blocks orders on Low Edge days where fee drag exceeds 15% of 1R or stop distance is too compressed for round-trip exchange friction. Turn OFF to bypass Layer 3 and allow trading in all regimes."
+                  checked={settings.enableRegimeLayer3Gate !== false}
+                  onChange={(v: boolean) => handleInputChange('enableRegimeLayer3Gate', v)}
+                  activeBadgeText="GATE ACTIVE (ON)"
+                  inactiveBadgeText="BYPASSED (OFF)"
+                  highRisk={false}
+                />
                 <div className="flex justify-between items-center py-3.5 border-b border-[#30363D]/40">
                   <div className="flex flex-col pr-4">
                     <span className="text-sm font-bold text-gray-100">CoinDCX Session Anchor Pair</span>
