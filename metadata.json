@@ -1,0 +1,6 @@
+{
+  "name": "Crypto Futures Trading Dashboard",
+  "description": "An algorithmic crypto futures paper-trading dashboard featuring the Robust Trend-Pullback Strategy, Two-Sided Coil Breakout, Multicoin Scalper PRO, and Liquidity Sweep Reversal (LSR) Strategy, automated trade execution, Pine Script v6 webhook generators, and real-time Binance scanning.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
