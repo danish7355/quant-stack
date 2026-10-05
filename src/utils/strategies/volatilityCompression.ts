@@ -504,9 +504,9 @@ export function determineStopLoss(
     // SL_long = min(L_comp, L_break) - buffer
     let sl = Math.min(lComp, lBreak) - buffer;
 
-    // Invalidation safeguard: ensure SL is below entry price
+    // Invalidation safeguard: ensure SL is below entry price (min 0.55% to clear 0.5% risk manager floor)
     if (price > 0 && sl >= price) {
-      sl = price * (1 - 0.0035);
+      sl = price * (1 - 0.0055);
     }
     return Math.max(0.0001, sl);
   } else {
@@ -518,9 +518,9 @@ export function determineStopLoss(
     // SL_short = max(H_comp, H_break) + buffer
     let sl = Math.max(hComp, hBreak) + buffer;
 
-    // Invalidation safeguard: ensure SL is above entry price
+    // Invalidation safeguard: ensure SL is above entry price (min 0.55% to clear 0.5% risk manager floor)
     if (price > 0 && sl <= price) {
-      sl = price * (1 + 0.0035);
+      sl = price * (1 + 0.0055);
     }
     return sl;
   }

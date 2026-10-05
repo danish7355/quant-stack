@@ -20,6 +20,9 @@ import { priceStream } from "./server/services/PriceStream.js";
 import { positionMonitor } from "./server/services/PositionMonitor.js";
 import { telegramService } from "./server/services/TelegramService.js";
 import { autoTrader } from "./server/services/AutoTrader.js";
+import { marketBreadthService } from "./server/services/MarketBreadthService.js";
+import { userDataStreamService } from "./server/services/UserDataStreamService.js";
+import { reconciliationWorker } from "./server/services/PositionReconciliationWorker.js";
 import { getSignalAudits } from "./server/services/SignalAuditService.js";
 import { getSettingsAudits } from "./server/services/SettingsAuditService.js";
 import { validateTradingSettings } from "./src/shared/TradingSettings.js";
@@ -74,6 +77,33 @@ async function startServer() {
   positionMonitor.onPositionsChange((positions) => {
     broadcastWsEvent('POSITIONS_UPDATE', positions);
   });
+
+  // Synchronize ExecutionAdapter and UserDataStreamService with settings
+  const syncExecutionModes = (settings: any) => {
+    if (!settings) return;
+    const isLive = settings.tradingMode === 'LIVE';
+    const apiKey = settings.binanceApiKey || '';
+    const secret = settings.binanceApiSecret || '';
+    const isTestnet = settings.binanceTestnet !== false;
+
+    if (isLive && apiKey && secret) {
+      executionAdapter.unlockLiveMode('I_ACKNOWLEDGE_RISK_AND_ENABLE_LIVE_TRADING');
+      executionAdapter.setMode(true, apiKey, secret);
+      userDataStreamService.setMode(true, apiKey, isTestnet);
+    } else {
+      executionAdapter.setMode(false);
+      userDataStreamService.setMode(false);
+    }
+  };
+
+  // Initialize execution adapter & user stream modes from boot settings
+  syncExecutionModes(autoTrader.getSettings());
+
+  // Wire AutoTrader settings changes to instant WebSocket broadcasting
+  autoTrader.onSettingsChanged = (newSettings: any) => {
+    syncExecutionModes(newSettings);
+    broadcastWsEvent('SETTINGS_UPDATE', sanitizeSettingsForClient(newSettings));
+  };
 
   // Keepalive heartbeat ping for connected clients every 15s to prevent proxy timeouts
   setInterval(() => {
@@ -162,17 +192,17 @@ async function startServer() {
     const globalFilterActive = autoTrader.isGlobalFilterPausing();
     const globalFilterReason = autoTrader.getGlobalFilterBlockReason();
     const activePositions = positionMonitor.getActivePositions().length;
-    const settings = autoTrader.getSettings();
-    const maxConcurrentTrades = settings.maxConcurrentTrades || 3;
+    const currentSettings = autoTrader.getSettings();
+    const maxConcurrentTrades = currentSettings.maxConcurrentTrades || 3;
     const dailyLossPct = riskManager.getDailyLossPct();
     const dailyLossLimitPct = riskManager.getDailyLossLimitPct();
     const consecutiveLosses = riskManager.getConsecutiveLosses();
     const maxConsecutiveLosses = riskManager.getMaxConsecutiveLosses();
-    const killSwitchActive = Boolean(settings.killSwitchActive);
+    const killSwitchActive = Boolean(currentSettings.killSwitchActive);
     const scanDiag = autoTrader.getScanDiagnostics();
 
     const activeBlockers: string[] = [];
-    if (!isEngineActive || settings.autoTradeEnabled === false) {
+    if (!isEngineActive || currentSettings.autoTradeEnabled === false) {
       activeBlockers.push('Trade Engine is STOPPED. Autonomous scanning and order execution are paused.');
     }
     if (killSwitchActive) {
@@ -184,26 +214,51 @@ async function startServer() {
     if (globalFilterActive) {
       activeBlockers.push(globalFilterReason || 'Global BTC Macro Safety Filter is pausing altcoin entries.');
     }
-    if (activePositions >= maxConcurrentTrades) {
+    if (!currentSettings.bypassMaxPositions && activePositions >= maxConcurrentTrades) {
       activeBlockers.push(`Max concurrent positions reached (${activePositions}/${maxConcurrentTrades}). Order entry paused until a position closes.`);
     }
-    if (dailyLossPct <= dailyLossLimitPct) {
+    if (!currentSettings.bypassDailyLossLimit && dailyLossPct <= dailyLossLimitPct) {
       activeBlockers.push(`Daily loss limit reached (${dailyLossPct.toFixed(2)}% / ${dailyLossLimitPct}%). Autonomous trading locked.`);
     }
-    if (consecutiveLosses >= maxConsecutiveLosses) {
+    if (!currentSettings.bypassMaxConsecutiveLosses && consecutiveLosses >= maxConsecutiveLosses) {
       activeBlockers.push(`Consecutive loss limit reached (${consecutiveLosses}/${maxConsecutiveLosses} losses). Cooling down.`);
     }
-    if (settings.tradingMode === 'LIVE' && (!settings.binanceApiKey || !settings.binanceApiSecret)) {
+    if (currentSettings.tradingMode === 'LIVE' && (!currentSettings.binanceApiKey || !currentSettings.binanceApiSecret)) {
       activeBlockers.push('Live Trading is active but Binance API Key or Secret is missing.');
     }
+
+    const isLive = executionAdapter.getIsLive();
+    const isPaper = currentSettings.tradingMode === 'PAPER';
+
+    let userStreamStatus: 'CONNECTED' | 'STALE' | 'DISCONNECTED' = 'DISCONNECTED';
+    let userStreamDetails = '';
+    const userStreamMode: 'PAPER' | 'LIVE' = isPaper ? 'PAPER' : 'LIVE';
+
+    if (isPaper) {
+      userStreamStatus = 'CONNECTED';
+      userStreamDetails = 'Paper Mode: Real-time internal OMS position & balance stream active';
+    } else if (isLive) {
+      userStreamStatus = userDataStreamService.isConnected() ? 'CONNECTED' : (userDataStreamService.isStale() ? 'STALE' : 'DISCONNECTED');
+      userStreamDetails = userDataStreamService.getDetails();
+    } else {
+      userStreamStatus = 'DISCONNECTED';
+      userStreamDetails = 'Live Trading: Missing or unauthenticated Binance API credentials';
+    }
+
+    const lastReconTime = reconciliationWorker.getLastReconciliationTime();
+    const lastReconciliationAt = lastReconTime 
+      ? new Date(lastReconTime).toLocaleTimeString() 
+      : (isPaper ? 'Active (Paper OMS)' : 'Pending');
 
     res.json({ 
       status: "ok", 
       engine: isEngineActive ? 'RUNNING' : 'PAUSED',
       marketData: isStale ? 'STALE' : 'CONNECTED',
-      userStream: executionAdapter.getIsLive() ? 'CONNECTED' : 'DISCONNECTED',
-      lastReconciliationAt: 'N/A',
-      tradingBlocked: activeBlockers.length > 0,
+      userStream: userStreamStatus,
+      userStreamDetails,
+      userStreamMode,
+      lastReconciliationAt,
+      tradingBlocked: activeBlockers.length > 0 || autoTrader.isGlobalFilterPausing() || Boolean(currentSettings.killSwitchActive),
       blockReason: activeBlockers.length > 0 ? activeBlockers[0] : undefined,
       activeBlockers,
       globalFilterActive,
@@ -261,6 +316,16 @@ async function startServer() {
       const force = req.query.force === 'true';
       const regime = await autoTrader.getThreeLayerRegime(force);
       res.json(regime);
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.get("/api/regime/breadth", async (req, res) => {
+    try {
+      const force = req.query.force === 'true';
+      const breadth = await marketBreadthService.getCumulativeBreadth(autoTrader.getSettings().coinCount || 100, force);
+      res.json(breadth);
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
@@ -500,10 +565,28 @@ async function startServer() {
       if (validationErrors.length > 0) {
         console.warn('[Settings Validation]', validationErrors);
       }
+      // Sync rule: If operator sets a custom score threshold (> 50), purge any stale RISK_threshold bypass
+      const targetThreshold = payload.autoTradeThreshold !== undefined ? Number(payload.autoTradeThreshold) : autoTrader.getSettings().autoTradeThreshold;
+      if (targetThreshold && targetThreshold > 50) {
+        if (payload.disabledGates) {
+          delete payload.disabledGates.RISK_threshold;
+          delete payload.disabledGates.risk_threshold;
+        }
+        const currentDg = autoTrader.getSettings().disabledGates;
+        if (currentDg && (currentDg.RISK_threshold || currentDg.risk_threshold)) {
+          const cleanedDg = { ...currentDg };
+          delete cleanedDg.RISK_threshold;
+          delete cleanedDg.risk_threshold;
+          payload.disabledGates = { ...(payload.disabledGates || {}), ...cleanedDg };
+          delete payload.disabledGates.RISK_threshold;
+          delete payload.disabledGates.risk_threshold;
+        }
+      }
       // Add metadata
       payload.updatedAt = new Date().toISOString();
       payload.settingsVersion = (autoTrader.getSettings().settingsVersion || 0) + 1;
       const updated = await autoTrader.saveSettings(payload);
+      syncExecutionModes(updated);
       broadcastWsEvent('SETTINGS_UPDATE', sanitizeSettingsForClient(updated));
       if (payload.autoTradeEnabled !== undefined) {
         broadcastWsEvent('ENGINE_STATUS', {
@@ -515,7 +598,7 @@ async function startServer() {
       }
       res.json({ 
         success: true, 
-        settings: updated,
+        settings: sanitizeSettingsForClient(updated),
         engineStatus: {
           applied: true,
           activeVersion: updated.settingsVersion || 1

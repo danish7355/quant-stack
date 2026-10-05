@@ -8,6 +8,11 @@ import { isQuotaExhausted, safeUpdateDoc, safeGetDocs, readLocalJson } from './f
 export class PositionReconciliationWorker {
   private syncInterval: any = null;
   private isReconciling = false;
+  private lastReconciliationTime: number = Date.now();
+
+  public getLastReconciliationTime(): number {
+    return this.lastReconciliationTime;
+  }
 
   public start() {
     if (this.syncInterval) clearInterval(this.syncInterval);
@@ -23,7 +28,8 @@ export class PositionReconciliationWorker {
 
   public async reconcile() {
     if (this.isReconciling) return;
-    if (!executionAdapter.getIsLive()) return; // Only reconcile when live trading is active
+    this.lastReconciliationTime = Date.now();
+    if (!executionAdapter.getIsLive()) return; // Only cross-check with exchange when live trading is active
 
     this.isReconciling = true;
 

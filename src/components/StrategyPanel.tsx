@@ -3,6 +3,8 @@ import { AppSettings, StrategyBucketItem, MarketRegimeType, CoinDetail } from '.
 import { GATES_REGISTRY, GateImportance } from '../utils/gatesRegistry';
 import { DEFAULT_STRATEGY_BUCKET } from '../utils/strategyBucket';
 import { StrategyChecklistPanel } from './StrategyChecklistPanel';
+import { RangeStrategyConfigPanel } from './RangeStrategyConfigPanel';
+import { UnifiedStrategyParams } from './UnifiedStrategyParams';
 import { ShieldAlert, ShieldCheck, Zap, AlertTriangle, Flame, Info, Check, Cpu, Sparkles, RotateCcw, Layers, ArrowUpRight, Filter, Activity, Target, Compass, Trash2, RefreshCw, Plus } from 'lucide-react';
 
 interface StrategyPanelProps {
@@ -15,7 +17,7 @@ interface StrategyPanelProps {
 }
 
 export const AVAILABLE_STRATEGIES: {
-  id: 'EMA5_EXACT_ENTRY_V2' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'SMC_LIQUIDITY_SWEEP' | 'BINANCE_COMPOSITE' | 'EARLY_COIL_BREAKOUT';
+  id: 'EMA5_EXACT_ENTRY_V2' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'SMC_LIQUIDITY_SWEEP' | 'BINANCE_COMPOSITE' | 'EARLY_COIL_BREAKOUT' | 'TWO_SIDED_COIL_BREAKOUT' | 'MACRO_RANGE_BREAKOUT' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1';
   name: string;
   shortName: string;
   type: string;
@@ -38,7 +40,7 @@ export const AVAILABLE_STRATEGIES: {
     shortName: 'VCB Breakout',
     type: 'Breakout / Squeeze',
     badgeBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
-    description: 'Identifies tight Bollinger Band squeeze & range compression, enforcing the 7-gate checklist on explosive volume breakouts.',
+    description: 'Identifies tight Bollinger Band squeeze & range compression, enforcing the 11-gate checklist on explosive volume breakouts.',
     icon: ShieldCheck,
   },
   {
@@ -56,7 +58,7 @@ export const AVAILABLE_STRATEGIES: {
     shortName: 'Pullback Retest',
     type: 'Trend Continuation',
     badgeBg: 'bg-sky-500/20 text-sky-300 border-sky-500/40',
-    description: 'Full 5-stage state machine: trend detected → pullback → EMA retest → confirmation candle → entry. Requires ALL stages in order. No premature entries.',
+    description: 'Full 5-stage state machine: trend detected → pullback → EMA retest → confirmation candle → entry. Requires ALL stages in order.',
     icon: Target,
   },
   {
@@ -85,6 +87,51 @@ export const AVAILABLE_STRATEGIES: {
     badgeBg: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40',
     description: 'Fractal coil compression that triggers early at the boundary of narrowing consolidation triangles.',
     icon: Flame,
+  },
+  {
+    id: 'TWO_SIDED_COIL_BREAKOUT',
+    name: 'Two-Sided Coil Breakout',
+    shortName: 'Coil Breakout',
+    type: 'Squeeze Breakout',
+    badgeBg: 'bg-orange-500/20 text-orange-300 border-orange-500/40',
+    description: 'Symmetrical triangular compression breakout targeting 1:2+ to 1:5+ asymmetric expansion moves.',
+    icon: Layers,
+  },
+  {
+    id: 'MACRO_RANGE_BREAKOUT',
+    name: 'Macro Range Breakout',
+    shortName: 'Macro Breakout',
+    type: 'Range Expansion',
+    badgeBg: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40',
+    description: 'Multi-day range boundary expansion breakout on institutional volume surge.',
+    icon: Compass,
+  },
+  {
+    id: 'EMA_GAP_PULLBACK',
+    name: '5 EMA Gap Pullback (Impulse)',
+    shortName: '5 EMA Gap',
+    type: 'Gap Continuation',
+    badgeBg: 'bg-teal-500/20 text-teal-300 border-teal-500/40',
+    description: 'Trend continuation impulse when price gaps cleanly away from 5 EMA with confirmed 1h alignment.',
+    icon: Zap,
+  },
+  {
+    id: 'EMA5_PA_VOLUME_V1',
+    name: 'EMA 5 PA Gap + Volume (Momentum)',
+    shortName: 'EMA 5 PA Vol',
+    type: 'Pure Price Action',
+    badgeBg: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+    description: 'Pure price action gap and volume momentum on 5m EMA 5 with 15m structure alignment.',
+    icon: Flame,
+  },
+  {
+    id: 'EMA5_REJECTION_RECLAIM_V1',
+    name: 'EMA 5 Rejection → Reclaim (Displacement)',
+    shortName: 'EMA 5 Rejection',
+    type: 'Trap Reversal',
+    badgeBg: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
+    description: 'Captures false breakout traps: wick rejection beyond 5 EMA followed by impulsive reclaim displacement.',
+    icon: RotateCcw,
   },
 ];
 
@@ -1056,409 +1103,19 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
               </div>
             </div>
 
-            {/* SMC High-Probability Strategy Parameters */}
-            <div className="bg-[#161B22] rounded-xl p-6 border border-purple-500/30 space-y-4 shadow-xl shadow-purple-950/10">
-              <div className="flex items-center justify-between border-b border-[#30363D] pb-3">
-                <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-purple-400" />
-                    <span>Smart Money Concepts (SMC) Liquidity Sweep Parameters</span>
-                  </h3>
-                  <p className="text-xs text-gray-400 mt-0.5">High-probability institutional price-action strategy targeting liquidity sweeps, MSS displacement, and FVG/OB confluence.</p>
-                </div>
-                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40">
-                  INSTITUTIONAL
-                </span>
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-gray-800/50 gap-4">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Higher-Timeframe (HTF) Resolution</span>
-                    <span className="text-xs text-gray-500 mt-1">Resolution used to establish institutional HTF market structure & trend direction</span>
-                  </div>
-                  <div className="flex bg-gray-900 rounded p-1 border border-gray-700">
-                    {['15m', '1h', '4h', '1d'].map((res) => (
-                      <button
-                        key={res}
-                        type="button"
-                        onClick={() => handleInputChange('smcHtfResolution', res)}
-                        className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${
-                          (settings.smcHtfResolution || '1h') === res
-                            ? 'bg-purple-600 text-white'
-                            : 'text-gray-400 hover:text-gray-200'
-                        }`}
-                      >
-                        {res}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <InputRow label="Structure Pivot Length (Bars)" desc="Bars on left/right to confirm Swing High/Low pivot" value={settings.smcStructureLen ?? 10} onChange={(v: any) => handleInputChange('smcStructureLen', v)} min={3} max={50} />
-                <InputRow label="Min Sweep Wick/Body Ratio" desc="Minimum ratio of wick extension to candle body size for stop hunt" value={settings.smcWickRatio ?? 0.6} onChange={(v: any) => handleInputChange('smcWickRatio', v)} step={0.1} min={0.2} max={2.0} />
-                <InputRow label="Min Sweep Extension (%)" desc="Percentage beyond swing pivot required (e.g. 0.0015 = 0.15%)" value={settings.smcMinSweepWickPct ?? 0.0015} onChange={(v: any) => handleInputChange('smcMinSweepWickPct', v)} step={0.0005} min={0.0005} max={0.05} />
-                <InputRow label="MSS Displacement ATR Multiplier" desc="Displacement candle body must exceed this multiple of ATR" value={settings.smcDispAtrMult ?? 0.5} onChange={(v: any) => handleInputChange('smcDispAtrMult', v)} step={0.1} min={0.2} max={5.0} />
-                <InputRow label="Sweep-to-MSS Max Bars Window" desc="Max candles allowed between liquidity sweep and displacement MSS" value={settings.smcSweepConfirmWindow ?? 10} onChange={(v: any) => handleInputChange('smcSweepConfirmWindow', v)} min={3} max={50} />
-                <InputRow label="MSS Volume Multiplier" desc="Displacement candle volume vs 20 SMA multiplier" value={settings.smcVolMult ?? 1.5} onChange={(v: any) => handleInputChange('smcVolMult', v)} step={0.1} min={1.0} max={5.0} />
-                <InputRow label="MSS-to-FVG Max Bars Window" desc="Max candles after MSS displacement to find Fair Value Gap" value={settings.smcFvgAfterMssWindow ?? 5} onChange={(v: any) => handleInputChange('smcFvgAfterMssWindow', v)} min={2} max={30} />
-                <InputRow label="Order Block Lookback Bars" desc="Candles searched back from MSS to detect origin Order Block" value={settings.smcObLookback ?? 30} onChange={(v: any) => handleInputChange('smcObLookback', v)} min={10} max={100} />
-                <InputRow label="Stop Loss ATR Multiplier" desc="Protective stop buffer beyond sweep extreme in multiples of ATR" value={settings.smcAtrStopMult ?? 1.5} onChange={(v: any) => handleInputChange('smcAtrStopMult', v)} step={0.1} min={0.5} max={5.0} />
-                <InputRow label="Target Risk:Reward Ratio" desc="Fixed structural take-profit target multiple vs initial risk" value={settings.smcRrRatio ?? 3.0} onChange={(v: any) => handleInputChange('smcRrRatio', v)} step={0.5} min={1.5} max={10.0} />
-
-                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Session Kill Zone Filter</span>
-                    <span className="text-xs text-gray-500 mt-1">Restrict execution to London (07-10 UTC) and NY (12-15 UTC) hours</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(settings.smcUseKillZone)}
-                    onChange={(e) => handleInputChange('smcUseKillZone', e.target.checked)}
-                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-purple-600 focus:ring-0 cursor-pointer"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Strict HTF Structure Alignment</span>
-                    <span className="text-xs text-gray-500 mt-1">Block Longs in Bearish HTF and Shorts in Bullish HTF</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(settings.smcStrictHtfRegime)}
-                    onChange={(e) => handleInputChange('smcStrictHtfRegime', e.target.checked)}
-                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-purple-600 focus:ring-0 cursor-pointer"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Trend Pullback Strategy Parameters */}
-            <div className="bg-[#161B22] rounded-xl p-6 border border-blue-500/30 space-y-4 shadow-xl shadow-blue-950/10">
-              <div className="flex items-center justify-between border-b border-[#30363D] pb-3">
-                <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <Target className="w-4 h-4 text-blue-400" />
-                    <span>Trend Pullback (HTF + MTF Retest) Parameters</span>
-                  </h3>
-                  <p className="text-xs text-gray-400 mt-0.5">Trend-following retest strategy with EMA20/50 alignment, ADX momentum, and volume surge filtering.</p>
-                </div>
-                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/40">
-                  TREND FOLLOWING
-                </span>
-              </div>
-
-              <div className="space-y-1">
-                <InputRow label="Fast Trend EMA Period" desc="Fast EMA period for dynamic pullback detection (default: 20)" value={settings.tpbEmaFast ?? 20} onChange={(v: any) => handleInputChange('tpbEmaFast', v)} min={5} max={100} />
-                <InputRow label="Slow Baseline EMA Period" desc="Slow baseline EMA period for trend direction (default: 50)" value={settings.tpbEmaSlow ?? 50} onChange={(v: any) => handleInputChange('tpbEmaSlow', v)} min={20} max={200} />
-                <InputRow label="Minimum ADX Momentum" desc="ADX must be above this threshold to confirm trend (default: 22)" value={settings.tpbAdxMin ?? 22} onChange={(v: any) => handleInputChange('tpbAdxMin', v)} min={10} max={50} />
-                <InputRow label="EMA Slope Lookback (Bars)" desc="Bars back to compare Fast EMA for trend slope confirmation (default: 5)" value={settings.tpbSlopeLookbackBars ?? 5} onChange={(v: any) => handleInputChange('tpbSlopeLookbackBars', v)} min={2} max={20} />
-                <InputRow label="Pullback Depth Tolerance (x ATR)" desc="Tolerance band around EMA 20 in ATR units (default: 0.25)" value={settings.tpbPullbackDepthAtr ?? 0.25} onChange={(v: any) => handleInputChange('tpbPullbackDepthAtr', v)} step={0.05} min={0.05} max={1.5} />
-                <InputRow label="Volume SMA Lookback Period" desc="Lookback period for baseline volume moving average (default: 20)" value={settings.tpbVolumeSmaPeriod ?? 20} onChange={(v: any) => handleInputChange('tpbVolumeSmaPeriod', v)} min={5} max={50} />
-                <InputRow label="Min Volume Surge Ratio" desc="Retest bounce candle volume vs SMA ratio (default: 1.0x)" value={settings.tpbMinVolumeRatio ?? 1.0} onChange={(v: any) => handleInputChange('tpbMinVolumeRatio', v)} step={0.1} min={0.5} max={5.0} />
-                <InputRow label="Max Entry Distance from EMA (x ATR)" desc="Max allowable price extension from Fast EMA (default: 0.25)" value={settings.tpbMaxEntryDistanceAtr ?? 0.25} onChange={(v: any) => handleInputChange('tpbMaxEntryDistanceAtr', v)} step={0.05} min={0.1} max={3.0} />
-                <InputRow label="Min Stop Distance (x ATR)" desc="Minimum stop distance in ATR units to reject market noise (default: 0.8)" value={settings.tpbMinStopDistanceAtr ?? 0.8} onChange={(v: any) => handleInputChange('tpbMinStopDistanceAtr', v)} step={0.1} min={0.2} max={2.0} />
-                <InputRow label="Max Stop Distance (x ATR)" desc="Maximum allowable stop distance in ATR units for timeframe (default: 3.0)" value={settings.tpbMaxStopDistanceAtr ?? 3.0} onChange={(v: any) => handleInputChange('tpbMaxStopDistanceAtr', v)} step={0.1} min={1.0} max={6.0} />
-                <InputRow label="Max Spread / Slippage (x ATR)" desc="Maximum allowable spread in ATR units before entry is blocked (default: 0.3)" value={settings.tpbMaxSpreadAtr ?? 0.3} onChange={(v: any) => handleInputChange('tpbMaxSpreadAtr', v)} step={0.05} min={0.05} max={1.0} />
-                <InputRow label="Minimum Risk-to-Reward Ratio" desc="Required minimum asymmetric target multiple (default: 1.5)" value={settings.tpbMinRrRatio ?? 1.5} onChange={(v: any) => handleInputChange('tpbMinRrRatio', v)} step={0.1} min={1.0} max={5.0} />
-                <InputRow label="Min Confirmation Score" desc="Minimum 5-pillar confirmation score to enter trade (default: 8/10)" value={settings.tpbMinScore ?? 8} onChange={(v: any) => handleInputChange('tpbMinScore', v)} min={5} max={10} />
-                <InputRow label="Stop Loss ATR Buffer" desc="Buffer added beyond recent swing low/high in ATR (default: 0.3)" value={settings.tpbAtrBuffer ?? 0.3} onChange={(v: any) => handleInputChange('tpbAtrBuffer', v)} step={0.1} min={0.1} max={2.0} />
-
-                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Allow Long Setups</span>
-                    <span className="text-xs text-gray-500 mt-1">Enable bullish trend-pullback trade execution</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.tpbAllowLongs !== false}
-                    onChange={(e) => handleInputChange('tpbAllowLongs', e.target.checked)}
-                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-blue-500 focus:ring-0 cursor-pointer"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Allow Short Setups</span>
-                    <span className="text-xs text-gray-500 mt-1">Enable bearish trend-pullback trade execution</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.tpbAllowShorts !== false}
-                    onChange={(e) => handleInputChange('tpbAllowShorts', e.target.checked)}
-                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-blue-500 focus:ring-0 cursor-pointer"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Allow Broad Structural Stops</span>
-                    <span className="text-xs text-gray-500 mt-1">If unchecked, prefers Local Execution Stop and rejects distant HTF stops</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.tpbAllowBroadStop === true}
-                    onChange={(e) => handleInputChange('tpbAllowBroadStop', e.target.checked)}
-                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-blue-500 focus:ring-0 cursor-pointer"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Unconfirmed Volume Mode</span>
-                    <span className="text-xs text-gray-500 mt-1">Allow signal execution when exchange volume is unconfirmed (marked lower confidence)</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.tpbAllowUnconfirmedVolume === true}
-                    onChange={(e) => handleInputChange('tpbAllowUnconfirmedVolume', e.target.checked)}
-                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-blue-500 focus:ring-0 cursor-pointer"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Require Volume Surge</span>
-                    <span className="text-xs text-gray-500 mt-1">Block retest setups that lack confirmed volume expansion</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.tpbRequireVolume !== false}
-                    onChange={(e) => handleInputChange('tpbRequireVolume', e.target.checked)}
-                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-blue-500 focus:ring-0 cursor-pointer"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Ranging 1:3 R:R Mean-Reversion Parameters */}
-            <div className="bg-[#161B22] rounded-xl p-6 border border-[#30363D] space-y-4">
-              <div>
-                <h3 className="text-base font-bold text-white">Ranging 1:3 R:R Strategy Parameters</h3>
-                <p className="text-xs text-gray-400 mt-0.5">Bollinger Bands (20,2) + RSI(14) Mean-Reversion with strict 1:3 Risk-to-Reward ratio.</p>
-              </div>
-              <div className="space-y-1">
-                <InputRow label="Bollinger Bands Period" desc="Moving average period for band center" value={settings.rmrBbPeriod ?? 20} onChange={(v: any) => handleInputChange('rmrBbPeriod', v)} min={10} max={50} />
-                <InputRow label="Bollinger Bands StdDev" desc="Standard deviations for upper and lower bands" value={settings.rmrBbStdDev ?? 2.0} onChange={(v: any) => handleInputChange('rmrBbStdDev', v)} step={0.1} min={1.0} max={3.5} />
-                <InputRow label="RSI Oversold Level (Long Entry)" desc="RSI must dip below this and cross back above to trigger Long" value={settings.rmrRsiOversold ?? 30} onChange={(v: any) => handleInputChange('rmrRsiOversold', v)} min={15} max={45} />
-                <InputRow label="RSI Overbought Level (Short Entry)" desc="RSI must pierce above this and cross back below to trigger Short" value={settings.rmrRsiOverbought ?? 70} onChange={(v: any) => handleInputChange('rmrRsiOverbought', v)} min={55} max={85} />
-                <InputRow label="Risk:Reward Ratio (Fixed Multiple)" desc="Take-Profit = Entry ± (Multiple × Stop Distance)" value={settings.rmrRiskRewardRatio ?? 3.0} onChange={(v: any) => handleInputChange('rmrRiskRewardRatio', v)} step={0.5} min={1.5} max={6.0} />
-                <InputRow label="Stop-Loss Structure Buffer (%)" desc="Additional buffer beyond candle swing low/high" value={settings.rmrStopBufferPct ?? 0.15} onChange={(v: any) => handleInputChange('rmrStopBufferPct', v)} step={0.05} min={0.05} max={1.0} />
-              </div>
-            </div>
-
-
-
-            {/* EMA 5 Exact Price Action Entry V2 (EMA5_EXACT_ENTRY_V2) Parameters */}
-            <div className="bg-[#161B22] rounded-xl p-6 border border-emerald-500/40 space-y-4 shadow-xl shadow-emerald-950/20">
-              <div className="flex items-center justify-between border-b border-[#30363D] pb-3 flex-wrap gap-2">
-                <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <Zap className="w-4 h-4 text-emerald-400" />
-                    <span>EMA 5 Exact Price Action Entry V2 Parameters</span>
-                  </h3>
-                  <p className="text-xs text-gray-400 mt-0.5">Exact 5m EMA 5 Alert → Break trigger with 15m structure regime, multi-timeframe level ladder targets (15m, 1h, 1D, 1W), and fee-drag floor.</p>
-                </div>
-                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                  EXACT ALERT-BREAK V2
-                </span>
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Enable Strategy</span>
-                    <span className="text-xs text-gray-500 mt-1">Allow EMA5_EXACT_ENTRY_V2 to generate live signals</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.eev2Enabled !== false}
-                    onChange={(e) => handleInputChange('eev2Enabled', e.target.checked)}
-                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-emerald-500 focus:ring-0 cursor-pointer"
-                  />
-                </div>
-
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-gray-800/50 gap-4">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Entry Mode</span>
-                    <span className="text-xs text-gray-500 mt-1">CLOSE_CONFIRM (Conservative) vs TOUCH_LIMIT (Retest limit) vs AGGRESSIVE_CLOSE</span>
-                  </div>
-                  <div className="flex bg-gray-900 rounded p-1 border border-gray-700">
-                    {(['CLOSE_CONFIRM', 'TOUCH_LIMIT', 'AGGRESSIVE_CLOSE'] as const).map((mode) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => handleInputChange('eev2EntryMode', mode)}
-                        className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all ${
-                          (settings.eev2EntryMode || 'CLOSE_CONFIRM') === mode
-                            ? 'bg-emerald-600 text-white shadow'
-                            : 'text-gray-400 hover:text-gray-200'
-                        }`}
-                      >
-                        {mode.replace('_', ' ')}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-gray-800/50 gap-4">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Exit Mode</span>
-                    <span className="text-xs text-gray-500 mt-1">LEVEL_LADDER (TP1 40%, TP2 40%, Runner 20%) vs RR_FALLBACK</span>
-                  </div>
-                  <div className="flex bg-gray-900 rounded p-1 border border-gray-700">
-                    {(['LEVEL_LADDER', 'RR_FALLBACK'] as const).map((mode) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => handleInputChange('eev2ExitMode', mode)}
-                        className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all ${
-                          (settings.eev2ExitMode || 'LEVEL_LADDER') === mode
-                            ? 'bg-emerald-600 text-white shadow'
-                            : 'text-gray-400 hover:text-gray-200'
-                        }`}
-                      >
-                        {mode.replace('_', ' ')}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-gray-800/50 gap-4">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Breakeven Mode</span>
-                    <span className="text-xs text-gray-500 mt-1">AFTER_TP1 (Lock entry when TP1 hit) vs AT_1R vs OFF</span>
-                  </div>
-                  <div className="flex bg-gray-900 rounded p-1 border border-gray-700">
-                    {(['AFTER_TP1', 'AT_1R', 'OFF'] as const).map((mode) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => handleInputChange('eev2BeMode', mode)}
-                        className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all ${
-                          (settings.eev2BeMode || 'AFTER_TP1') === mode
-                            ? 'bg-emerald-600 text-white shadow'
-                            : 'text-gray-400 hover:text-gray-200'
-                        }`}
-                      >
-                        {mode.replace('_', ' ')}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <InputRow label="Min Relative Volume Ratio" desc="Trigger candle volume vs 20-period baseline volume (default 1.10x)" value={settings.eev2MinVolumeRatio ?? 1.10} onChange={(v: any) => handleInputChange('eev2MinVolumeRatio', v)} step={0.05} min={0.5} max={3.0} />
-                <InputRow label="Minimum Net R:R" desc="Required net reward-to-risk ratio to allow entry (default 2.5)" value={settings.eev2MinNetRr ?? 2.5} onChange={(v: any) => handleInputChange('eev2MinNetRr', v)} step={0.1} min={1.5} max={6.0} />
-                <InputRow label="Max Fee Drag Floor (feeR)" desc="Maximum fee drag as fraction of stop risk (rejects if feeR > 0.20, default 0.20)" value={settings.eev2MaxFeeR ?? 0.20} onChange={(v: any) => handleInputChange('eev2MaxFeeR', v)} step={0.01} min={0.05} max={0.50} />
-                <InputRow label="SL Anchor Buffer (x AvgRange)" desc="Stop buffer added beyond alert candle extreme (default 0.15)" value={settings.eev2SlBufferAvgRange ?? 0.15} onChange={(v: any) => handleInputChange('eev2SlBufferAvgRange', v)} step={0.05} min={0.05} max={0.50} />
-                <InputRow label="Max Stop Distance (x AvgRange)" desc="Maximum allowable stop distance vs recent average range (default 2.0x)" value={settings.eev2MaxStopAvgRange ?? 2.0} onChange={(v: any) => handleInputChange('eev2MaxStopAvgRange', v)} step={0.1} min={1.0} max={5.0} />
-                <InputRow label="Min Stop Distance (x AvgRange)" desc="Minimum allowable stop distance vs recent average range (default 0.5x)" value={settings.eev2MinStopAvgRange ?? 0.5} onChange={(v: any) => handleInputChange('eev2MinStopAvgRange', v)} step={0.05} min={0.1} max={1.5} />
-                <InputRow label="Fallback Target (R Multiple)" desc="Take-profit multiple when structural levels are unavailable (default 3.0R)" value={settings.eev2FallbackTpR ?? 3.0} onChange={(v: any) => handleInputChange('eev2FallbackTpR', v)} step={0.1} min={1.5} max={6.0} />
-                <InputRow label="Max Entry Drift Cap (in R)" desc="Maximum execution slip beyond trigger level (default 0.15R)" value={settings.eev2MaxEntryDriftR ?? 0.15} onChange={(v: any) => handleInputChange('eev2MaxEntryDriftR', v)} step={0.05} min={0.05} max={0.50} />
-                <InputRow label="15m Regime Pivot Confirmation Bars" desc="Right-bar confirmation lag for 15m swing pivot detection (default 3 bars)" value={settings.eev2RegimePivotN ?? 3} onChange={(v: any) => handleInputChange('eev2RegimePivotN', v)} min={2} max={6} />
-                <InputRow label="Max Position Hold Time (Hours)" desc="Maximum duration before closing stagnant position (default 24h)" value={settings.eev2MaxHoldHours ?? 24} onChange={(v: any) => handleInputChange('eev2MaxHoldHours', v)} min={1} max={72} />
-              </div>
-            </div>
-
-
-
-            {/* Trend Pullback Retest (TPR) Parameters */}
-            <div className="bg-[#161B22] rounded-xl p-6 border border-[#30363D] space-y-4">
-              <div>
-                <h3 className="text-base font-bold text-white">Trend Pullback Retest (TPR) Parameters</h3>
-                <p className="text-xs text-gray-400 mt-0.5">Full state-machine strategy: trend → pullback → retest → confirmation → entry. All 5 stages required.</p>
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Enable TPR Strategy</span>
-                    <span className="text-xs text-gray-500 mt-1">Allow TREND_PULLBACK_RETEST to generate signals</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.tprEnabled !== false}
-                    onChange={(e) => handleInputChange('tprEnabled', e.target.checked)}
-                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-sky-500 focus:ring-0 cursor-pointer"
-                  />
-                </div>
-                <InputRow label="Fast EMA Period" desc="EMA used for pullback zone and retest level (default 20)" value={settings.tprEmaFast ?? 20} onChange={(v: any) => handleInputChange('tprEmaFast', v)} min={5} max={100} />
-                <InputRow label="Slow EMA Period" desc="EMA defining the trend boundary (default 50)" value={settings.tprEmaSlow ?? 50} onChange={(v: any) => handleInputChange('tprEmaSlow', v)} min={20} max={200} />
-                <InputRow label="HTF EMA Period" desc="Optional higher-timeframe trend EMA (default 200, set 0 to disable)" value={settings.tprEmaHtf ?? 200} onChange={(v: any) => handleInputChange('tprEmaHtf', v)} min={50} max={500} />
-                <InputRow label="Min ADX" desc="Minimum ADX value to classify market as trending (default 20)" value={settings.tprMinAdx ?? 20} onChange={(v: any) => handleInputChange('tprMinAdx', v)} min={10} max={50} />
-                <InputRow label="Min Trend Score (1-6)" desc="Minimum trend quality score required to enter TREND_DETECTED phase (default 5)" value={settings.tprMinTrendScore ?? 5} onChange={(v: any) => handleInputChange('tprMinTrendScore', v)} min={1} max={6} />
-                <InputRow label="Max Pullback Depth (ATR)" desc="Maximum allowed pullback depth in ATR units before invalidating (default 1.5)" value={settings.tprMaxPullbackAtr ?? 1.5} onChange={(v: any) => handleInputChange('tprMaxPullbackAtr', v)} step={0.1} min={0.3} max={4.0} />
-                <InputRow label="Max Pullback Candles" desc="Setup timeout — max candles to wait in pullback phase (default 10)" value={settings.tprMaxPullbackCandles ?? 10} onChange={(v: any) => handleInputChange('tprMaxPullbackCandles', v)} min={3} max={30} />
-                <InputRow label="Retest Tolerance (ATR)" desc="How close to EMA counts as a valid retest in ATR units (default 0.20)" value={settings.tprRetestToleranceAtr ?? 0.20} onChange={(v: any) => handleInputChange('tprRetestToleranceAtr', v)} step={0.05} min={0.05} max={1.0} />
-                <InputRow label="Min Confirmation Body Ratio" desc="Min body/range ratio for the confirmation candle (default 0.40 = 40%)" value={settings.tprMinConfBodyRatio ?? 0.40} onChange={(v: any) => handleInputChange('tprMinConfBodyRatio', v)} step={0.05} min={0.20} max={0.80} />
-                <InputRow label="Max Chase Distance (ATR)" desc="Chase filter: reject if price is too far from EMA after confirmation (default 0.75)" value={settings.tprMaxChaseAtr ?? 0.75} onChange={(v: any) => handleInputChange('tprMaxChaseAtr', v)} step={0.05} min={0.20} max={2.0} />
-                <InputRow label="Max Confirmation Candle Range (ATR)" desc="Extreme candle filter: reject if confirmation candle range exceeds this ATR multiple (default 2.0)" value={settings.tprMaxConfCandleAtr ?? 2.0} onChange={(v: any) => handleInputChange('tprMaxConfCandleAtr', v)} step={0.1} min={0.5} max={5.0} />
-                <InputRow label="Min EMA Separation (ATR ratio)" desc="EMA separation filter: |EMA slow - EMA fast| / ATR must be ≥ this value (default 0.20)" value={settings.tprMinEmaGapAtrRatio ?? 0.20} onChange={(v: any) => handleInputChange('tprMinEmaGapAtrRatio', v)} step={0.05} min={0.05} max={1.0} />
-                <InputRow label="SL ATR Multiple" desc="Stop-loss placed at EMA fast ± SL_ATR × ATR (default 1.5)" value={settings.tprSlAtrMultiple ?? 1.5} onChange={(v: any) => handleInputChange('tprSlAtrMultiple', v)} step={0.1} min={0.5} max={4.0} />
-                <InputRow label="R:R Ratio" desc="TP2 risk-to-reward ratio (default 2.0)" value={settings.tprRrRatio ?? 2.0} onChange={(v: any) => handleInputChange('tprRrRatio', v)} step={0.1} min={1.0} max={5.0} />
-                <InputRow label="Cooldown Candles" desc="Candles to wait after exit or invalidation before looking for new setup (default 5)" value={settings.tprCooldownCandles ?? 5} onChange={(v: any) => handleInputChange('tprCooldownCandles', v)} min={1} max={20} />
-                <InputRow label="Setup Timeout Candles" desc="Maximum candles to remain in any pending phase before invalidating (default 10)" value={settings.tprSetupTimeout ?? 10} onChange={(v: any) => handleInputChange('tprSetupTimeout', v)} min={3} max={30} />
-                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Enable Break-even</span>
-                    <span className="text-xs text-gray-500 mt-1">Move SL to breakeven when trade reaches +1R</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.tprBreakevenEnabled !== false}
-                    onChange={(e) => handleInputChange('tprBreakevenEnabled', e.target.checked)}
-                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-sky-500 focus:ring-0 cursor-pointer"
-                  />
-                </div>
-                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Enable Trailing Stop</span>
-                    <span className="text-xs text-gray-500 mt-1">Activate ATR-based trailing stop after +1.5R</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.tprTrailingEnabled !== false}
-                    onChange={(e) => handleInputChange('tprTrailingEnabled', e.target.checked)}
-                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-sky-500 focus:ring-0 cursor-pointer"
-                  />
-                </div>
-                <div className="flex items-center justify-between py-3 border-b border-gray-800/50">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Allow Long Trades</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.tprAllowLongs !== false}
-                    onChange={(e) => handleInputChange('tprAllowLongs', e.target.checked)}
-                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-sky-500 focus:ring-0 cursor-pointer"
-                  />
-                </div>
-                <div className="flex items-center justify-between py-3">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-200">Allow Short Trades</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.tprAllowShorts !== false}
-                    onChange={(e) => handleInputChange('tprAllowShorts', e.target.checked)}
-                    className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-sky-500 focus:ring-0 cursor-pointer"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* VCB Parameters */}
-            <div className="bg-[#161B22] rounded-xl p-6 border border-[#30363D] space-y-4">
-              <div>
-                <h3 className="text-base font-bold text-white">Volatility Compression (VCB) Parameters</h3>
-                <p className="text-xs text-gray-400 mt-0.5">Bollinger/Keltner squeeze release with price buildup confirmation.</p>
-              </div>
-              <div className="space-y-1">
-                <InputRow label="Squeeze Lookback Bars" desc="Number of candles evaluated for low volatility compression" value={settings.vcbSqueezeLookback ?? 20} onChange={(v: any) => handleInputChange('vcbSqueezeLookback', v)} min={10} max={50} />
-                <InputRow label="Minimum Squeeze Ratio" desc="Bollinger Band width percentile qualifying as a valid squeeze" value={settings.vcbMinSqueezeRatio ?? 0.15} onChange={(v: any) => handleInputChange('vcbMinSqueezeRatio', v)} step={0.01} min={0.05} max={0.3} />
-                <InputRow label="Volume Surge Trigger" desc="Expansion candle volume multiple over moving average" value={settings.vcbVolumeSurgeTrigger ?? 1.5} onChange={(v: any) => handleInputChange('vcbVolumeSurgeTrigger', v)} step={0.1} min={1.1} max={3.0} />
-              </div>
-            </div>
+            {/* Canonical Unified Strategy Parameters */}
+            <UnifiedStrategyParams
+              settings={settings}
+              onUpdateSetting={handleInputChange}
+              onSaveDirect={(partial) => {
+                fetch('/api/bot/settings', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ ...settings, ...partial })
+                }).catch(console.error);
+              }}
+              sourceContext="strategy"
+            />
 
             {/* Global Market & BTC Safety Filter */}
             <div className="bg-[#161B22] rounded-xl p-6 border border-[#30363D] space-y-4">

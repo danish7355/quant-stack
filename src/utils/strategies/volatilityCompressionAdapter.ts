@@ -89,6 +89,8 @@ export function evaluateVolatilityCompressionAdapter(
     rejectionReason: null,
   };
 
+  (signal as any).checklist = decision.checklist;
+
   logger.info({
     strategy: 'volatilityCompression',
     symbol,

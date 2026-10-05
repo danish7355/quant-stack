@@ -174,7 +174,7 @@ describe('TradeEngineBanner - Strategy & Trade Engine Active Evaluation', () => 
     expect(getStrategyDisplayName('DELTA_CLIMAX').name).toBe('Delta Climax Reversal');
     expect(getStrategyDisplayName('EARLY_COIL_BREAKOUT').name).toBe('Early Coil Breakout');
     expect(getStrategyDisplayName('AUTO_REGIME').name).toBe('Autonomous Multi-Regime Auto-Selector');
-    expect(getStrategyDisplayName('BINANCE_COMPOSITE').name).toBe('Binance Composite Technical Scoring');
+    expect(getStrategyDisplayName('BINANCE_COMPOSITE').name).toBe('Range Mean Reversion');
   });
 
   it('lists all multiple simultaneous blocking conditions when several exist', () => {

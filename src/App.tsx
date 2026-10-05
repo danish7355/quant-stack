@@ -185,6 +185,7 @@ export default function App() {
   const settingsRef = useRef<AppSettings>(settings);
   const activeTabRef = useRef(activeTab);
   const isPollingUpdateRef = useRef(false);
+  const isEditingSettingsRef = useRef(false);
   const klineCacheRef = useRef<Map<string, { time: number; candles: any[] }>>(new Map());
 
   useEffect(() => {
@@ -1140,6 +1141,8 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
       telegramChatId: settings.telegramChatId || '',
       binanceApiKey: settings.binanceApiKey || '',
       binanceApiSecret: settings.binanceApiSecret || '',
+      githubPat: settings.githubPat || '',
+      githubRepoUrl: settings.githubRepoUrl || '',
     };
     setSettings(resetSettings);
     // Since auto-sync was removed (D3), explicitly save the reset to server
@@ -1547,7 +1550,10 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
     fetchStatus();
     const interval = setInterval(() => {
       fetchStatus();
-      reloadSettings();
+      // Don't overwrite settings while user is actively editing them in SettingsPanel
+      if (!isEditingSettingsRef.current) {
+        reloadSettings();
+      }
     }, 8000);
     return () => {
       isMounted = false;
@@ -1808,6 +1814,8 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
                 hasLoadedServerSettings={hasLoadedServerSettings}
                 settingsLoadError={settingsLoadError}
                 onReloadServerSettings={reloadSettings}
+                onEditStart={() => { isEditingSettingsRef.current = true; }}
+                onEditEnd={() => { isEditingSettingsRef.current = false; }}
             />
           )}
           {activeTab === 'strategy' && (

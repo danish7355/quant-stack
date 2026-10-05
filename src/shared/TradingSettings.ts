@@ -1,4 +1,5 @@
 import { StrategyBucketItem, Timeframe } from '../types.js';
+import { RangeConfig, DEFAULTS as DEFAULT_RANGE_CONFIG } from '../utils/strategies/rangeRegime/schema.js';
 
 export type TradingMode = 'PAPER' | 'TESTNET' | 'LIVE';
 
@@ -60,6 +61,7 @@ export interface TradingSettings {
   coindcxActiveRegime?: 'TREND' | 'RANGE' | 'COMPRESSION' | 'EXPANSION' | 'BULL_TREND' | 'BEAR_TREND' | 'RANGE_CHOP' | 'HIGH_VOL';
   coindcxRegimeSymbol?: string;          // Symbol used for regime check (default BTCUSDT)
   enableRegimeLayer3Gate?: boolean;      // When true (default), Layer 3 Tradeability Gate enforces fee drag & friction ceiling; when false, Layer 3 is bypassed
+  bypassRegimeStandAside?: boolean;      // When true, bypasses per-coin TRANSITION/PANIC stand-aside gating
   deletedStrategies?: string[];
   strategyBucket?: StrategyBucketItem[];
   tradeFrequency: 'LOW' | 'MEDIUM' | 'HIGH';
@@ -129,6 +131,7 @@ export interface TradingSettings {
   rmrMinScore?: number;
   rmrOuterRangePct?: number;
   rmrMinRrRatio?: number;
+  rangeConfig?: RangeConfig;
 
   forceClearCredentials?: boolean;
 
@@ -184,6 +187,8 @@ export interface TradingSettings {
   vcbHtfBonus: number;
   vcbSlBufferAtrMult: number;
   useMtfAlignment: boolean;
+  bypassHtfAlignment?: boolean;
+  htfTimeframe?: string;
   useVpvrFilter: boolean;
   useAtrTrailingStop: boolean;
   trailingStopAtrMultiplier: number;
@@ -557,7 +562,7 @@ export function validateTradingSettings(input: unknown): ValidationResult {
   // Validate boolean flags
   const booleanKeys = [
     'autoTradeEnabled', 'useGlobalBtcFilter', 'timeBasedExitEnabled',
-    'egpEnabled', 'crEnabled', 'useMtfAlignment', 'useVpvrFilter', 'useAtrTrailingStop',
+    'egpEnabled', 'useMtfAlignment', 'useVpvrFilter', 'useAtrTrailingStop',
     'vcbRequireSweep', 'vcbRequireRetest', 'vcbEnforceKillZone',
     'vcbRequireHtfStructure', 'vcbRequireFollowThroughOrRetest',
     'smcUseKillZone', 'smcStrictHtfRegime', 'tpbRequireVolume',
@@ -572,7 +577,9 @@ export function validateTradingSettings(input: unknown): ValidationResult {
     'errEnabled', 'errRequireStructureBreak', 'errAllowReclaimAsDisplacement', 'errBreakevenEnabled',
     'eeeEnabled', 'eeeBreakevenEnabled', 'eeeRequireOpposingSpace',
     'tpbAllowLongs', 'tpbAllowShorts', 'tpbAllowBroadStop', 'tpbAllowUnconfirmedVolume',
-    'autoActivateRegimeStrategies', 'coindcxRegimeMode', 'enableRegimeLayer3Gate'
+    'autoActivateRegimeStrategies', 'coindcxRegimeMode', 'enableRegimeLayer3Gate',
+    'bypassRegimeStandAside', 'bypassHtfAlignment',
+    'eev2Enabled', 'eev2AllowRrFallback', 'forceClearCredentials'
   ];
   for (const bKey of booleanKeys) {
     if (raw[bKey] !== undefined) {
@@ -621,12 +628,38 @@ export function validateTradingSettings(input: unknown): ValidationResult {
     }
   }
 
+  if (raw.eev2EntryMode !== undefined) {
+    if (['CLOSE_CONFIRM', 'STOP_ENTRY'].includes(raw.eev2EntryMode)) {
+      sanitized.eev2EntryMode = raw.eev2EntryMode;
+    }
+  }
+  if (raw.eev2ExitMode !== undefined) {
+    if (['LEVEL_LADDER', 'RR_FIXED'].includes(raw.eev2ExitMode)) {
+      sanitized.eev2ExitMode = raw.eev2ExitMode;
+    }
+  }
+  if (raw.eev2BeMode !== undefined) {
+    if (['AFTER_TP1', 'R_TRIGGER', 'OFF'].includes(raw.eev2BeMode)) {
+      sanitized.eev2BeMode = raw.eev2BeMode;
+    }
+  }
+  if (raw.ema5PaVersion !== undefined) {
+    if (['A', 'B', 'C', 'D'].includes(raw.ema5PaVersion)) {
+      sanitized.ema5PaVersion = raw.ema5PaVersion;
+    }
+  }
+  if (raw.ema5PaEntryMode !== undefined) {
+    if (['MOMENTUM', 'RETEST'].includes(raw.ema5PaEntryMode)) {
+      sanitized.ema5PaEntryMode = raw.ema5PaEntryMode;
+    }
+  }
+
   // Pass-through other known fields
   const stringKeys = [
     'activeStrategy', 'timeframe', 'theme', 'globalFilterSymbol',
     'telegramBotToken', 'telegramChatId', 'binanceApiKey', 'binanceApiSecret',
     'githubPat', 'githubRepoUrl', 'customWatchlist', 'alertFormat',
-    'smcHtfResolution', 'coindcxActiveRegime', 'coindcxRegimeSymbol'
+    'smcHtfResolution', 'coindcxActiveRegime', 'coindcxRegimeSymbol', 'htfTimeframe'
   ];
   for (const sKey of stringKeys) {
     if (raw[sKey] !== undefined && typeof raw[sKey] === 'string') {
@@ -658,6 +691,9 @@ export function validateTradingSettings(input: unknown): ValidationResult {
   if (raw.equitySnapshots && Array.isArray(raw.equitySnapshots)) {
     sanitized.equitySnapshots = raw.equitySnapshots;
   }
+  if (raw.rangeConfig && typeof raw.rangeConfig === 'object') {
+    sanitized.rangeConfig = { ...raw.rangeConfig };
+  }
 
   // Version and timestamps
   if (raw.settingsVersion !== undefined) sanitized.settingsVersion = Number(raw.settingsVersion);
@@ -683,6 +719,7 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   coindcxActiveRegime: 'RANGE_CHOP',
   coindcxRegimeSymbol: 'BTCUSDT',
   enableRegimeLayer3Gate: true,
+  bypassRegimeStandAside: false,
   tradeFrequency: 'LOW',
   timeframe: '5m',
   autoTradeThreshold: 75,
@@ -820,6 +857,8 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   vcbStallCheckBar: 8,
   vcbStallMinProgressAtr: 1.0,
   useMtfAlignment: true,
+  bypassHtfAlignment: false,
+  htfTimeframe: '1h',
   useVpvrFilter: false,
   useAtrTrailingStop: true,
   trailingStopAtrMultiplier: 3.0,
@@ -968,5 +1007,7 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   smcAtrStopMult: 1.5,
   smcRrRatio: 3.0,
   smcStrictHtfRegime: false,
+
+  rangeConfig: { ...DEFAULT_RANGE_CONFIG },
 };
 

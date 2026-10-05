@@ -17,7 +17,7 @@ export interface SignalAuditRecord {
   confidence: number;
   decision: SignalDecision;
   rejectionReasons: string[];
-  gateResults: Record<string, 'PASS' | 'FAIL' | 'NOT_CHECKED'>;
+  gateResults: Record<string, 'PASS' | 'FAIL' | 'NOT_CHECKED' | 'BYPASS'>;
   entryPrice: number | null;
   stopPrice: number | null;
   targetPrices: number[];

@@ -279,12 +279,12 @@ export function RegimeVisualizer({
             <div>
               <h2 className="text-xl font-bold bg-gradient-to-r from-white via-slate-200 to-indigo-300 bg-clip-text text-transparent flex items-center gap-2">
                 QUANT REGIME ENGINE (3-LAYER)
-                <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 font-mono">
-                  BTC/USDT ANCHOR
+                <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-mono">
+                  TOP 100 COINS CONSENSUS
                 </span>
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Layer 1: Direction Bias (1D/4H) • Layer 2: Regime (4H+1H) • Layer 3: Tradeability (Fee Drag Floor)
+                Cumulatively evaluated across Top 100 coins • Direction Bias • Market Breadth • 0.118% Fee Drag Floor
               </p>
             </div>
           </div>
@@ -577,6 +577,138 @@ export function RegimeVisualizer({
                 </span>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* CUMULATIVE TOP 100 COINS MARKET REGIME & BREADTH CONSENSUS PANEL */}
+      {regimeState && regimeState.marketBreadth100 && (
+        <div className="bg-gradient-to-r from-slate-900 via-slate-900/95 to-indigo-950/40 border border-indigo-500/30 rounded-xl p-4 shadow-xl space-y-3.5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-indigo-500/20 border border-indigo-500/40 rounded-lg text-indigo-400">
+                <BarChart3 className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-white tracking-wide">
+                    CUMULATIVE TOP 100 COINS MARKET REGIME CONSENSUS
+                  </h3>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-semibold">
+                    100-COIN CONSENSUS
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Evaluated across {regimeState.marketBreadth100.totalCoins} volume-ranked USDT perpetuals • Eliminates single-coin BTC bias
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              <span className="text-xs text-slate-400">Decided Regime:</span>
+              <span className={`text-xs px-2.5 py-1 rounded font-bold border ${getRegimeBadgeClass(regimeState.marketBreadth100.consensusRegime)}`}>
+                {regimeState.marketBreadth100.consensusRegime}
+              </span>
+              <span className="text-xs font-mono text-emerald-400 font-semibold">
+                ({regimeState.marketBreadth100.consensusConfidence}% Confidence)
+              </span>
+            </div>
+          </div>
+
+          {/* Regime Distribution Segmentation Bar */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs font-mono text-slate-300">
+              <span className="text-slate-400">Market-Wide Distribution:</span>
+              <div className="flex items-center gap-3 text-[11px]">
+                <span className="text-amber-300 font-medium">RANGE: {regimeState.marketBreadth100.rangePct}%</span>
+                <span className="text-cyan-300 font-medium">TREND: {regimeState.marketBreadth100.trendPct}% ({regimeState.marketBreadth100.bullTrendPct}% Bull, {regimeState.marketBreadth100.bearTrendPct}% Bear)</span>
+                <span className="text-purple-300 font-medium">COMPRESSION: {regimeState.marketBreadth100.compressionPct}%</span>
+                <span className="text-rose-300 font-medium">EXPANSION: {regimeState.marketBreadth100.expansionPct}%</span>
+              </div>
+            </div>
+            {/* Visual segmented bar */}
+            <div className="h-3 w-full bg-slate-950 rounded-full overflow-hidden flex border border-slate-800">
+              <div 
+                style={{ width: `${regimeState.marketBreadth100.rangePct}%` }} 
+                className="bg-amber-500/80 hover:bg-amber-400 transition-all" 
+                title={`RANGE: ${regimeState.marketBreadth100.rangePct}% (${regimeState.marketBreadth100.rangeCount} coins)`}
+              />
+              <div 
+                style={{ width: `${regimeState.marketBreadth100.trendPct}%` }} 
+                className="bg-cyan-500/80 hover:bg-cyan-400 transition-all" 
+                title={`TREND: ${regimeState.marketBreadth100.trendPct}% (${regimeState.marketBreadth100.trendCount} coins)`}
+              />
+              <div 
+                style={{ width: `${regimeState.marketBreadth100.compressionPct}%` }} 
+                className="bg-purple-500/80 hover:bg-purple-400 transition-all" 
+                title={`COMPRESSION: ${regimeState.marketBreadth100.compressionPct}% (${regimeState.marketBreadth100.compressionCount} coins)`}
+              />
+              <div 
+                style={{ width: `${regimeState.marketBreadth100.expansionPct}%` }} 
+                className="bg-rose-500/80 hover:bg-rose-400 transition-all" 
+                title={`EXPANSION: ${regimeState.marketBreadth100.expansionPct}% (${regimeState.marketBreadth100.expansionCount} coins)`}
+              />
+            </div>
+          </div>
+
+          {/* Breadth Statistics Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 text-xs font-mono">
+            <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5 text-center">
+              <span className="text-[10px] text-slate-400 block mb-0.5">Above 4H EMA50</span>
+              <span className={`text-sm font-bold ${
+                regimeState.marketBreadth100.pctAboveEma50 >= 60 ? 'text-emerald-400' :
+                regimeState.marketBreadth100.pctAboveEma50 <= 40 ? 'text-rose-400' : 'text-slate-300'
+              }`}>
+                {regimeState.marketBreadth100.pctAboveEma50}%
+              </span>
+            </div>
+
+            <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5 text-center">
+              <span className="text-[10px] text-slate-400 block mb-0.5">Above 4H EMA200</span>
+              <span className={`text-sm font-bold ${
+                regimeState.marketBreadth100.pctAboveEma200 >= 60 ? 'text-emerald-400' :
+                regimeState.marketBreadth100.pctAboveEma200 <= 40 ? 'text-rose-400' : 'text-slate-300'
+              }`}>
+                {regimeState.marketBreadth100.pctAboveEma200}%
+              </span>
+            </div>
+
+            <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5 text-center">
+              <span className="text-[10px] text-slate-400 block mb-0.5">Median ADX</span>
+              <span className="text-sm font-bold text-indigo-300">
+                {regimeState.marketBreadth100.medianAdx.toFixed(1)}
+              </span>
+            </div>
+
+            <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5 text-center">
+              <span className="text-[10px] text-slate-400 block mb-0.5">Advancers vs Decliners</span>
+              <span className="text-xs font-bold text-slate-300">
+                <span className="text-emerald-400">{regimeState.marketBreadth100.advancingPct}%</span> / <span className="text-rose-400">{regimeState.marketBreadth100.decliningPct}%</span>
+              </span>
+            </div>
+
+            <div className="bg-slate-950/70 border border-slate-800/80 rounded-lg p-2.5 text-center">
+              <span className="text-[10px] text-slate-400 block mb-0.5">Avg Funding Rate</span>
+              <span className={`text-xs font-bold ${regimeState.marketBreadth100.avgFundingRate >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {(regimeState.marketBreadth100.avgFundingRate * 100).toFixed(4)}%
+              </span>
+            </div>
+
+            <div className="bg-slate-950/70 border border-indigo-500/40 rounded-lg p-2.5 text-center bg-indigo-950/30">
+              <span className="text-[10px] text-indigo-300 block mb-0.5">Auto-Armed Strategy</span>
+              <span className="text-xs font-bold text-white truncate block">
+                {regimeState.marketBreadth100.favoredStrategy}
+              </span>
+            </div>
+          </div>
+
+          <div className="p-2.5 bg-slate-950/80 border border-slate-800/80 rounded-lg text-xs font-mono text-slate-300 flex items-center justify-between">
+            <span className="text-slate-400 text-[11px]">
+              {regimeState.marketBreadth100.consensusReason}
+            </span>
+            <span className="text-[10px] text-indigo-400 shrink-0 font-semibold uppercase tracking-wider">
+              Autoselected for Trading
+            </span>
           </div>
         </div>
       )}

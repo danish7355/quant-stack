@@ -3,6 +3,7 @@ import { AppSettings, Timeframe, NUMERIC_BOUNDS } from '../types';
 import { RefreshCw, Eye, EyeOff, Github, UploadCloud, AlertTriangle, CheckCircle2, ArrowRight, ShieldAlert, Activity, History, Compass } from 'lucide-react';
 import { SettingsHealthPanel } from './SettingsHealthPanel';
 import { SettingsAuditLog } from './SettingsAuditLog';
+import { UnifiedStrategyParams } from './UnifiedStrategyParams';
 
 interface SettingsPanelProps {
   settings: AppSettings;
@@ -12,6 +13,8 @@ interface SettingsPanelProps {
   hasLoadedServerSettings?: boolean;
   settingsLoadError?: string | null;
   onReloadServerSettings?: () => Promise<void>;
+  onEditStart?: () => void;
+  onEditEnd?: () => void;
 }
 
 const LocalNumberInput = ({ value, onChange, className }: any) => {
@@ -143,7 +146,9 @@ export default function SettingsPanel({
   onResetSettings,
   hasLoadedServerSettings = true,
   settingsLoadError = null,
-  onReloadServerSettings
+  onReloadServerSettings,
+  onEditStart,
+  onEditEnd
 }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<'general' | 'filters' | 'risk' | 'strategies' | 'autotrade' | 'alerts' | 'credentials' | 'github' | 'health' | 'audit'>('general');
   const [showBotToken, setShowBotToken] = useState(false);
@@ -265,10 +270,17 @@ export default function SettingsPanel({
   const executeActualSave = async () => {
     setIsSaving(true);
     try {
+      const payloadSettings = { ...settings };
+      if ((payloadSettings.autoTradeThreshold ?? 70) > 50 && payloadSettings.disabledGates) {
+        const nextDg = { ...payloadSettings.disabledGates };
+        delete nextDg.RISK_threshold;
+        delete nextDg.risk_threshold;
+        payloadSettings.disabledGates = nextDg;
+      }
       const res = await fetch('/api/bot/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings)
+        body: JSON.stringify(payloadSettings)
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
@@ -286,12 +298,22 @@ export default function SettingsPanel({
       setSaveStatus('✗ Network error — settings NOT saved');
     } finally {
       setIsSaving(false);
+      onEditEnd?.();
       setTimeout(() => setSaveStatus(null), 3500);
     }
   };
 
   const handleInputChange = (category: keyof AppSettings | string, value: string | number | boolean) => {
     const updated = { ...settings, [category]: value } as AppSettings;
+    if (category === 'autoTradeThreshold') {
+      const num = Number(value);
+      if (!isNaN(num) && num > 50 && updated.disabledGates) {
+        const nextDg = { ...updated.disabledGates };
+        delete nextDg.RISK_threshold;
+        delete nextDg.risk_threshold;
+        updated.disabledGates = nextDg;
+      }
+    }
     onUpdateSettings(updated);
   };
 
@@ -436,7 +458,11 @@ export default function SettingsPanel({
   }
 
   return (
-    <div className="bg-[#161B22] border border-[#30363D] rounded-xl overflow-hidden shadow-lg h-full flex flex-col">
+    <div 
+      className="bg-[#161B22] border border-[#30363D] rounded-xl overflow-hidden shadow-lg h-full flex flex-col"
+      onFocus={() => onEditStart?.()}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) { onEditEnd?.(); } }}
+    >
       <div className="bg-[#0E1117] border-b border-[#30363D] px-6 py-4 flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center space-x-3">
           <h2 className="text-xl font-extrabold text-white tracking-widest uppercase">STRATEGY & BOT SETTINGS</h2>
@@ -632,6 +658,49 @@ export default function SettingsPanel({
                       className="absolute right-2.5 top-2.5 text-gray-500 hover:text-gray-400"
                     >
                       {showApiSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center py-2.5 px-3 bg-black/40 border border-[#30363D] rounded-lg">
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold text-gray-200">Execution Mode</span>
+                    <span className="text-[11px] text-gray-400">
+                      {settings.tradingMode === 'LIVE' 
+                        ? '🚨 LIVE BINANCE: Real orders dispatched to Binance Futures via API' 
+                        : '🛡️ PAPER TRADING: Internal simulated OMS (Zero Financial Risk)'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 bg-[#161B22] p-1 rounded-lg border border-[#30363D]">
+                    <button
+                      type="button"
+                      onClick={() => handleInputChange('tradingMode', 'PAPER')}
+                      className={`px-3 py-1 text-xs font-bold rounded transition cursor-pointer ${
+                        settings.tradingMode !== 'LIVE' 
+                          ? 'bg-blue-600 text-white shadow-sm' 
+                          : 'text-gray-400 hover:text-gray-200'
+                      }`}
+                    >
+                      PAPER
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!settings.binanceApiKey || !settings.binanceApiSecret) {
+                          alert('Please enter your Binance API Key and Secret before enabling Live Mode.');
+                          return;
+                        }
+                        if (confirm('Enable LIVE TRADING on Binance Futures?\n\nReal orders will be placed on Binance Futures.')) {
+                          handleInputChange('tradingMode', 'LIVE');
+                        }
+                      }}
+                      className={`px-3 py-1 text-xs font-bold rounded transition cursor-pointer ${
+                        settings.tradingMode === 'LIVE' 
+                          ? 'bg-red-600 text-white shadow-sm' 
+                          : 'text-gray-400 hover:text-gray-200'
+                      }`}
+                    >
+                      LIVE
                     </button>
                   </div>
                 </div>
@@ -851,6 +920,42 @@ export default function SettingsPanel({
                 inactiveBadgeText="BYPASSED (OFF)"
                 highRisk={false}
               />
+              <ToggleRow
+                label="Universal Higher Time Frame (HTF) Structure Alignment"
+                desc="Enforces higher-timeframe trend directional alignment (EMA20/50/200), market structure continuation (HH/HL vs LH/LL), and structural barrier clearance across all strategies before order execution."
+                checked={settings.useMtfAlignment !== false}
+                onChange={(v: boolean) => handleInputChange('useMtfAlignment', v)}
+                activeBadgeText="HTF ALIGNMENT ENFORCED"
+                inactiveBadgeText="HTF ALIGNMENT DISABLED"
+                highRisk={false}
+              />
+              <ToggleRow
+                label="Bypass HTF Structure Alignment"
+                desc="Force bypass universal HTF alignment check across all strategies (allows aggressive counter-trend scalping on lower timeframes)."
+                checked={!!settings.bypassHtfAlignment}
+                onChange={(v: boolean) => handleInputChange('bypassHtfAlignment', v)}
+                activeBadgeText="BYPASSED (PERMISSIVE)"
+                inactiveBadgeText="ENFORCED (STRICT)"
+                highRisk={true}
+              />
+              <div className="py-3 flex flex-col md:flex-row md:items-center justify-between gap-2">
+                <div>
+                  <div className="text-xs font-semibold text-gray-200">Universal HTF Anchor Timeframe</div>
+                  <div className="text-[11px] text-gray-400">Timeframe used for macro structure, trend bias, and obstacle detection across all strategies (default: 1h).</div>
+                </div>
+                <select
+                  value={settings.htfTimeframe || '1h'}
+                  onChange={(e) => handleInputChange('htfTimeframe', e.target.value)}
+                  className="bg-[#161B22] border border-[#30363D] text-gray-200 text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:border-cyan-500 font-mono"
+                >
+                  <option value="15m">15m (Short-Term HTF)</option>
+                  <option value="30m">30m (Intermediate)</option>
+                  <option value="1h">1h (Standard 4x Anchor)</option>
+                  <option value="2h">2h (Swing Anchor)</option>
+                  <option value="4h">4h (Macro Swing Anchor)</option>
+                  <option value="1d">1d (Daily Master Trend)</option>
+                </select>
+              </div>
               <InputRow label="Minimum 24h Volume (USDT)" desc="Skip coins with 24h volume below this threshold (e.g. $25,000,000)" value={settings.min24hVolume} onChange={(v: any) => handleInputChange('min24hVolume', v)} />
               <InputRow label="Max Funding Rate %" desc="Skip coins with extreme perpetual funding rates (e.g. 0.15%)" value={settings.maxFundingRate} onChange={(v: any) => handleInputChange('maxFundingRate', v)} />
               <InputRow label="Max Bid/Ask Spread %" desc="Skip coins with wide bid/ask spreads to avoid high slippage (e.g. 0.3%)" value={settings.maxSpread} onChange={(v: any) => handleInputChange('maxSpread', v)} />
@@ -869,6 +974,7 @@ export default function SettingsPanel({
                 settings.bypassExposureLimit && 'Total Exposure',
                 settings.bypassLiquidationBuffer && 'Liquidation Buffer',
                 settings.bypassTradeCooldown && 'Cooldown Timer',
+                settings.bypassHtfAlignment && 'HTF Alignment',
               ].filter(Boolean) as string[];
               const isBypassed = bypassedList.length > 0;
 
@@ -1014,6 +1120,12 @@ export default function SettingsPanel({
                   desc="Bypasses the 60-second cooldown timer on symbols after skipped or rejected signals, allowing instant re-evaluation on every scanning cycle."
                   checked={settings.bypassTradeCooldown}
                   onChange={(v: boolean) => handleInputChange('bypassTradeCooldown', v)}
+                />
+                <ToggleRow
+                  label="Bypass Higher Timeframe (HTF) Alignment"
+                  desc="Bypasses the universal Higher Timeframe Trend & Structure gate across all strategies. Allows entering signals immediately without requiring HTF confirmation."
+                  checked={settings.bypassHtfAlignment}
+                  onChange={(v: boolean) => handleInputChange('bypassHtfAlignment', v)}
                 />
                 <ToggleRow
                   label="Allow Fractional Contracts / Micro Sizing"
@@ -1206,406 +1318,15 @@ export default function SettingsPanel({
               </div>
             </div>
 
-            {/* SECTION 1: SMC High-Probability Strategy */}
-            <div className="bg-[#0E1117]/90 border border-[#30363D] rounded-xl p-5 space-y-4">
-              <div className="flex items-center justify-between border-b border-[#30363D] pb-3">
-                <div>
-                  <h3 className="text-sm font-bold text-gray-100 flex items-center gap-2">
-                    <span>💧 Smart Money Concepts (SMC) Liquidity Sweep Parameters</span>
-                  </h3>
-                  <p className="text-[11px] text-gray-400 mt-0.5">High-probability price-action algorithm targeting liquidity sweeps, MSS displacement, and FVG/OB retests.</p>
-                </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                  INSTITUTIONAL
-                </span>
-              </div>
-
-              <div className="divide-y divide-[#30363D]/40">
-                <div className="flex justify-between items-center py-3">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-200">Higher-Timeframe (HTF) Resolution</span>
-                    <span className="text-[11px] text-gray-500">Timeframe used to establish institutional HTF market structure & trend direction.</span>
-                  </div>
-                  <div className="flex bg-[#161B22] rounded p-1 border border-[#30363D]">
-                    {['15m', '1h', '4h', '1d'].map((res) => (
-                      <button
-                        key={res}
-                        type="button"
-                        onClick={() => handleInputChange('smcHtfResolution', res)}
-                        className={`px-3 py-1 rounded text-xs font-bold transition-all ${
-                          (settings.smcHtfResolution || '1h') === res
-                            ? 'bg-purple-600 text-white'
-                            : 'text-gray-400 hover:text-gray-200'
-                        }`}
-                      >
-                        {res}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <InputRow 
-                  label="Structure Pivot Length (Bars)" 
-                  desc="Number of left/right bars required to confirm a Swing High or Swing Low pivot" 
-                  value={settings.smcStructureLen ?? 10} 
-                  onChange={(v: any) => handleInputChange('smcStructureLen', v)} 
-                  min={3} 
-                  max={50} 
-                />
-                <InputRow 
-                  label="Min Sweep Wick/Body Ratio" 
-                  desc="Minimum ratio of wick extension to candle body size confirming a stop hunt" 
-                  value={settings.smcWickRatio ?? 0.6} 
-                  onChange={(v: any) => handleInputChange('smcWickRatio', v)} 
-                  min={0.2} 
-                  max={2.0} 
-                />
-                <InputRow 
-                  label="Min Sweep Extension (%)" 
-                  desc="Minimum percentage beyond swing pivot high/low required to trigger a sweep (e.g. 0.0015 = 0.15%)" 
-                  value={settings.smcMinSweepWickPct ?? 0.0015} 
-                  onChange={(v: any) => handleInputChange('smcMinSweepWickPct', v)} 
-                  min={0.0005} 
-                  max={0.05} 
-                />
-                <InputRow 
-                  label="MSS Displacement ATR Multiplier" 
-                  desc="Displacement body size must exceed this multiple of ATR to confirm Market Structure Shift" 
-                  value={settings.smcDispAtrMult ?? 0.5} 
-                  onChange={(v: any) => handleInputChange('smcDispAtrMult', v)} 
-                  min={0.2} 
-                  max={5.0} 
-                />
-                <InputRow 
-                  label="Sweep-to-MSS Max Bars Window" 
-                  desc="Maximum candles allowed between liquidity sweep and displacement MSS confirmation" 
-                  value={settings.smcSweepConfirmWindow ?? 10} 
-                  onChange={(v: any) => handleInputChange('smcSweepConfirmWindow', v)} 
-                  min={3} 
-                  max={50} 
-                />
-                <InputRow 
-                  label="MSS Volume Confirmation Multiplier" 
-                  desc="Displacement candle volume must be at least this multiple of the 20-period volume SMA" 
-                  value={settings.smcVolMult ?? 1.5} 
-                  onChange={(v: any) => handleInputChange('smcVolMult', v)} 
-                  min={1.0} 
-                  max={5.0} 
-                />
-                <InputRow 
-                  label="MSS-to-FVG Max Bars Window" 
-                  desc="Maximum candles after MSS displacement to identify an active Fair Value Gap (FVG)" 
-                  value={settings.smcFvgAfterMssWindow ?? 5} 
-                  onChange={(v: any) => handleInputChange('smcFvgAfterMssWindow', v)} 
-                  min={2} 
-                  max={30} 
-                />
-                <InputRow 
-                  label="Order Block Lookback Bars" 
-                  desc="Number of candles searched back from MSS to detect origin Order Block (OB)" 
-                  value={settings.smcObLookback ?? 30} 
-                  onChange={(v: any) => handleInputChange('smcObLookback', v)} 
-                  min={10} 
-                  max={100} 
-                />
-                <InputRow 
-                  label="Stop Loss ATR Multiplier" 
-                  desc="Protective buffer added beyond sweep extreme in multiples of ATR" 
-                  value={settings.smcAtrStopMult ?? 1.5} 
-                  onChange={(v: any) => handleInputChange('smcAtrStopMult', v)} 
-                  min={0.5} 
-                  max={5.0} 
-                />
-                <InputRow 
-                  label="Target Risk:Reward Ratio" 
-                  desc="Fixed structural take-profit target multiple relative to initial risk distance" 
-                  value={settings.smcRrRatio ?? 3.0} 
-                  onChange={(v: any) => handleInputChange('smcRrRatio', v)} 
-                  min={1.5} 
-                  max={10.0} 
-                />
-
-                <div className="flex justify-between items-center py-3">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-200">Session Kill Zone Enforcement</span>
-                    <span className="text-[11px] text-gray-500">Only execute during London (07:00-10:00 UTC) & New York (12:00-15:00 UTC) peak liquidity sessions.</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleInputChange('smcUseKillZone', !settings.smcUseKillZone)}
-                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
-                      settings.smcUseKillZone ? 'bg-purple-600' : 'bg-gray-700'
-                    }`}
-                  >
-                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.smcUseKillZone ? 'transform translate-x-6' : ''}`} />
-                  </button>
-                </div>
-
-                <div className="flex justify-between items-center py-3">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-200">Strict HTF Structure Alignment</span>
-                    <span className="text-[11px] text-gray-500">Block Longs when HTF is Bearish, block Shorts when HTF is Bullish.</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleInputChange('smcStrictHtfRegime', !settings.smcStrictHtfRegime)}
-                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
-                      settings.smcStrictHtfRegime ? 'bg-purple-600' : 'bg-gray-700'
-                    }`}
-                  >
-                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.smcStrictHtfRegime ? 'transform translate-x-6' : ''}`} />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* SECTION 2: Trend Pullback Strategy */}
-            <div className="bg-[#0E1117]/90 border border-[#30363D] rounded-xl p-5 space-y-4">
-              <div className="flex items-center justify-between border-b border-[#30363D] pb-3">
-                <div>
-                  <h3 className="text-sm font-bold text-gray-100 flex items-center gap-2">
-                    <span>🎯 Trend Pullback (HTF + MTF Retest) Parameters</span>
-                  </h3>
-                  <p className="text-[11px] text-gray-400 mt-0.5">Trend-following retest engine with EMA alignment, ADX momentum, and volume surge filtering.</p>
-                </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                  TREND FOLLOWING
-                </span>
-              </div>
-
-              <div className="divide-y divide-[#30363D]/40">
-                <InputRow label="Fast EMA Period" desc="Fast EMA period for dynamic pullback detection (default: 20)" value={settings.tpbEmaFast ?? 20} onChange={(v: any) => handleInputChange('tpbEmaFast', v)} min={5} max={100} />
-                <InputRow label="Slow EMA Period" desc="Slow baseline EMA period for trend direction (default: 50)" value={settings.tpbEmaSlow ?? 50} onChange={(v: any) => handleInputChange('tpbEmaSlow', v)} min={20} max={200} />
-                <InputRow label="Minimum ADX Momentum" desc="ADX must be above this threshold to confirm strong directional trend (default: 22)" value={settings.tpbAdxMin ?? 22} onChange={(v: any) => handleInputChange('tpbAdxMin', v)} min={10} max={50} />
-                <InputRow label="EMA Slope Lookback (Bars)" desc="Bars back to compare Fast EMA for trend slope confirmation (default: 5)" value={settings.tpbSlopeLookbackBars ?? 5} onChange={(v: any) => handleInputChange('tpbSlopeLookbackBars', v)} min={2} max={20} />
-                <InputRow label="Pullback Depth Tolerance (x ATR)" desc="Tolerance band around EMA 20 in ATR units (default: 0.25)" value={settings.tpbPullbackDepthAtr ?? 0.25} onChange={(v: any) => handleInputChange('tpbPullbackDepthAtr', v)} min={0.05} max={1.5} />
-                <InputRow label="Volume SMA Lookback Period" desc="Lookback period for baseline volume moving average (default: 20)" value={settings.tpbVolumeSmaPeriod ?? 20} onChange={(v: any) => handleInputChange('tpbVolumeSmaPeriod', v)} min={5} max={50} />
-                <InputRow label="Min Volume Surge Ratio" desc="Retest bounce candle volume vs SMA ratio (default: 1.0x)" value={settings.tpbMinVolumeRatio ?? 1.0} onChange={(v: any) => handleInputChange('tpbMinVolumeRatio', v)} min={0.5} max={5.0} />
-                <InputRow label="Max Entry Distance from EMA (x ATR)" desc="Maximum allowable price extension from Fast EMA to trigger entry (default: 0.25)" value={settings.tpbMaxEntryDistanceAtr ?? 0.25} onChange={(v: any) => handleInputChange('tpbMaxEntryDistanceAtr', v)} min={0.1} max={3.0} />
-                <InputRow label="Min Stop Distance (x ATR)" desc="Minimum stop distance in ATR units to reject market noise (default: 0.8)" value={settings.tpbMinStopDistanceAtr ?? 0.8} onChange={(v: any) => handleInputChange('tpbMinStopDistanceAtr', v)} min={0.2} max={2.0} />
-                <InputRow label="Max Stop Distance (x ATR)" desc="Maximum allowable stop distance in ATR units for timeframe (default: 3.0)" value={settings.tpbMaxStopDistanceAtr ?? 3.0} onChange={(v: any) => handleInputChange('tpbMaxStopDistanceAtr', v)} min={1.0} max={6.0} />
-                <InputRow label="Max Spread / Slippage (x ATR)" desc="Maximum allowable spread in ATR units before entry is blocked (default: 0.3)" value={settings.tpbMaxSpreadAtr ?? 0.3} onChange={(v: any) => handleInputChange('tpbMaxSpreadAtr', v)} min={0.05} max={1.0} />
-                <InputRow label="Minimum Risk-to-Reward Ratio" desc="Required minimum asymmetric target multiple (default: 1.5)" value={settings.tpbMinRrRatio ?? 1.5} onChange={(v: any) => handleInputChange('tpbMinRrRatio', v)} min={1.0} max={5.0} />
-                <InputRow label="Min Confirmation Score" desc="Minimum 5-pillar confirmation score required to enter trade (default: 8/10)" value={settings.tpbMinScore ?? 8} onChange={(v: any) => handleInputChange('tpbMinScore', v)} min={5} max={10} />
-                <InputRow label="Stop Loss ATR Buffer" desc="Buffer added beyond recent swing low/high in multiples of ATR (default: 0.3)" value={settings.tpbAtrBuffer ?? 0.3} onChange={(v: any) => handleInputChange('tpbAtrBuffer', v)} min={0.1} max={2.0} />
-
-                <div className="flex justify-between items-center py-3">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-200">Allow Long Setups</span>
-                    <span className="text-[11px] text-gray-500">Enable bullish trend-pullback trade execution.</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleInputChange('tpbAllowLongs', settings.tpbAllowLongs === false)}
-                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
-                      settings.tpbAllowLongs !== false ? 'bg-blue-600' : 'bg-gray-700'
-                    }`}
-                  >
-                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.tpbAllowLongs !== false ? 'transform translate-x-6' : ''}`} />
-                  </button>
-                </div>
-
-                <div className="flex justify-between items-center py-3">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-200">Allow Short Setups</span>
-                    <span className="text-[11px] text-gray-500">Enable bearish trend-pullback trade execution.</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleInputChange('tpbAllowShorts', settings.tpbAllowShorts === false)}
-                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
-                      settings.tpbAllowShorts !== false ? 'bg-blue-600' : 'bg-gray-700'
-                    }`}
-                  >
-                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.tpbAllowShorts !== false ? 'transform translate-x-6' : ''}`} />
-                  </button>
-                </div>
-
-                <div className="flex justify-between items-center py-3">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-200">Allow Broad Structural Stops</span>
-                    <span className="text-[11px] text-gray-500">If false, prefers Local Execution Stop and rejects distant HTF stops.</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleInputChange('tpbAllowBroadStop', !settings.tpbAllowBroadStop)}
-                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
-                      settings.tpbAllowBroadStop ? 'bg-blue-600' : 'bg-gray-700'
-                    }`}
-                  >
-                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.tpbAllowBroadStop ? 'transform translate-x-6' : ''}`} />
-                  </button>
-                </div>
-
-                <div className="flex justify-between items-center py-3">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-200">Unconfirmed Volume Mode</span>
-                    <span className="text-[11px] text-gray-500">Allow signal execution when exchange volume is unconfirmed (marked lower confidence).</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleInputChange('tpbAllowUnconfirmedVolume', !settings.tpbAllowUnconfirmedVolume)}
-                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
-                      settings.tpbAllowUnconfirmedVolume ? 'bg-blue-600' : 'bg-gray-700'
-                    }`}
-                  >
-                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.tpbAllowUnconfirmedVolume ? 'transform translate-x-6' : ''}`} />
-                  </button>
-                </div>
-
-                <div className="flex justify-between items-center py-3">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-200">Require Volume Surge</span>
-                    <span className="text-[11px] text-gray-500">Block retest setups that lack confirmed volume expansion.</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleInputChange('tpbRequireVolume', !settings.tpbRequireVolume)}
-                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
-                      settings.tpbRequireVolume !== false ? 'bg-blue-600' : 'bg-gray-700'
-                    }`}
-                  >
-                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.tpbRequireVolume !== false ? 'transform translate-x-6' : ''}`} />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* SECTION 3: Ranging 1:3 R:R Mean-Reversion */}
-            <div className="bg-[#0E1117]/90 border border-[#30363D] rounded-xl p-5 space-y-4">
-              <div className="flex items-center justify-between border-b border-[#30363D] pb-3">
-                <div>
-                  <h3 className="text-sm font-bold text-gray-100 flex items-center gap-2">
-                    <span>🌊 Ranging 1:3 R:R Mean-Reversion Parameters</span>
-                  </h3>
-                  <p className="text-[11px] text-gray-400 mt-0.5">Bollinger Band extremes and RSI overbought/oversold mean-reversion algorithm.</p>
-                </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                  MEAN-REVERSION
-                </span>
-              </div>
-
-              <div className="divide-y divide-[#30363D]/40">
-                <InputRow label="Bollinger Bands Period" desc="Moving average period for band center (default: 20)" value={settings.rmrBbPeriod ?? 20} onChange={(v: any) => handleInputChange('rmrBbPeriod', v)} min={10} max={50} />
-                <InputRow label="Bollinger Bands StdDev" desc="Standard deviations for upper and lower bands (default: 2.0)" value={settings.rmrBbStdDev ?? 2.0} onChange={(v: any) => handleInputChange('rmrBbStdDev', v)} min={1.0} max={3.5} />
-                <InputRow label="RSI Oversold Level" desc="RSI must dip below this to trigger Long mean-reversion (default: 35)" value={settings.rmrRsiOversold ?? 35} onChange={(v: any) => handleInputChange('rmrRsiOversold', v)} min={15} max={45} />
-                <InputRow label="RSI Overbought Level" desc="RSI must pierce above this to trigger Short mean-reversion (default: 65)" value={settings.rmrRsiOverbought ?? 65} onChange={(v: any) => handleInputChange('rmrRsiOverbought', v)} min={55} max={85} />
-                <InputRow label="Max ADX for Range Regime" desc="Market is classified as ranging only if ADX is below this (default: 22)" value={settings.rmrMaxAdx ?? 22} onChange={(v: any) => handleInputChange('rmrMaxAdx', v)} min={10} max={40} />
-                <InputRow label="Target Risk:Reward Ratio" desc="Fixed multiple for take-profit vs risk distance (default: 1.5)" value={settings.rmrMinRrRatio ?? 1.5} onChange={(v: any) => handleInputChange('rmrMinRrRatio', v)} min={1.0} max={5.0} />
-              </div>
-            </div>
-
-            {/* SECTION 4: Volatility Compression Breakout (VCB) */}
-            <div className="bg-[#0E1117]/90 border border-[#30363D] rounded-xl p-5 space-y-4">
-              <div className="flex items-center justify-between border-b border-[#30363D] pb-3">
-                <div>
-                  <h3 className="text-sm font-bold text-gray-100 flex items-center gap-2">
-                    <span>⚡ Volatility Compression Breakout (VCB) Parameters</span>
-                  </h3>
-                  <p className="text-[11px] text-gray-400 mt-0.5">Bollinger/Keltner compression squeeze and breakout expansion engine.</p>
-                </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  BREAKOUT / SQUEEZE
-                </span>
-              </div>
-
-              <div className="divide-y divide-[#30363D]/40">
-                <InputRow label="Compression Lookback Bars" desc="Candles evaluated for low volatility compression (default: 10)" value={settings.vcbCompressionLookback ?? 10} onChange={(v: any) => handleInputChange('vcbCompressionLookback', v)} min={5} max={50} />
-                <InputRow label="Consolidation Window ATR Multiplier" desc="Range ceiling for tight consolidation structure (default: 3.0)" value={settings.vcbWindowAtrMult ?? 3.0} onChange={(v: any) => handleInputChange('vcbWindowAtrMult', v)} min={1.0} max={6.0} />
-                <InputRow label="Checklist Minimum Score" desc="Minimum required 11-point gate checklist score to trigger breakout entry (default: 8)" value={settings.vcbChecklistMinScore ?? 8} onChange={(v: any) => handleInputChange('vcbChecklistMinScore', v)} min={5} max={11} />
-                <InputRow label="Minimum Risk-to-Reward Ratio" desc="Required asymmetric target multiple for breakout (default: 2.0)" value={settings.vcbMinRrRatio ?? 2.0} onChange={(v: any) => handleInputChange('vcbMinRrRatio', v)} min={1.5} max={5.0} />
-                
-                {/* 5 Institutional Breakout Pillars Controls */}
-                <InputRow label="Local ATR Expansion Ratio (Min)" desc="Minimum current ATR / 20-period ATR MA expansion ratio to confirm market expansion (default: 1.20)" value={settings.vcbLocalAtrRatioMin ?? 1.20} onChange={(v: any) => handleInputChange('vcbLocalAtrRatioMin', v)} min={1.0} max={2.5} />
-                <InputRow label="Entry Timeframe Minimum ADX" desc="Minimum ADX on entry timeframe ensuring trend momentum over range chop (default: 20)" value={settings.vcbLocalAdxMin ?? 20} onChange={(v: any) => handleInputChange('vcbLocalAdxMin', v)} min={10} max={40} />
-                <InputRow label="Breakout Volume Multiplier (RVOL)" desc="Minimum breakout volume relative to 20-period volume SMA (default: 1.50x)" value={settings.vcbBreakoutVolumeMin ?? 1.50} onChange={(v: any) => handleInputChange('vcbBreakoutVolumeMin', v)} min={1.1} max={3.5} />
-                <InputRow label="Candle Body Dominance Ratio" desc="Minimum real body / total candle range to reject indecision wicks (default: 0.60 = 60%)" value={settings.vcbBodyDominanceMin ?? 0.60} onChange={(v: any) => handleInputChange('vcbBodyDominanceMin', v)} min={0.40} max={0.90} />
-                <InputRow label="Close Location Value" desc="Minimum close location within candle range in breakout direction (default: 0.70 = top/bottom 30%)" value={settings.vcbCloseLocationMin ?? 0.70} onChange={(v: any) => handleInputChange('vcbCloseLocationMin', v)} min={0.50} max={0.95} />
-                <InputRow label="HTF Minimum ADX" desc="Minimum ADX on Higher Timeframe to ensure institutional directional bias (default: 20)" value={settings.vcbHtfAdxMin ?? 20} onChange={(v: any) => handleInputChange('vcbHtfAdxMin', v)} min={10} max={40} />
-                <InputRow label="Bullish RSI Minimum" desc="Minimum RSI on entry timeframe for Long breakouts (default: 55)" value={settings.vcbRsiBullishMin ?? 55} onChange={(v: any) => handleInputChange('vcbRsiBullishMin', v)} min={50} max={70} />
-                <InputRow label="Bearish RSI Maximum" desc="Maximum RSI on entry timeframe for Short breakdowns (default: 45)" value={settings.vcbRsiBearishMax ?? 45} onChange={(v: any) => handleInputChange('vcbRsiBearishMax', v)} min={30} max={50} />
-
-                <div className="flex justify-between items-center py-3">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-200">Require Liquidity Sweep Before Breakout</span>
-                    <span className="text-[11px] text-gray-500">Only execute breakouts that cleared liquidity before the expansion candle.</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleInputChange('vcbRequireSweep', !settings.vcbRequireSweep)}
-                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
-                      settings.vcbRequireSweep !== false ? 'bg-emerald-600' : 'bg-gray-700'
-                    }`}
-                  >
-                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.vcbRequireSweep !== false ? 'transform translate-x-6' : ''}`} />
-                  </button>
-                </div>
-
-                <div className="flex justify-between items-center py-3">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-200">Require Retest into Consolidation</span>
-                    <span className="text-[11px] text-gray-500">Wait for price pullback into breakout zone before entry.</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleInputChange('vcbRequireRetest', !settings.vcbRequireRetest)}
-                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
-                      settings.vcbRequireRetest !== false ? 'bg-emerald-600' : 'bg-gray-700'
-                    }`}
-                  >
-                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.vcbRequireRetest !== false ? 'transform translate-x-6' : ''}`} />
-                  </button>
-                </div>
-
-                <div className="flex justify-between items-center py-3">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-200">Require HTF Structure Alignment</span>
-                    <span className="text-[11px] text-gray-500">Require Higher-High/Higher-Low for Longs, Lower-High/Lower-Low for Shorts on HTF.</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleInputChange('vcbRequireHtfStructure', settings.vcbRequireHtfStructure !== false ? false : true)}
-                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
-                      settings.vcbRequireHtfStructure !== false ? 'bg-emerald-600' : 'bg-gray-700'
-                    }`}
-                  >
-                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.vcbRequireHtfStructure !== false ? 'transform translate-x-6' : ''}`} />
-                  </button>
-                </div>
-
-                <div className="flex justify-between items-center py-3">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-200">Require Retest or Follow-Through Confirmation</span>
-                    <span className="text-[11px] text-gray-500">Only execute after broken level retest holds OR decisive follow-through candle confirmed.</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleInputChange('vcbRequireFollowThroughOrRetest', settings.vcbRequireFollowThroughOrRetest !== false ? false : true)}
-                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
-                      settings.vcbRequireFollowThroughOrRetest !== false ? 'bg-emerald-600' : 'bg-gray-700'
-                    }`}
-                  >
-                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.vcbRequireFollowThroughOrRetest !== false ? 'transform translate-x-6' : ''}`} />
-                  </button>
-                </div>
-
-                <div className="flex justify-between items-center py-3">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-200">Enforce London & NY Kill Zones</span>
-                    <span className="text-[11px] text-gray-500">Only execute breakouts during London (07:00-11:00 UTC) and NY (13:00-17:00 UTC) sessions.</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleInputChange('vcbEnforceKillZone', !settings.vcbEnforceKillZone)}
-                    className={`w-12 h-6 rounded-full transition-colors flex items-center px-1 shrink-0 ${
-                      settings.vcbEnforceKillZone ? 'bg-emerald-600' : 'bg-gray-700'
-                    }`}
-                  >
-                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${settings.vcbEnforceKillZone ? 'transform translate-x-6' : ''}`} />
-                  </button>
-                </div>
-              </div>
-            </div>
+            {/* Canonical Unified Strategy Parameters */}
+            <UnifiedStrategyParams
+              settings={settings}
+              onUpdateSetting={handleInputChange}
+              onSaveDirect={(partial) => {
+                onUpdateSettings({ ...settings, ...partial });
+              }}
+              sourceContext="settings"
+            />
           </div>
         )}
 

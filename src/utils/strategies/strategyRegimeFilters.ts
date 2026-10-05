@@ -617,9 +617,17 @@ export function extractSmcRegimeMetrics(candles: any[], htfCandles?: any[] | nul
     }
   }
 
-  // MSS, displacement, FVG
-  const lastBarBody = Math.abs(lastBar.close - lastBar.open);
-  const displacementConfirmed = lastBarBody >= atr * 0.45 && (lastBar.volume || 0) >= currentVolSma * 1.15;
+  // MSS, displacement, FVG — check recent 5 bars for displacement candle
+  let displacementConfirmed = false;
+  const dispLookback = Math.min(5, lastIdx + 1);
+  for (let i = lastIdx; i > lastIdx - dispLookback; i--) {
+    const c = candles[i];
+    const bBody = Math.abs(c.close - c.open);
+    if (bBody >= atr * 0.45 && (c.volume || 0) >= currentVolSma * 1.15) {
+      displacementConfirmed = true;
+      break;
+    }
+  }
   const mssConfirmed = sweepDetected; // MSS triggered following sweep
 
   // FVG check on last 3 bars

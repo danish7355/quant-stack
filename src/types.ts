@@ -234,6 +234,8 @@ export interface SystemHealth {
   engine: 'RUNNING' | 'PAUSED' | 'ERROR';
   marketData: 'CONNECTED' | 'STALE' | 'DISCONNECTED';
   userStream: 'CONNECTED' | 'STALE' | 'DISCONNECTED';
+  userStreamDetails?: string;
+  userStreamMode?: 'PAPER' | 'LIVE';
   lastReconciliationAt: string;
   tradingBlocked: boolean;
   blockReason?: string;

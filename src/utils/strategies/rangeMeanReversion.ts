@@ -7,6 +7,7 @@ import { calculateSMA, calculateEMA, calculateATR, calculateADX, calculateRSI } 
 import { allowEMAMeanReversion, extractEmaMeanReversionRegimeMetrics, type EmaMeanReversionRegimeMetrics } from './strategyRegimeFilters.js';
 export { allowEMAMeanReversion, extractEmaMeanReversionRegimeMetrics };
 export type { EmaMeanReversionRegimeMetrics };
+export { evaluateRangeRegimeV1, type RangeRegimeSignal, type RangeRegimeResult, type RangeRegimeRejection, type ExtraRangeLevels, type RangeStateHistory } from './rangeRegime/index.js';
 
 export interface BollingerBandsResult {
   middle: number[];
@@ -536,7 +537,7 @@ export function evaluateRangeMeanReversion(
   // - Closed back inside range (c0.close > range.rangeLow)
   // - RSI was oversold (< 35) during the test/rejection sequence
   // - Trigger: c0 breaks rejection candle high (c0.close > c1.high or c0.high > c1.high)
-  const sweptLow = Math.min(c2.low, c1.low, c0.low) <= range.rangeLow * 1.01 || c1.close < bb.lower[len - 1] || c2.close < bb.lower[Math.max(0, len - 2)];
+  const sweptLow = Math.min(c2.low, c1.low, c0.low) <= range.rangeLow * 1.01 || c1.low < bb.lower[len - 1] || c2.low < bb.lower[Math.max(0, len - 2)];
   const closedInsideLow = c0.close > range.rangeLow;
   const isRsiOversold = minRecentRsi <= rsiOversold;
   const isBullishTrigger = c0.close > c1.high || (c0.high > c1.high && c0.close > c0.open);
@@ -546,7 +547,7 @@ export function evaluateRangeMeanReversion(
   // - Closed back inside range (c0.close < range.rangeHigh)
   // - RSI was overbought (> 65) during the test/rejection sequence
   // - Trigger: c0 breaks rejection candle low (c0.close < c1.low or c0.low < c1.low)
-  const sweptHigh = Math.max(c2.high, c1.high, c0.high) >= range.rangeHigh * 0.99 || c1.close > bb.upper[len - 1] || c2.close > bb.upper[Math.max(0, len - 2)];
+  const sweptHigh = Math.max(c2.high, c1.high, c0.high) >= range.rangeHigh * 0.99 || c1.high > bb.upper[len - 1] || c2.high > bb.upper[Math.max(0, len - 2)];
   const closedInsideHigh = c0.close < range.rangeHigh;
   const isRsiOverbought = maxRecentRsi >= rsiOverbought;
   const isBearishTrigger = c0.close < c1.low || (c0.low < c1.low && c0.close < c0.open);
@@ -641,7 +642,13 @@ export function evaluateRangeMeanReversion(
     }
   }
 
-  const scaledScore = Math.min(99, Math.round((breakdown.total / 11) * 100));
+  // Ensure setups meeting or exceeding minScore clear the standard auto-trade threshold (>= 75)
+  const passingRatio = breakdown.total >= minScore
+    ? (breakdown.total - minScore) / Math.max(1, 11 - minScore)
+    : breakdown.total / Math.max(1, minScore);
+  const scaledScore = breakdown.total >= minScore
+    ? Math.min(99, Math.round(75 + passingRatio * 24))
+    : Math.min(74, Math.round((breakdown.total / 11) * 100));
 
   return {
     direction,

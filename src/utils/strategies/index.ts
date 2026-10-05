@@ -137,6 +137,7 @@ export {
   type RangeMeanReversionConfig,
   type RangeMeanReversionSignalResult,
 } from './rangeMeanReversion.js';
+export * from './rangeRegime/index.js';
 export {
   detectEarlyCoilBreakout,
   type EarlyCoilConfig,

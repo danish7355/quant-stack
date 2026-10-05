@@ -91,6 +91,11 @@ export default function GateManager({
       ...settings,
       disabledGates: currentDisabled,
     });
+    fetch('/api/bot/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disabledGates: currentDisabled })
+    }).catch((err) => console.warn('GateManager: Failed to persist gate toggle', err));
   };
 
   // Batch Preset Handlers (Trade Frequency Modes)
@@ -127,6 +132,15 @@ export default function GateManager({
       autoTradeThreshold: threshold,
       disabledGates: updatedDisabled,
     });
+    fetch('/api/bot/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tradeFrequency: freqMode,
+        autoTradeThreshold: threshold,
+        disabledGates: updatedDisabled,
+      })
+    }).catch((err) => console.warn('GateManager: Failed to persist preset settings', err));
   };
 
   // Get list of gates filtered by strategy and user search

@@ -156,13 +156,13 @@ export function evaluateEarlyCoilBreakout(
 ): EarlyCoilBreakoutMetrics | null {
   if (!candles || candles.length < 30) return null;
   
-  // Primary: Evaluate strict Two-Sided Coil Breakout with structural 5R target and dynamic user timeframe
+  // Primary: Evaluate strict Two-Sided Coil Breakout with structural 2R+ target and dynamic user timeframe
   const twoSidedSig = evaluateTwoSidedCoilBreakout(
     candles as any,
     [],
     {
       timeframe: (settings as any)?.timeframe || '15m',
-      minRrRatio: 5.0,
+      minRrRatio: (settings as any)?.earlyCoilMinRr ?? 2.0,
       aggressiveBreakoutMode: true
     }
   );

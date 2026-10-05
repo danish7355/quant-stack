@@ -126,8 +126,9 @@ export function SystemHealthPage({ initialHealth, onRefresh }: Props) {
         <StatusCard 
           title="User Stream (WS)" 
           status={health.userStream} 
+          badge={health.userStreamMode ? `${health.userStreamMode}` : (health.userStream === 'CONNECTED' ? 'ACTIVE' : undefined)}
           icon={RefreshCw} 
-          desc="Live position & balance order execution reports" 
+          desc={health.userStreamDetails || "Live position & balance order execution reports"} 
         />
         <StatusCard 
           title="Execution Gate Status" 

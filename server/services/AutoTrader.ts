@@ -14,18 +14,20 @@ import { recordSettingsAudit } from './SettingsAuditService.js';
 import { heatmapService } from './HeatmapService.js';
 import { reconciliationWorker } from './PositionReconciliationWorker.js';
 import { priceStream } from './PriceStream.js';
+import { marketBreadthService } from './MarketBreadthService.js';
 import { 
   calculateEMA, calculateATR, detectCompression, detectBreakout, 
   isFakeBreakout, scoreBreakout, applyTrendAndMomentumBonus, determineStopLoss, 
   calculateInitialTp, calculateVcbTargets, validateHigherTimeframeTrend,
   evaluateVcbChecklist, VcbChecklistResult
 } from '../../src/utils/strategies/volatilityCompression.js';
+import { evaluateVolatilityCompressionAdapter } from '../../src/utils/strategies/volatilityCompressionAdapter.js';
 import { evaluateTrendPullback, getHigherTimeframe } from '../../src/utils/strategies/trendPullback.js';
 import { evaluateSmc } from '../../src/utils/strategies/smcLiquidity.js';
 import { detectMacroRangeBreakout } from '../../src/utils/strategies/macroRange.js';
 import { evaluateEarlyCoilBreakout } from '../../src/utils/strategies/earlyCoilBreakout.js';
 import { evaluateTwoSidedCoilBreakout } from '../../src/utils/strategies/twoSidedCoilBreakout.js';
-import { evaluateRangeMeanReversion } from '../../src/utils/strategies/rangeMeanReversion.js';
+import { evaluateRangeMeanReversion, evaluateRangeRegimeV1, RangeRegimeSignal } from '../../src/utils/strategies/rangeMeanReversion.js';
 import { evaluateEmaGapPullback, checkReal3RRoom } from '../../src/utils/strategies/emaGapPullback.js';
 import { evaluateEma5PaVolume } from '../../src/utils/strategies/ema5PaVolume.js';
 import { evaluateTrendPullbackRetest, createTprState, TprState } from '../../src/utils/strategies/trendPullbackRetest.js';
@@ -66,6 +68,8 @@ import {
 export type ServerBotSettings = TradingSettings;
 
 export class AutoTrader {
+  public onSettingsChanged?: (settings: ServerBotSettings) => void;
+
   private settings: ServerBotSettings = {
     ...CANONICAL_DEFAULT_SETTINGS,
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
@@ -211,16 +215,23 @@ export class AutoTrader {
   }
 
   /**
-   * Higher-Timeframe (1H) Directional Agreement Filter
+   * Higher-Timeframe Directional Agreement Filter
    */
   private async checkHtfAgreement(
     symbol: string, 
     direction: 'LONG' | 'SHORT'
-  ): Promise<{ passed: boolean; reason?: string; htfBias?: string }> {
+  ): Promise<{ passed: boolean; reason?: string; htfBias?: string; htfTimeframe?: string }> {
     try {
-      const htfKlines = await this.getKlines(symbol, '1h');
+      const bypass =
+        this.settings.useMtfAlignment === false ||
+        this.settings.bypassHtfAlignment === true ||
+        this.isGateDisabled('RISK_htfStructure') ||
+        this.isGateDisabled('EGP_htfTrend');
+
+      const targetHtf = this.settings.htfTimeframe || getHigherTimeframe(this.settings.timeframe || '15m');
+      const htfKlines = await this.getKlines(symbol, targetHtf);
       if (!htfKlines || htfKlines.length < 30) {
-        return { passed: true, htfBias: 'NEUTRAL' };
+        return { passed: true, htfBias: 'NEUTRAL', htfTimeframe: targetHtf };
       }
       const closedHtf = htfKlines.slice(0, -1);
       const closes = closedHtf.map(k => k.close);
@@ -237,21 +248,27 @@ export class AutoTrader {
         htfBias = 'BEARISH';
       }
 
+      if (bypass) {
+        return { passed: true, htfBias, htfTimeframe: targetHtf };
+      }
+
       if (direction === 'LONG' && htfBias === 'BEARISH') {
         return { 
           passed: false, 
-          reason: 'HTF 1H trend is BEARISH (Price & EMA21 < EMA50). Long signals vetoed.', 
-          htfBias 
+          reason: `HTF ${targetHtf} trend is BEARISH (Price & EMA21 < EMA50). Long signals vetoed.`, 
+          htfBias,
+          htfTimeframe: targetHtf
         };
       }
       if (direction === 'SHORT' && htfBias === 'BULLISH') {
         return { 
           passed: false, 
-          reason: 'HTF 1H trend is BULLISH (Price & EMA21 > EMA50). Short signals vetoed.', 
-          htfBias 
+          reason: `HTF ${targetHtf} trend is BULLISH (Price & EMA21 > EMA50). Short signals vetoed.`, 
+          htfBias,
+          htfTimeframe: targetHtf
         };
       }
-      return { passed: true, htfBias };
+      return { passed: true, htfBias, htfTimeframe: targetHtf };
     } catch (e) {
       return { passed: true, htfBias: 'NEUTRAL' };
     }
@@ -265,7 +282,8 @@ export class AutoTrader {
     closedKlines: any[],
     direction: 'LONG' | 'SHORT',
     currentPrice: number,
-    regime?: MarketRegimeType
+    regime?: MarketRegimeType,
+    strategy?: string
   ): { valid: boolean; reason?: string } {
     if (!closedKlines || closedKlines.length < 30) return { valid: true };
     const lastClosed = closedKlines[closedKlines.length - 1];
@@ -291,38 +309,18 @@ export class AutoTrader {
     const isRanging = regime === 'RANGING';
 
     // 1. REVERSAL / EXHAUSTION REGIME STRUCTURE
-    if (isExhaustion) {
+    if (isExhaustion || strategy === 'SMC_LIQUIDITY_SWEEP' || strategy === 'LIQUIDITY_SWEEP_REVERSAL') {
       // Must not be runaway explosive blow-off beyond 4.0 ATR
       if (overextensionAtr > 4.0) {
         return { valid: false, reason: `Runaway parabolic trend: ${(overextensionAtr).toFixed(2)} ATR from EMA50 exceeds 4.0 ATR safety cap` };
-      }
-      // Exhaustion requires minimum dislocation (at least 1.3 ATR from EMA50)
-      if (overextensionAtr < 1.3) {
-        return { valid: false, reason: `Insufficient extension for exhaustion reversal: ${(overextensionAtr).toFixed(2)} ATR < 1.3 ATR` };
-      }
-
-      if (direction === 'SHORT') {
-        // Fading top: rejection wick on top
-        const range = lastClosed.high - lastClosed.low;
-        const upperWick = lastClosed.high - Math.max(lastClosed.open, lastClosed.close);
-        if (range > 0 && (upperWick / range) < 0.25 && lastClosed.close >= lastClosed.high - (0.15 * range)) {
-          return { valid: false, reason: 'Exhaustion structure invalid: No upper rejection wick on top-fade bar' };
-        }
-      } else if (direction === 'LONG') {
-        // Fading bottom: rejection wick on bottom
-        const range = lastClosed.high - lastClosed.low;
-        const lowerWick = Math.min(lastClosed.open, lastClosed.close) - lastClosed.low;
-        if (range > 0 && (lowerWick / range) < 0.25 && lastClosed.close <= lastClosed.low + (0.15 * range)) {
-          return { valid: false, reason: 'Exhaustion structure invalid: No lower rejection wick on bottom-fade bar' };
-        }
       }
       return { valid: true };
     }
 
     // 2. RANGE MEAN REVERSION REGIME STRUCTURE
-    if (isRanging) {
+    if (isRanging || strategy === 'BINANCE_COMPOSITE' || strategy === 'RANGE_MEAN_REVERSION' || strategy === 'RANGE_REGIME_V1' || strategy === 'EMA5_REJECTION_RECLAIM_V1' || strategy === 'EMA5_REJECTION_RECLAIM') {
       if (overextensionAtr > 2.5) {
-        return { valid: false, reason: `Range invalidation: Price broke out ${(overextensionAtr).toFixed(2)} ATR from EMA50` };
+        return { valid: false, reason: `Runaway parabolic trend: ${(overextensionAtr).toFixed(2)} ATR from EMA50 exceeds 2.5 ATR safety cap` };
       }
       return { valid: true };
     }
@@ -373,6 +371,156 @@ export class AutoTrader {
     }
 
     return { valid: true };
+  }
+
+  /**
+   * Universal Higher-Timeframe (HTF) Structure & Trend Alignment Gate
+   * Evaluates across ALL strategies during execution and scanning.
+   * Checks:
+   * 1. Bypass toggles (useMtfAlignment === false, bypassHtfAlignment === true, RISK_htfStructure, EGP_htfTrend)
+   * 2. Local Structure Validity (checkStructureValid for swing invalidation, runaway parabolic overextension, and heavy opposing volume)
+   * 3. HTF Trend Alignment (EMA20/50/200 Stack & Slope on HTF)
+   * 4. HTF Key Level Obstacle Clearance (Avoid longing directly into immediate HTF resistance or shorting into support)
+   */
+  private async checkUniversalHtfStructureAlignment(
+    symbol: string,
+    direction: 'LONG' | 'SHORT',
+    currentPrice: number,
+    closedKlines: any[],
+    strategy?: string,
+    regime?: MarketRegimeType
+  ): Promise<{
+    passed: boolean;
+    bypassed: boolean;
+    reason?: string;
+    htfBias?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    htfTimeframe?: string;
+    obstacleDistancePct?: number;
+  }> {
+    // 1. Bypass Checks
+    const isBypassed =
+      this.settings.useMtfAlignment === false ||
+      this.settings.bypassHtfAlignment === true ||
+      this.isGateDisabled('RISK_htfStructure') ||
+      (strategy === 'EMA_GAP_PULLBACK' && this.isGateDisabled('EGP_htfTrend'));
+
+    if (isBypassed) {
+      return { passed: true, bypassed: true, htfBias: 'NEUTRAL' };
+    }
+
+    // 2. Local Structure Validity Check
+    const localStructure = this.checkStructureValid(closedKlines, direction, currentPrice, regime, strategy);
+    if (!localStructure.valid) {
+      return {
+        passed: false,
+        bypassed: false,
+        reason: `Local Structure Invalidation: ${localStructure.reason}`,
+        htfBias: 'NEUTRAL'
+      };
+    }
+
+    // 3. Determine Higher Timeframe (User setting or dynamic mapping)
+    const targetHtf = this.settings.htfTimeframe || getHigherTimeframe(this.settings.timeframe || '15m');
+    const htfKlines = await this.getKlines(symbol, targetHtf);
+
+    // If HTF klines insufficient, pass gracefully without false positive kills
+    if (!htfKlines || htfKlines.length < 30) {
+      return { passed: true, bypassed: false, htfBias: 'NEUTRAL', htfTimeframe: targetHtf };
+    }
+
+    const closedHtf = htfKlines.slice(0, -1);
+    const closes = closedHtf.map(k => k.close);
+    const highs = closedHtf.map(k => k.high);
+    const lows = closedHtf.map(k => k.low);
+    const lastClose = closes[closes.length - 1];
+
+    const ema20Series = calculateEMA(closes, 20);
+    const ema50Series = calculateEMA(closes, 50);
+    const ema20 = ema20Series[ema20Series.length - 1] || lastClose;
+    const ema50 = ema50Series[ema50Series.length - 1] || lastClose;
+
+    // HTF Trend Bias Determination
+    let htfBias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+    if (lastClose > ema50 && ema20 > ema50) {
+      htfBias = 'BULLISH';
+    } else if (lastClose < ema50 && ema20 < ema50) {
+      htfBias = 'BEARISH';
+    }
+
+    const isMeanReversion =
+      strategy === 'BINANCE_COMPOSITE' ||
+      strategy === 'RANGE_MEAN_REVERSION' ||
+      strategy === 'RANGE_REGIME_V1' ||
+      strategy === 'EMA5_REJECTION_RECLAIM' ||
+      strategy === 'EMA5_REJECTION_RECLAIM_V1' ||
+      strategy === 'SMC_LIQUIDITY_SWEEP' ||
+      strategy === 'LIQUIDITY_SWEEP_REVERSAL' ||
+      (regime && (regime === 'RANGING' || regime.startsWith('EXHAUSTION')));
+
+    // Trend Direction Agreement
+    if (!isMeanReversion) {
+      // Continuation strategies MUST agree with HTF trend
+      if (direction === 'LONG' && htfBias === 'BEARISH') {
+        return {
+          passed: false,
+          bypassed: false,
+          reason: `HTF (${targetHtf}) trend is BEARISH (Price ${lastClose.toFixed(4)} < EMA50 ${ema50.toFixed(4)} & EMA20 < EMA50). Long signals vetoed.`,
+          htfBias,
+          htfTimeframe: targetHtf
+        };
+      }
+      if (direction === 'SHORT' && htfBias === 'BULLISH') {
+        return {
+          passed: false,
+          bypassed: false,
+          reason: `HTF (${targetHtf}) trend is BULLISH (Price ${lastClose.toFixed(4)} > EMA50 ${ema50.toFixed(4)} & EMA20 > EMA50). Short signals vetoed.`,
+          htfBias,
+          htfTimeframe: targetHtf
+        };
+      }
+    }
+
+    // 4. HTF Key Level Obstacle Avoidance (Check clearance to nearest HTF swing barrier)
+    const recentHtfBars = closedHtf.slice(-25);
+    const htfHighs = recentHtfBars.map(k => k.high);
+    const htfLows = recentHtfBars.map(k => k.low);
+    const htfResistance = Math.max(...htfHighs);
+    const htfSupport = Math.min(...htfLows);
+
+    if (direction === 'LONG') {
+      const distToResistancePct = (htfResistance - currentPrice) / currentPrice;
+      // If price is within less than 0.25% of major HTF resistance, long entry has no room
+      if (distToResistancePct > 0 && distToResistancePct < 0.0025) {
+        return {
+          passed: false,
+          bypassed: false,
+          reason: `HTF (${targetHtf}) major resistance barrier directly ahead at ${htfResistance.toFixed(4)} (clearance ${(distToResistancePct * 100).toFixed(2)}% < 0.25%)`,
+          htfBias,
+          htfTimeframe: targetHtf,
+          obstacleDistancePct: distToResistancePct
+        };
+      }
+    } else {
+      const distToSupportPct = (currentPrice - htfSupport) / currentPrice;
+      // If price is within less than 0.25% of major HTF support, short entry has no room
+      if (distToSupportPct > 0 && distToSupportPct < 0.0025) {
+        return {
+          passed: false,
+          bypassed: false,
+          reason: `HTF (${targetHtf}) major support barrier directly ahead at ${htfSupport.toFixed(4)} (clearance ${(distToSupportPct * 100).toFixed(2)}% < 0.25%)`,
+          htfBias,
+          htfTimeframe: targetHtf,
+          obstacleDistancePct: distToSupportPct
+        };
+      }
+    }
+
+    return {
+      passed: true,
+      bypassed: false,
+      htfBias,
+      htfTimeframe: targetHtf
+    };
   }
 
 
@@ -566,17 +714,32 @@ export class AutoTrader {
     return this.settings;
   }
 
+  public isGateDisabled(gateId: string): boolean {
+    if (!this.settings || !this.settings.disabledGates) return false;
+    // When the operator sets a specific autoTradeThreshold (> 50), the score threshold is strictly active and never bypassed
+    if ((gateId === 'RISK_threshold' || gateId === 'risk_threshold') && (this.settings.autoTradeThreshold ?? 70) > 50) {
+      return false;
+    }
+    const dg = this.settings.disabledGates as Record<string, boolean>;
+    if (dg[gateId] === true) return true;
+    if (dg[gateId.toLowerCase()] === true) return true;
+    if (dg[gateId.toUpperCase()] === true) return true;
+    if (gateId.startsWith('RISK_') && dg[gateId.replace(/^RISK_/, 'risk_')] === true) return true;
+    if (gateId.startsWith('risk_') && dg[gateId.replace(/^risk_/, 'RISK_')] === true) return true;
+    return false;
+  }
+
   private syncRiskManagerSettings() {
     riskManager.updateSettings({
       limitPct: this.settings.dailyLossLimitPct,
       maxLosses: this.settings.maxConsecutiveLosses ?? 4,
       maxExposure: this.settings.maxPortfolioExposurePct ?? 100,
       maxTrades: this.settings.maxConcurrentTrades,
-      bypassMaxPositions: this.settings.bypassMaxPositions,
+      bypassMaxPositions: this.settings.bypassMaxPositions || this.isGateDisabled('RISK_maxConcurrent'),
       bypassMaxConsecutiveLosses: this.settings.bypassMaxConsecutiveLosses,
-      bypassDailyLossLimit: this.settings.bypassDailyLossLimit,
+      bypassDailyLossLimit: this.settings.bypassDailyLossLimit || this.isGateDisabled('RISK_dailyLoss'),
       bypassExposureLimit: this.settings.bypassExposureLimit,
-      bypassLiquidationBuffer: this.settings.bypassLiquidationBuffer,
+      bypassLiquidationBuffer: this.settings.bypassLiquidationBuffer || this.isGateDisabled('CR_stopDistance'),
       minLiquidationBuffer: this.settings.minLiquidationBuffer ?? 1.3,
       maxSinglePositionExposureMult: this.settings.maxSinglePositionExposureMult ?? 5,
       minStopDistancePct: this.settings.minStopDistancePct ?? 0.005,
@@ -627,6 +790,8 @@ export class AutoTrader {
 
     // 3. Record audit trail of changes
     recordSettingsAudit(before, this.settings, this.settings.settingsVersion || 1, source);
+
+    this.onSettingsChanged?.(this.settings);
 
     return this.settings;
   }
@@ -701,6 +866,22 @@ export class AutoTrader {
           }
         }
       }
+
+      // Cumulative 100-Coin Market Breadth Override (prevents single-coin BTC bias from locking the market)
+      try {
+        const breadth100 = await marketBreadthService.getCumulativeBreadth(this.settings.coinCount || 100, forceRefresh);
+        if (breadth100) {
+          // If BTC alone was flagged RED/PANIC, but the broader 100 coins have resilient breadth:
+          if ((!isTradable || macroColor === 'RED' || finalRegime === 'PANIC') && breadth100.pctAboveEma50 >= 40 && breadth100.expansionPct < 30) {
+            isTradable = true;
+            macroColor = 'AMBER';
+            finalLabel = `Resilient Market (${breadth100.consensusRegime})`;
+            finalDetails = `BTC indicates caution (${btcMacro.label}), but Top 100 Coins Breadth is resilient (${breadth100.pctAboveEma50}% > EMA50, ${breadth100.rangePct}% Range) — Altcoin entries permitted`;
+          } else {
+            finalDetails += ` | Top 100 Consensus: ${breadth100.consensusRegime} (${breadth100.pctAboveEma50}% > EMA50)`;
+          }
+        }
+      } catch (e) {}
 
       const result: GlobalMarketRegime = {
         regime: finalRegime,
@@ -841,25 +1022,15 @@ export class AutoTrader {
         }
       } catch (e) {}
 
-      // 4. Breadth approximation: % of top perps above 4H EMA50
-      let breadthTop30PctAboveEma50 = 55;
+      // 4. Cumulative Top 100 Coins Breadth & Market-Wide Regime
+      let marketBreadth100 = undefined;
       try {
-        const sampleSymbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'SUIUSDT'];
-        let aboveCount = 0;
-        for (const s of sampleSymbols) {
-          const p = priceStream.getPrice(s);
-          const klines = await this.getKlines(s, '4h');
-          if (klines && klines.length >= 50) {
-            const closes = klines.map(k => k.close);
-            const ema50 = calculateEMA(closes, 50);
-            const lastEma50 = ema50[ema50.length - 1];
-            if ((p || closes[closes.length - 1]) > lastEma50) {
-              aboveCount++;
-            }
-          }
-        }
-        breadthTop30PctAboveEma50 = Math.round((aboveCount / sampleSymbols.length) * 100);
-      } catch (e) {}
+        marketBreadth100 = await marketBreadthService.getCumulativeBreadth(this.settings.coinCount || 100, forceRefresh);
+      } catch (e) {
+        console.warn('[AutoTrader] Failed to fetch 100-coin market breadth:', e);
+      }
+
+      const breadthTop30PctAboveEma50 = marketBreadth100 ? marketBreadth100.pctAboveEma50 : 55;
 
       const result = analyzeThreeLayerRegime({
         btc1d: {
@@ -894,6 +1065,7 @@ export class AutoTrader {
         openInterest4h,
         takerCvd4h,
         breadthTop30PctAboveEma50,
+        marketBreadth100,
         lastConfirmedRegime: this.threeLayerHysteresis.lastConfirmedRegime,
         lastCandidateRegime: this.threeLayerHysteresis.lastCandidateRegime,
         consecutiveCandles: this.threeLayerHysteresis.consecutiveCandles,
@@ -1094,9 +1266,11 @@ export class AutoTrader {
       const activePositions = positionMonitor.getActivePositions();
       const openCount = activePositions.length;
       
-      if (openCount >= this.settings.maxConcurrentTrades) {
+      // Gate 3: Max Concurrent Trades (checks bypass & GateManager disabledGates)
+      const bypassMax = this.settings.bypassMaxPositions || this.isGateDisabled('RISK_maxConcurrent');
+      if (!bypassMax && openCount >= this.settings.maxConcurrentTrades) {
         this.lastScanCompletedTime = Date.now();
-        this.lastScanSummary = `Max concurrent trades reached (${openCount}/${this.settings.maxConcurrentTrades}). Standby until position exits.`;
+        this.lastScanSummary = `Max concurrent trades reached (${openCount}/${this.settings.maxConcurrentTrades}). Standby until position exits. [Toggle "Bypass Max Positions" to override]`;
         return; // Max concurrent trade limit reached
       }
 
@@ -1111,10 +1285,14 @@ export class AutoTrader {
           if (topFavored) {
             const currentRegime = this.settings.coindcxActiveRegime;
             const currentActive = this.settings.activeStrategy;
-            const targetActive = topFavored.strategyId as any;
+            // Prefer strategy auto-selected by Cumulative Top 100 Coins Breadth
+            const targetActive = (threeLayer.marketBreadth100?.favoredStrategy || topFavored.strategyId) as any;
 
             if (currentRegime !== confirmedRegime || currentActive !== targetActive) {
-              console.log(`🧭 [3-Layer Quantitative Regime Auto-Sync] Regime: ${currentRegime} -> ${confirmedRegime}. Auto-activating favored strategy: ${targetActive} (${topFavored.name})`);
+              const consensusInfo = threeLayer.marketBreadth100
+                ? `Top 100 Consensus: ${confirmedRegime} (${threeLayer.marketBreadth100.consensusConfidence}% confidence)`
+                : `Regime: ${confirmedRegime}`;
+              console.log(`🧭 [Cumulative 100-Coin Regime Auto-Sync] ${consensusInfo}. Auto-activating favored strategy: ${targetActive} (${topFavored.name})`);
               const updatedSettings = {
                 ...this.settings,
                 activeStrategy: targetActive,
@@ -1176,11 +1354,8 @@ export class AutoTrader {
         }
       }
 
-      // 1. Fetch top volume futures tickers (supports up to 100 coins adhering to user settings)
-      const userCoinCount = typeof this.settings.coinCount === 'number' && this.settings.coinCount > 0
-        ? this.settings.coinCount
-        : 100;
-      const scanLimit = Math.min(Math.max(userCoinCount, 5), 100);
+      // 1. Fetch top volume futures tickers
+      const scanLimit = this.settings.coinCount || 25;
       const topSymbols = await this.getTopVolumeSymbols(scanLimit);
       scannedCount = topSymbols.length;
       
@@ -1188,7 +1363,7 @@ export class AutoTrader {
         const cooldownExpiry = this.tradeCooldowns.get(symbol) || 0;
         const inCooldown = Date.now() < cooldownExpiry;
 
-        if (activePositions.some(p => p.symbol === symbol) || this.pendingSymbols.has(symbol) || inCooldown) {
+        if (activePositions.some(p => p.symbol === symbol) || this.pendingSymbols.has(symbol) || (!this.settings.bypassTradeCooldown && inCooldown)) {
           continue;
         }
 
@@ -1213,9 +1388,13 @@ export class AutoTrader {
         // this.logBinanceVsDelta(symbol, klines, currentPrice);
 
         
+        const effectiveThreshold = this.settings.autoTradeThreshold ?? 70;
+        const thresholdBypassed = this.isGateDisabled('RISK_threshold') && effectiveThreshold <= 50;
+        const minPassScore = thresholdBypassed ? 50 : effectiveThreshold;
+
         if (signal) {
-           const passes = signal.score >= this.settings.autoTradeThreshold;
-           this.logScanResult(symbol, signal.direction, passes, signal.reason || (passes ? 'Passed' : 'Low Score'), currentPrice, signal.sl, signal.tp1, signal.score, {
+           const passes = signal.score >= minPassScore;
+           this.logScanResult(symbol, signal.direction, passes, signal.reason || (passes ? `Passed (Score: ${signal.score} >= ${minPassScore})` : `Score ${signal.score} < threshold ${minPassScore}`), currentPrice, signal.sl, signal.tp1, signal.score, {
              strategy: (signal as any).strategy || this.settings.activeStrategy,
              marketRegime: (signal as any).marketRegime,
              macroColor: (signal as any).macroColor,
@@ -1228,11 +1407,12 @@ export class AutoTrader {
            this.logScanResult(symbol, 'NEUTRAL', false, 'Failed Technical Gates (5 EMA Gap/VCB/Composite)', currentPrice, 0, 0, 0);
         }
         
-        if (signal && signal.score >= this.settings.autoTradeThreshold) {
+        if (signal && signal.score >= minPassScore) {
           qualifiedCount++;
 
           const currentTotal = positionMonitor.getActivePositions().length + this.pendingSymbols.size;
-          if (!this.settings.bypassMaxPositions && currentTotal >= this.settings.maxConcurrentTrades) {
+          const bypassMax = this.settings.bypassMaxPositions || this.isGateDisabled('RISK_maxConcurrent');
+          if (!bypassMax && currentTotal >= this.settings.maxConcurrentTrades) {
             this.logScanResult(symbol, signal.direction, false, `Risk Manager: Max concurrent trades reached (${currentTotal}/${this.settings.maxConcurrentTrades})`, currentPrice, signal.sl, signal.tp1, signal.score, {
               strategy: (signal as any).strategy || this.settings.activeStrategy,
               marketRegime: (signal as any).marketRegime,
@@ -1409,7 +1589,10 @@ export class AutoTrader {
                 structuralRR: (signal as any).structuralRR
               });
               await positionMonitor.refreshOpenPositions();
-              this.tradeCooldowns.set(symbol, Date.now() + this.getCooldownMs(this.settings.timeframe));
+              // Respect bypassTradeCooldown — use setTradeCooldown() for consistency
+              if (!this.settings.bypassTradeCooldown) {
+                this.tradeCooldowns.set(symbol, Date.now() + this.getCooldownMs(this.settings.timeframe));
+              }
               if ((signal as any).signalTime) {
                   this.lastTradedSignal.set(symbol, (signal as any).signalTime);
               }
@@ -1476,12 +1659,14 @@ export class AutoTrader {
       tradeQuality?: string;
       strategyPriority?: string;
       structuralRR?: number;
-      gateResults?: Record<string, 'PASS' | 'FAIL' | 'NOT_CHECKED'>;
+      gateResults?: Record<string, 'PASS' | 'FAIL' | 'NOT_CHECKED' | 'BYPASS'>;
       rejectionReasons?: string[];
       spreadBps?: number | null;
       volumePercentile?: number | null;
       adx?: number | null;
       atr?: number | null;
+      htfBias?: string;
+      htfTimeframe?: string;
     }
   ) {
     try {
@@ -1502,6 +1687,8 @@ export class AutoTrader {
         strategyPriority: extra?.strategyPriority || null,
         structuralRR: extra?.structuralRR ?? null,
         gateResults: extra?.gateResults || null,
+        htfBias: extra?.htfBias || null,
+        htfTimeframe: extra?.htfTimeframe || null,
         strategy_version: 'v2.2_regime_gated'
       }) + '\n';
       fs.appendFileSync(path.join(process.cwd(), 'data', 'scan_logs.jsonl'), logLine);
@@ -1677,7 +1864,43 @@ export class AutoTrader {
     }
   }
 
-  
+  public getMinStructuralRR(strategy?: string, regime?: string): number {
+    switch (strategy) {
+      case 'EMA5_PA_VOLUME_V1':
+        return this.settings.ema5PaRiskReward ?? 1.5;
+      case 'EMA5_EXACT_ENTRY_V1':
+        return this.settings.eeeRiskReward ?? 1.5;
+      case 'EMA5_REJECTION_RECLAIM_V1':
+        return this.settings.errRiskReward ?? 1.5;
+      case 'EMA5_EXACT_ENTRY_V2':
+        return Math.min(2.0, this.settings.eev2MinNetRr ?? 2.0);
+      case 'TREND_PULLBACK':
+        return this.settings.tpbMinRrRatio ?? 1.5;
+      case 'TREND_PULLBACK_RETEST':
+        return this.settings.tprRrRatio ?? 2.0;
+      case 'TWO_SIDED_COIL_BREAKOUT':
+        return (this.settings as any)?.coilMinRrRatio ?? 2.0;
+      case 'EARLY_COIL_BREAKOUT':
+        return (this.settings as any)?.earlyCoilMinRr ?? 2.0;
+      case 'MACRO_RANGE_BREAKOUT':
+        return 2.0;
+      case 'SMC_LIQUIDITY_SWEEP':
+      case 'LIQUIDITY_SWEEP_REVERSAL':
+        return this.settings.smcRrRatio ?? 1.8;
+      case 'BINANCE_COMPOSITE':
+      case 'RANGE_REGIME_V1':
+      case 'RANGE_MEAN_REVERSION':
+        return Math.min(1.8, (this.settings.rangeConfig as any)?.tp2MinR ?? 1.8);
+      case 'EMA_GAP_PULLBACK':
+        return Math.min(2.5, (this.settings as any)?.egpTargetRr ?? 2.5);
+      default:
+        if (regime && (regime === 'RANGING' || regime.startsWith('EXHAUSTION'))) {
+          return 1.8;
+        }
+        return 2.5;
+    }
+  }
+
   private async evaluateSignal(symbol: string, klines: any[], currentPrice: number) {
     if (!this.isEngineActive()) return null;
     if (klines.length < 35) return null;
@@ -1700,15 +1923,32 @@ export class AutoTrader {
     const closedPrice = lastClosedCandle?.close || currentPrice;
     const classification = classifyMarketRegime(closedKlines, closedPrice, globalRegime.macroColor);
     
-    // Stand-Aside Rule: Skip if local regime is non-tradable (dead volume, extreme panic, or messy chop)
-    if (classification.regime === 'PANIC' || classification.regime === 'DEAD_VOLUME' || classification.regime === 'TRANSITION') {
-      return null;
-    }
-    
-    // Stand-Aside Rule: Strict regime confidence threshold (>= 60 for GREEN, >= 65 for AMBER)
-    const minConfidenceThreshold = globalRegime.macroColor === 'AMBER' ? 65 : 60;
-    if (classification.confidence < minConfidenceThreshold) {
-      return null;
+    const bypassStandAside = this.settings.bypassRegimeStandAside || 
+      this.isGateDisabled('COMPOSITE_g3') || 
+      this.isGateDisabled('EGP_g1') ||
+      this.isGateDisabled('VCB_g1');
+
+    if (!bypassStandAside) {
+      // Stand-Aside Rule: Skip if local regime is non-tradable (dead volume, extreme panic, or messy chop)
+      if (classification.regime === 'PANIC' || classification.regime === 'DEAD_VOLUME' || classification.regime === 'TRANSITION') {
+        this.logScanResult(symbol, 'NEUTRAL', false, `Stand-aside: Local regime ${classification.regime} (untradeable)`, currentPrice, 0, 0, 0, {
+          marketRegime: classification.label,
+          macroColor: globalRegime.macroColor,
+          regimeConfidence: classification.confidence
+        });
+        return null;
+      }
+      
+      // Stand-Aside Rule: Strict regime confidence threshold (>= 60 for GREEN, >= 65 for AMBER)
+      const minConfidenceThreshold = globalRegime.macroColor === 'AMBER' ? 65 : 60;
+      if (classification.confidence < minConfidenceThreshold) {
+        this.logScanResult(symbol, 'NEUTRAL', false, `Stand-aside: Low regime confidence ${classification.confidence.toFixed(0)}% (min: ${minConfidenceThreshold}%)`, currentPrice, 0, 0, 0, {
+          marketRegime: classification.label,
+          macroColor: globalRegime.macroColor,
+          regimeConfidence: classification.confidence
+        });
+        return null;
+      }
     }
 
     // 2. Evaluate Strategy Routing (pass closed-candle classification to prevent dead code)
@@ -1717,10 +1957,13 @@ export class AutoTrader {
     
     // 3. Structural R:R Filter >= 3.0 (Stand-Aside Rule)
     const risk = Math.abs(currentPrice - rawSignal.sl);
-    // Enforce minimum stop distance (e.g., 0.3% to avoid spread/noise stops)
-    const minDistance = currentPrice * 0.003;
-    if (risk < minDistance) {
-      this.logScanResult(symbol, rawSignal.direction, false, `Gate Failed: SL too tight (Risk: ${(risk/currentPrice*100).toFixed(2)}%, Min: 0.3%)`, currentPrice, rawSignal.sl, rawSignal.tp1, rawSignal.score, {
+    // Enforce minimum stop distance (checks bypassLiquidationBuffer & GateManager CR_stopDistance)
+    const bypassStop = this.settings.bypassLiquidationBuffer || this.isGateDisabled('CR_stopDistance');
+    const rawMinPct = this.settings.minStopDistancePct ?? 0.003;
+    const minStopPct = rawMinPct > 0.02 ? 0.005 : rawMinPct; // Guard against corrupt 5% input, defaulting to 0.5%
+    const minDistance = currentPrice * minStopPct;
+    if (!bypassStop && risk < minDistance) {
+      this.logScanResult(symbol, rawSignal.direction, false, `Gate Failed: SL too tight (Risk: ${(risk/currentPrice*100).toFixed(2)}%, Min: ${(minStopPct*100).toFixed(2)}%)`, currentPrice, rawSignal.sl, rawSignal.tp1, rawSignal.score, {
         strategy: rawSignal.strategy,
         marketRegime: classification.label,
         macroColor: globalRegime.macroColor,
@@ -1733,9 +1976,52 @@ export class AutoTrader {
     const reward3 = Math.abs(rawSignal.tp3 - currentPrice);
     const structuralRR = reward3 / risk;
     
-    const minRR = (rawSignal.strategy === 'EMA_GAP_PULLBACK' || rawSignal.strategy === 'BINANCE_COMPOSITE' || classification.regime.startsWith('EXHAUSTION') || classification.regime === 'RANGING') ? 2.5 : 3.0;
-    if (structuralRR < minRR) {
-      return null; // structural target doesn't offer adequate R:R. Stand aside in cash!
+    const bypassRr = this.isGateDisabled('COMPOSITE_g7') || 
+                     this.isGateDisabled('EGP_g5') || 
+                     this.isGateDisabled('CR_structuralRR') || 
+                     this.isGateDisabled('RISK_structuralRR') || 
+                     !!(this.settings as any).bypassStructuralRR;
+    const minRR = this.getMinStructuralRR(rawSignal.strategy, classification.regime);
+    // Allow epsilon tolerance (0.05) to avoid float rounding rejects on exact targets
+    if (!bypassRr && structuralRR < (minRR - 0.05)) {
+      this.logScanResult(symbol, rawSignal.direction, false, `Gate Failed: Structural R:R ${structuralRR.toFixed(2)} < min ${minRR} (TP3 target inadequate)`, currentPrice, rawSignal.sl, rawSignal.tp1, rawSignal.score, {
+        strategy: rawSignal.strategy,
+        marketRegime: classification.label,
+        macroColor: globalRegime.macroColor,
+        regimeConfidence: classification.confidence
+      });
+      return null;
+    }
+
+    // 3b. Universal Higher-Timeframe (HTF) Structure Alignment Gate
+    const htfAlign = await this.checkUniversalHtfStructureAlignment(
+      symbol,
+      rawSignal.direction,
+      currentPrice,
+      closedKlines,
+      rawSignal.strategy,
+      classification.regime
+    );
+
+    if (!htfAlign.passed) {
+      this.logScanResult(
+        symbol,
+        rawSignal.direction,
+        false,
+        `Gate Failed: Universal HTF Structure Alignment (${htfAlign.htfTimeframe || 'HTF'}) - ${htfAlign.reason}`,
+        currentPrice,
+        rawSignal.sl,
+        rawSignal.tp1,
+        rawSignal.score,
+        {
+          strategy: rawSignal.strategy,
+          marketRegime: classification.label,
+          macroColor: globalRegime.macroColor,
+          regimeConfidence: classification.confidence,
+          htfBias: htfAlign.htfBias
+        }
+      );
+      return null;
     }
 
     // 4. Badges / Monitoring Metadata Computation
@@ -1771,7 +2057,11 @@ export class AutoTrader {
       tradeQuality,
       strategyPriority,
       rrStruct,
-      structuralRR: parseFloat(structuralRR.toFixed(2))
+      structuralRR: parseFloat(structuralRR.toFixed(2)),
+      higherTimeframeAligned: htfAlign.bypassed ? 'BYPASS' : (htfAlign.passed ? 'PASS' : 'FAIL'),
+      structureValid: 'PASS',
+      htfBias: htfAlign.htfBias,
+      htfTimeframe: htfAlign.htfTimeframe
     };
   }
 
@@ -1805,14 +2095,18 @@ export class AutoTrader {
       return null;
     }
 
+    // Closed candles only — strip the in-progress candle for all indicator/PA logic
+    const closedKlines = klines && klines.length > 1 ? klines.slice(0, -1) : (klines || []);
+
     // 1. 5 EMA Gap Pullback algorithm
     if (strat === 'EMA_GAP_PULLBACK') {
       const htfCandles = await this.getKlines(symbol, '1h');
-      const sig = evaluateEmaGapPullback(klines, htfCandles, currentPrice, this.settings as any);
+      const closedHtf = htfCandles && htfCandles.length > 1 ? htfCandles.slice(0, -1) : (htfCandles || []);
+      const sig = evaluateEmaGapPullback(closedKlines, closedHtf, currentPrice, this.settings as any);
       if (!sig || sig.status !== 'confirmed') return null;
       // Optional Real 3R room validation if enabled in settings
       if (this.settings.egpRequireReal3RRoom) {
-        const roomResult = checkReal3RRoom(sig.entry!, sig.stop!, sig.direction!, htfCandles);
+        const roomResult = checkReal3RRoom(sig.entry!, sig.stop!, sig.direction!, closedHtf);
         if (!roomResult.hasRoom) {
           this.logScanResult(symbol, sig.direction!, false,
             `Real 3R Room Failed: ${roomResult.reason}`,
@@ -1844,8 +2138,12 @@ export class AutoTrader {
 
     // 1b. EMA 5 Price Action Gap + Volume Strategy (Standalone Pure PA Engine)
     if (strat === 'EMA5_PA_VOLUME_V1') {
+      const klines5m = (this.settings.timeframe === '5m')
+        ? closedKlines
+        : ((await this.getKlines(symbol, '5m'))?.slice(0, -1) || closedKlines);
       const candles15m = await this.getKlines(symbol, '15m');
-      const sig = evaluateEma5PaVolume(klines, candles15m, {
+      const closed15m = candles15m && candles15m.length > 1 ? candles15m.slice(0, -1) : (candles15m || []);
+      const sig = evaluateEma5PaVolume(klines5m, closed15m, {
         version: this.settings.ema5PaVersion ?? 'C',
         minVolumeRatio: this.settings.ema5PaMinVolumeRatio ?? 1.10,
         minGapRangeRatio: this.settings.ema5PaMinGapRangeRatio ?? 0.20,
@@ -1878,21 +2176,45 @@ export class AutoTrader {
     
     // 2. Volatility Compression Breakout (VCB) Strategy - Primary canonical strategy
     if (strat === 'VOLATILITY_COMPRESSION' || strat === 'AUTO_REGIME') {
-      const sig = await this.evaluateVolatilityCompression(symbol, klines, currentPrice);
+      const sig = await this.evaluateVolatilityCompression(symbol, closedKlines, currentPrice);
       if (!sig) return null;
       return { ...sig, strategy: 'VOLATILITY_COMPRESSION', marketRegime: 'Consolidation Squeeze' };
     }
     
     // 3. Early Coil Breakout
     if (strat === 'EARLY_COIL_BREAKOUT') {
-      const sig = evaluateEarlyCoilBreakout(klines, this.settings as any);
+      const sig = evaluateEarlyCoilBreakout(closedKlines, this.settings as any);
       if (!sig) return null;
       return { ...sig, strategy: 'EARLY_COIL_BREAKOUT', marketRegime: 'Fractal Breakout' };
     }
 
+    // 3b. Two-Sided Coil Breakout
+    if (strat === 'TWO_SIDED_COIL_BREAKOUT') {
+      const sig = evaluateTwoSidedCoilBreakout(closedKlines as any, [], {
+        symbol,
+        timeframe: this.settings.timeframe || '15m',
+        minRrRatio: (this.settings as any)?.coilMinRrRatio ?? 2.0,
+        aggressiveBreakoutMode: true
+      });
+      if (!sig || !sig.status.startsWith('VALID')) return null;
+      return {
+        direction: sig.side as 'LONG' | 'SHORT',
+        score: sig.score,
+        atr: sig.coil?.atrAtCoil || (currentPrice * 0.015),
+        sl: sig.stop,
+        tp1: sig.target,
+        tp2: sig.target,
+        tp3: sig.target,
+        compressionHigh: sig.coilRange.high,
+        compressionLow: sig.coilRange.low,
+        reason: `${sig.setup} [1:${sig.rrRatio.toFixed(1)} RR] (${sig.status})`,
+        strategy: 'TWO_SIDED_COIL_BREAKOUT',
+        marketRegime: 'Coil Squeeze Breakout'
+      };
+    }
+
     // 4. Trend Pullback Strategy (5-pillar confirmation)
     if (strat === 'TREND_PULLBACK') {
-      const closedKlines = klines.slice(0, -1);
       const tradeTf = this.settings.timeframe || '15m';
       const htf = getHigherTimeframe(tradeTf);
       let htfKlines: any[] | null = null;
@@ -1925,7 +2247,7 @@ export class AutoTrader {
           allowShorts: this.settings.tpbAllowShorts !== false,
           minRrRatio: this.settings.tpbMinRrRatio || 1.5,
           minScore: this.settings.tpbMinScore || 8,
-          enforceRegimeFilter: true
+          enforceRegimeFilter: !this.settings.bypassRegimeStandAside && !this.isGateDisabled('TPB_g1') && ((this.settings as any).tpbEnforceRegimeFilter === true)
         }
       );
       if (!signal) return null;
@@ -1934,9 +2256,9 @@ export class AutoTrader {
 
     // 5. Macro Range Breakout
     if (strat === 'MACRO_RANGE_BREAKOUT') {
-      const atrSeries = calculateATR(klines, 14);
+      const atrSeries = calculateATR(closedKlines, 14);
       const currentAtr = atrSeries[atrSeries.length - 1];
-      const sig = detectMacroRangeBreakout(klines, currentPrice, currentAtr);
+      const sig = detectMacroRangeBreakout(closedKlines, currentPrice, currentAtr);
       if (!sig) return null;
       return { ...sig, strategy: 'MACRO_RANGE_BREAKOUT', marketRegime: 'Macro Accumulation' };
     }
@@ -1946,7 +2268,6 @@ export class AutoTrader {
       try {
         const htf = this.settings.smcHtfResolution || '1h';
         const htfCandles = await this.getKlines(symbol, htf);
-        const closedKlines = klines.slice(0, -1);
         const closedHtf = htfCandles ? htfCandles.slice(0, -1) : null;
         const sig = evaluateSmc(closedKlines, closedHtf, currentPrice, {
           htfResolution: htf,
@@ -1962,10 +2283,12 @@ export class AutoTrader {
           atrStopMult: this.settings.smcAtrStopMult,
           rrRatio: this.settings.smcRrRatio,
           strictHtfRegime: this.settings.smcStrictHtfRegime,
-          enforceRegimeFilter: true,
+          enforceRegimeFilter: !this.settings.bypassRegimeStandAside && !this.isGateDisabled('SMC_g1') && ((this.settings as any).smcEnforceRegimeFilter === true),
           symbol
         });
-        if (sig && sig.score >= this.settings.autoTradeThreshold) {
+        const effectiveThreshold = this.settings.autoTradeThreshold ?? 70;
+        const smcThreshold = (this.isGateDisabled('RISK_threshold') && effectiveThreshold <= 50) ? 50 : effectiveThreshold;
+        if (sig && sig.score >= smcThreshold) {
           // If price is currently inside the FVG+OB entry zone, execute immediately!
           const inZone = currentPrice >= sig.entryZoneMin * 0.999 && currentPrice <= sig.entryZoneMax * 1.001;
           if (inZone) {
@@ -1995,7 +2318,7 @@ export class AutoTrader {
 
     // 7. Ranging Mean-Reversion Strategy
     if (strat === 'BINANCE_COMPOSITE' || strat === 'RANGE_MEAN_REVERSION') {
-      const compSig = this.evaluateCompositeStrategy(klines, currentPrice);
+      const compSig = await this.evaluateCompositeStrategy(symbol, closedKlines, currentPrice);
       if (!compSig) return null;
       return { ...compSig, strategy: 'BINANCE_COMPOSITE', marketRegime: 'Ranging [1:3 R:R Mean-Reversion]' };
     }
@@ -2062,8 +2385,10 @@ export class AutoTrader {
     if (strat === 'EMA5_REJECTION_RECLAIM_V1') {
       if (this.settings.errEnabled === false) return null;
       // Closed 5m candles only — strip the in-progress candle
-      const closedKlines = klines.slice(0, -1);
-      if (closedKlines.length < 30) return null;
+      const klines5m = (this.settings.timeframe === '5m')
+        ? closedKlines
+        : ((await this.getKlines(symbol, '5m'))?.slice(0, -1) || closedKlines);
+      if (klines5m.length < 30) return null;
 
       // Get live 15m candles for regime structure
       const klines15m = await this.getKlines(symbol, '15m');
@@ -2075,7 +2400,7 @@ export class AutoTrader {
       const errState = this.errStates.get(symbol)!;
 
       const sig = evaluateEma5RejectionReclaim(
-        closedKlines,
+        klines5m,
         closedKlines15m,
         {
           emaLength: this.settings.errEmaLength ?? 5,
@@ -2124,8 +2449,10 @@ export class AutoTrader {
     if (strat === 'EMA5_EXACT_ENTRY_V1') {
       if (this.settings.eeeEnabled === false) return null;
       // Closed 5m candles only — strip the in-progress candle
-      const closedKlines = klines.slice(0, -1);
-      if (closedKlines.length < 25) return null;
+      const klines5m = (this.settings.timeframe === '5m')
+        ? closedKlines
+        : ((await this.getKlines(symbol, '5m'))?.slice(0, -1) || closedKlines);
+      if (klines5m.length < 25) return null;
 
       // Get live 15m candles for regime structure
       const klines15m = await this.getKlines(symbol, '15m');
@@ -2137,7 +2464,7 @@ export class AutoTrader {
       const eeeState = this.eeeStates.get(symbol)!;
 
       const sig = evaluateEma5ExactEntry(
-        closedKlines,
+        klines5m,
         closedKlines15m,
         {
           emaLength: this.settings.eeeEmaLength ?? 5,
@@ -2179,8 +2506,10 @@ export class AutoTrader {
     if (strat === 'EMA5_EXACT_ENTRY_V2') {
       if (this.settings.eev2Enabled === false) return null;
       // Closed 5m candles only — strip the in-progress candle
-      const closedKlines = klines.slice(0, -1);
-      if (closedKlines.length < 200) return null;
+      const klines5m = (this.settings.timeframe === '5m')
+        ? closedKlines
+        : ((await this.getKlines(symbol, '5m'))?.slice(0, -1) || closedKlines);
+      if (klines5m.length < 200) return null;
 
       // Get live 15m, 1h, and 1D candles for HTF alignment and levels
       const klines15m = await this.getKlines(symbol, '15m');
@@ -2195,7 +2524,7 @@ export class AutoTrader {
       const activePositionsCount = positionMonitor.getActivePositions().filter(p => p.symbol === symbol).length;
 
       const sig = evaluateEma5ExactEntryV2({
-        candles5m: closedKlines.map(k => ({
+        candles5m: klines5m.map(k => ({
           time: k.openTime || k.time,
           open: k.open,
           high: k.high,
@@ -2382,7 +2711,8 @@ export class AutoTrader {
     const closedCandleTime = lastClosed.time;
 
     const globalRegime = cachedGlobalRegime || await this.getGlobalRegime();
-    if (!globalRegime.isTradable || globalRegime.macroColor === 'RED') {
+    // Respect useGlobalBtcFilter toggle — same logic as in evaluateSignal()
+    if (this.settings.useGlobalBtcFilter !== false && (!globalRegime.isTradable || globalRegime.macroColor === 'RED')) {
       return null;
     }
 
@@ -2535,7 +2865,7 @@ export class AutoTrader {
             allowShorts: this.settings.tpbAllowShorts !== false,
             minRrRatio: this.settings.tpbMinRrRatio || 1.5,
             minScore: this.settings.tpbMinScore || 8,
-            enforceRegimeFilter: true
+            enforceRegimeFilter: !this.settings.bypassRegimeStandAside && !this.isGateDisabled('TPB_g1') && ((this.settings as any).tpbEnforceRegimeFilter === true)
           }
         );
         if (pullbackSignal && (!candidate.direction || pullbackSignal.direction === candidate.direction)) {
@@ -2544,7 +2874,7 @@ export class AutoTrader {
       }
 
       if ((candidate.id === 'BINANCE_COMPOSITE' || candidate.id === 'RANGE_MEAN_REVERSION') && currentRegime === 'RANGING') {
-        const compositeSignal = this.evaluateCompositeStrategy(closedKlines, currentPrice);
+        const compositeSignal = await this.evaluateCompositeStrategy(symbol, closedKlines, currentPrice);
         if (compositeSignal) {
           pendingSignal = { ...compositeSignal, strategy: 'BINANCE_COMPOSITE' };
         }
@@ -2564,9 +2894,46 @@ export class AutoTrader {
         }
       }
 
+      if (candidate.id === 'TWO_SIDED_COIL_BREAKOUT' && currentRegime.startsWith('BREAKOUT')) {
+        const coilSig = evaluateTwoSidedCoilBreakout(closedKlines as any, [], {
+          symbol,
+          timeframe: this.settings.timeframe || '15m',
+          minRrRatio: (this.settings as any)?.coilMinRrRatio ?? 2.0,
+          aggressiveBreakoutMode: true
+        });
+        if (coilSig && coilSig.status.startsWith('VALID') && (!candidate.direction || coilSig.side === candidate.direction)) {
+          pendingSignal = {
+            direction: coilSig.side as 'LONG' | 'SHORT',
+            score: coilSig.score,
+            atr: coilSig.coil?.atrAtCoil || (currentPrice * 0.015),
+            sl: coilSig.stop,
+            tp1: coilSig.target,
+            tp2: coilSig.target,
+            tp3: coilSig.target,
+            compressionHigh: coilSig.coilRange.high,
+            compressionLow: coilSig.coilRange.low,
+            reason: `${coilSig.setup} [1:${coilSig.rrRatio.toFixed(1)} RR] (${coilSig.status})`,
+            strategy: 'TWO_SIDED_COIL_BREAKOUT',
+          };
+        }
+      }
+
+      if (candidate.id === 'MACRO_RANGE_BREAKOUT' && (currentRegime.startsWith('BREAKOUT') || currentRegime === 'RANGING')) {
+        const atrSeries = calculateATR(closedKlines, 14);
+        const currentAtr = atrSeries[atrSeries.length - 1];
+        const macroSig = detectMacroRangeBreakout(closedKlines, currentPrice, currentAtr);
+        if (macroSig && (!candidate.direction || macroSig.direction === candidate.direction)) {
+          pendingSignal = {
+            ...macroSig,
+            strategy: 'MACRO_RANGE_BREAKOUT'
+          };
+        }
+      }
+
       if (candidate.id === 'EMA_GAP_PULLBACK' && currentRegime.startsWith('TRENDING')) {
         const htfCandles = await this.getKlines(symbol, '1h');
-        const egpSignal = evaluateEmaGapPullback(closedKlines, htfCandles, currentPrice, this.settings as any);
+        const closedHtf = htfCandles && htfCandles.length > 1 ? htfCandles.slice(0, -1) : (htfCandles || []);
+        const egpSignal = evaluateEmaGapPullback(closedKlines, closedHtf, currentPrice, this.settings as any);
         if (egpSignal && egpSignal.status === 'confirmed' && (!candidate.direction || egpSignal.direction === candidate.direction)) {
           pendingSignal = {
             direction: egpSignal.direction!,
@@ -2583,8 +2950,12 @@ export class AutoTrader {
       }
 
       if (candidate.id === 'EMA5_PA_VOLUME_V1' && currentRegime.startsWith('TRENDING')) {
+        const klines5m = (this.settings.timeframe === '5m')
+          ? closedKlines
+          : ((await this.getKlines(symbol, '5m'))?.slice(0, -1) || closedKlines);
         const candles15m = await this.getKlines(symbol, '15m');
-        const sig = evaluateEma5PaVolume(closedKlines, candles15m, {
+        const closed15m = candles15m && candles15m.length > 1 ? candles15m.slice(0, -1) : (candles15m || []);
+        const sig = evaluateEma5PaVolume(klines5m, closed15m, {
           version: this.settings.ema5PaVersion ?? 'C',
           minVolumeRatio: this.settings.ema5PaMinVolumeRatio ?? 1.10,
           minGapRangeRatio: this.settings.ema5PaMinGapRangeRatio ?? 0.20,
@@ -2667,200 +3038,215 @@ export class AutoTrader {
         }
       }
 
-      if (candidate.id === 'EMA5_REJECTION_RECLAIM_V1' && currentRegime.startsWith('TRENDING')) {
-        if (this.settings.errEnabled !== false && closedKlines.length >= 30) {
-          const klines15m = await this.getKlines(symbol, '15m');
-          const closedKlines15m = klines15m ? klines15m.slice(0, -1) : [];
+      if (candidate.id === 'EMA5_REJECTION_RECLAIM_V1' && (currentRegime.startsWith('TRENDING') || currentRegime === 'RANGING' || currentRegime.startsWith('EXHAUSTION'))) {
+        if (this.settings.errEnabled !== false) {
+          const klines5m = (this.settings.timeframe === '5m')
+            ? closedKlines
+            : ((await this.getKlines(symbol, '5m'))?.slice(0, -1) || closedKlines);
+          if (klines5m.length >= 30) {
+            const klines15m = await this.getKlines(symbol, '15m');
+            const closedKlines15m = klines15m ? klines15m.slice(0, -1) : [];
 
-          if (!this.errStates.has(symbol)) {
-            this.errStates.set(symbol, createErrState());
-          }
-          const errState = this.errStates.get(symbol)!;
+            if (!this.errStates.has(symbol)) {
+              this.errStates.set(symbol, createErrState());
+            }
+            const errState = this.errStates.get(symbol)!;
 
-          const errSig = evaluateEma5RejectionReclaim(
-            closedKlines,
-            closedKlines15m,
-            {
-              emaLength: this.settings.errEmaLength ?? 5,
-              volumeLookback: this.settings.errVolumeLookback ?? 20,
-              minVolumeRatio: this.settings.errMinVolumeRatio ?? 1.10,
-              minRejectionWickBodyRatio: this.settings.errMinRejectionWickBodyRatio ?? 1.0,
-              strongRejectionWickBodyRatio: this.settings.errStrongRejectionWickBodyRatio ?? 1.5,
-              minDisplacementBodyRatio: this.settings.errMinDisplacementBodyRatio ?? 0.50,
-              strongDisplacementBodyRatio: this.settings.errStrongDisplacementBodyRatio ?? 0.60,
-              minClosePosition: this.settings.errMinClosePosition ?? 0.65,
-              rejectionExpiryCandles: this.settings.errRejectionExpiryCandles ?? 3,
-              reclaimExpiryCandles: this.settings.errReclaimExpiryCandles ?? 2,
-              recentRangeLookback: this.settings.errRecentRangeLookback ?? 5,
-              maxDisplacementRangeRatio: this.settings.errMaxDisplacementRangeRatio ?? 2.0,
-              maxStopRangeRatio: this.settings.errMaxStopRangeRatio ?? 2.0,
-              maxEmaCrosses: this.settings.errMaxEmaCrosses ?? 3,
-              emaCrossLookback: this.settings.errEmaCrossLookback ?? 10,
-              requireStructureBreak: this.settings.errRequireStructureBreak ?? false,
-              allowReclaimAsDisplacement: this.settings.errAllowReclaimAsDisplacement ?? false,
-              riskReward: this.settings.errRiskReward ?? 1.5,
-              breakevenEnabled: this.settings.errBreakevenEnabled !== false,
-              breakevenTriggerR: this.settings.errBreakevenTriggerR ?? 1.0,
-              cooldownCandles: this.settings.errCooldownCandles ?? 2,
-            },
-            errState,
-            symbol
-          );
+            const errSig = evaluateEma5RejectionReclaim(
+              klines5m,
+              closedKlines15m,
+              {
+                emaLength: this.settings.errEmaLength ?? 5,
+                volumeLookback: this.settings.errVolumeLookback ?? 20,
+                minVolumeRatio: this.settings.errMinVolumeRatio ?? 1.10,
+                minRejectionWickBodyRatio: this.settings.errMinRejectionWickBodyRatio ?? 1.0,
+                strongRejectionWickBodyRatio: this.settings.errStrongRejectionWickBodyRatio ?? 1.5,
+                minDisplacementBodyRatio: this.settings.errMinDisplacementBodyRatio ?? 0.50,
+                strongDisplacementBodyRatio: this.settings.errStrongDisplacementBodyRatio ?? 0.60,
+                minClosePosition: this.settings.errMinClosePosition ?? 0.65,
+                rejectionExpiryCandles: this.settings.errRejectionExpiryCandles ?? 3,
+                reclaimExpiryCandles: this.settings.errReclaimExpiryCandles ?? 2,
+                recentRangeLookback: this.settings.errRecentRangeLookback ?? 5,
+                maxDisplacementRangeRatio: this.settings.errMaxDisplacementRangeRatio ?? 2.0,
+                maxStopRangeRatio: this.settings.errMaxStopRangeRatio ?? 2.0,
+                maxEmaCrosses: this.settings.errMaxEmaCrosses ?? 3,
+                emaCrossLookback: this.settings.errEmaCrossLookback ?? 10,
+                requireStructureBreak: this.settings.errRequireStructureBreak ?? false,
+                allowReclaimAsDisplacement: this.settings.errAllowReclaimAsDisplacement ?? false,
+                riskReward: this.settings.errRiskReward ?? 1.5,
+                breakevenEnabled: this.settings.errBreakevenEnabled !== false,
+                breakevenTriggerR: this.settings.errBreakevenTriggerR ?? 1.0,
+                cooldownCandles: this.settings.errCooldownCandles ?? 2,
+              },
+              errState,
+              symbol
+            );
 
-          if (errSig && !errSig.rejectionReason && (!candidate.direction || errSig.direction === candidate.direction)) {
-            pendingSignal = {
-              direction: errSig.direction,
-              score: errSig.setupScore,
-              atr: errSig.metrics.recentAverageRange || 0,
-              sl: errSig.sl,
-              tp1: errSig.tp1,
-              tp2: errSig.tp2,
-              tp3: errSig.tp3,
-              signalTime: errSig.candleTime,
-              reason: errSig.reason,
-            };
+            if (errSig && !errSig.rejectionReason && (!candidate.direction || errSig.direction === candidate.direction)) {
+              pendingSignal = {
+                direction: errSig.direction,
+                score: errSig.setupScore,
+                atr: errSig.metrics.recentAverageRange || 0,
+                sl: errSig.sl,
+                tp1: errSig.tp1,
+                tp2: errSig.tp2,
+                tp3: errSig.tp3,
+                signalTime: errSig.candleTime,
+                reason: errSig.reason,
+              };
+            }
           }
         }
       }
 
       if (candidate.id === 'EMA5_EXACT_ENTRY_V2' && currentRegime.startsWith('TRENDING')) {
-        if (this.settings.eev2Enabled !== false && closedKlines.length >= 200) {
-          const klines15m = await this.getKlines(symbol, '15m');
-          const closedKlines15m = klines15m ? klines15m.slice(0, -1) : [];
+        if (this.settings.eev2Enabled !== false) {
+          const klines5m = (this.settings.timeframe === '5m')
+            ? closedKlines
+            : ((await this.getKlines(symbol, '5m'))?.slice(0, -1) || closedKlines);
+          if (klines5m.length >= 200) {
+            const klines15m = await this.getKlines(symbol, '15m');
+            const closedKlines15m = klines15m ? klines15m.slice(0, -1) : [];
 
-          const klines1h = await this.getKlines(symbol, '1h');
-          const closedKlines1h = klines1h ? klines1h.slice(0, -1) : [];
+            const klines1h = await this.getKlines(symbol, '1h');
+            const closedKlines1h = klines1h ? klines1h.slice(0, -1) : [];
 
-          const klines1d = await this.getKlines(symbol, '1d');
-          const closedKlines1d = klines1d ? klines1d.slice(0, -1) : [];
+            const klines1d = await this.getKlines(symbol, '1d');
+            const closedKlines1d = klines1d ? klines1d.slice(0, -1) : [];
 
-          const activePositionsCount = positionMonitor.getActivePositions().filter(p => p.symbol === symbol).length;
+            const activePositionsCount = positionMonitor.getActivePositions().filter(p => p.symbol === symbol).length;
 
-          const eev2Sig = evaluateEma5ExactEntryV2({
-            candles5m: closedKlines.map(k => ({
-              time: k.openTime || k.time,
-              open: k.open,
-              high: k.high,
-              low: k.low,
-              close: k.close,
-              volume: k.volume,
-              closeTime: k.closeTime,
-            })),
-            candles15m: closedKlines15m.map(k => ({
-              time: k.openTime || k.time,
-              open: k.open,
-              high: k.high,
-              low: k.low,
-              close: k.close,
-              volume: k.volume,
-              closeTime: k.closeTime,
-            })),
-            candles1h: closedKlines1h.map(k => ({
-              time: k.openTime || k.time,
-              open: k.open,
-              high: k.high,
-              low: k.low,
-              close: k.close,
-              volume: k.volume,
-              closeTime: k.closeTime,
-            })),
-            candles1d: closedKlines1d.map(k => ({
-              time: k.openTime || k.time,
-              open: k.open,
-              high: k.high,
-              low: k.low,
-              close: k.close,
-              volume: k.volume,
-              closeTime: k.closeTime,
-            })),
-            symbol,
-            config: {
-              entryMode: this.settings.eev2EntryMode ?? 'CLOSE_CONFIRM',
-              exitMode: this.settings.eev2ExitMode ?? 'LEVEL_LADDER',
-              beMode: this.settings.eev2BeMode ?? 'AFTER_TP1',
-              minVolumeRatio: this.settings.eev2MinVolumeRatio ?? 1.10,
-              regimePivotN: this.settings.eev2RegimePivotN ?? 3,
-              slBufferAvgRange: this.settings.eev2SlBufferAvgRange ?? 0.15,
-              maxStopAvgRange: this.settings.eev2MaxStopAvgRange ?? 2.0,
-              minStopAvgRange: this.settings.eev2MinStopAvgRange ?? 0.5,
-              maxFeeR: this.settings.eev2MaxFeeR ?? 0.20,
-              minNetRr: this.settings.eev2MinNetRr ?? 2.5,
-              tp1MinR: this.settings.eev2Tp1MinR ?? 1.5,
-              tp2MinR: this.settings.eev2Tp2MinR ?? 3.0,
-              minRoomR: this.settings.eev2MinRoomR ?? 1.0,
-              allowRrFallback: this.settings.eev2AllowRrFallback ?? false,
-              fallbackTpR: this.settings.eev2FallbackTpR ?? 3.0,
-              maxEntryDriftR: this.settings.eev2MaxEntryDriftR ?? 0.15,
-            },
-            consumedKeys: this.eev2ConsumedKeys,
-            activePositionsCount,
-            marketDriftPrice: currentPrice,
-          });
+            const eev2Sig = evaluateEma5ExactEntryV2({
+              candles5m: klines5m.map(k => ({
+                time: k.openTime || k.time,
+                open: k.open,
+                high: k.high,
+                low: k.low,
+                close: k.close,
+                volume: k.volume,
+                closeTime: k.closeTime,
+              })),
+              candles15m: closedKlines15m.map(k => ({
+                time: k.openTime || k.time,
+                open: k.open,
+                high: k.high,
+                low: k.low,
+                close: k.close,
+                volume: k.volume,
+                closeTime: k.closeTime,
+              })),
+              candles1h: closedKlines1h.map(k => ({
+                time: k.openTime || k.time,
+                open: k.open,
+                high: k.high,
+                low: k.low,
+                close: k.close,
+                volume: k.volume,
+                closeTime: k.closeTime,
+              })),
+              candles1d: closedKlines1d.map(k => ({
+                time: k.openTime || k.time,
+                open: k.open,
+                high: k.high,
+                low: k.low,
+                close: k.close,
+                volume: k.volume,
+                closeTime: k.closeTime,
+              })),
+              symbol,
+              config: {
+                entryMode: this.settings.eev2EntryMode ?? 'CLOSE_CONFIRM',
+                exitMode: this.settings.eev2ExitMode ?? 'LEVEL_LADDER',
+                beMode: this.settings.eev2BeMode ?? 'AFTER_TP1',
+                minVolumeRatio: this.settings.eev2MinVolumeRatio ?? 1.10,
+                regimePivotN: this.settings.eev2RegimePivotN ?? 3,
+                slBufferAvgRange: this.settings.eev2SlBufferAvgRange ?? 0.15,
+                maxStopAvgRange: this.settings.eev2MaxStopAvgRange ?? 2.0,
+                minStopAvgRange: this.settings.eev2MinStopAvgRange ?? 0.5,
+                maxFeeR: this.settings.eev2MaxFeeR ?? 0.20,
+                minNetRr: this.settings.eev2MinNetRr ?? 2.5,
+                tp1MinR: this.settings.eev2Tp1MinR ?? 1.5,
+                tp2MinR: this.settings.eev2Tp2MinR ?? 3.0,
+                minRoomR: this.settings.eev2MinRoomR ?? 1.0,
+                allowRrFallback: this.settings.eev2AllowRrFallback ?? false,
+                fallbackTpR: this.settings.eev2FallbackTpR ?? 3.0,
+                maxEntryDriftR: this.settings.eev2MaxEntryDriftR ?? 0.15,
+              },
+              consumedKeys: this.eev2ConsumedKeys,
+              activePositionsCount,
+              marketDriftPrice: currentPrice,
+            });
 
-          if (eev2Sig && eev2Sig.signalStatus === 'VALID' && eev2Sig.direction && (!candidate.direction || eev2Sig.direction === candidate.direction)) {
-            if (eev2Sig.setupKey) {
-              this.eev2ConsumedKeys.add(eev2Sig.setupKey);
+            if (eev2Sig && eev2Sig.signalStatus === 'VALID' && eev2Sig.direction && (!candidate.direction || eev2Sig.direction === candidate.direction)) {
+              if (eev2Sig.setupKey) {
+                this.eev2ConsumedKeys.add(eev2Sig.setupKey);
+              }
+              pendingSignal = {
+                direction: eev2Sig.direction,
+                score: Math.min(100, Math.round(70 + eev2Sig.netRr * 5)),
+                atr: eev2Sig.avgRange || 0,
+                sl: eev2Sig.stopLoss,
+                tp1: eev2Sig.tp1,
+                tp2: eev2Sig.tp2,
+                tp3: eev2Sig.tp3,
+                signalTime: eev2Sig.timestamp,
+                reason: `EMA 5 Alert-Break [15m ${eev2Sig.regime15m}] | Net R:R ${eev2Sig.netRr.toFixed(2)} | FeeR ${eev2Sig.feeR.toFixed(3)}R`,
+              };
             }
-            pendingSignal = {
-              direction: eev2Sig.direction,
-              score: Math.min(100, Math.round(70 + eev2Sig.netRr * 5)),
-              atr: eev2Sig.avgRange || 0,
-              sl: eev2Sig.stopLoss,
-              tp1: eev2Sig.tp1,
-              tp2: eev2Sig.tp2,
-              tp3: eev2Sig.tp3,
-              signalTime: eev2Sig.timestamp,
-              reason: `EMA 5 Alert-Break [15m ${eev2Sig.regime15m}] | Net R:R ${eev2Sig.netRr.toFixed(2)} | FeeR ${eev2Sig.feeR.toFixed(3)}R`,
-            };
           }
         }
       }
 
       if (candidate.id === 'EMA5_EXACT_ENTRY_V1' && currentRegime.startsWith('TRENDING')) {
-        if (this.settings.eeeEnabled !== false && closedKlines.length >= 25) {
-          const klines15m = await this.getKlines(symbol, '15m');
-          const closedKlines15m = klines15m ? klines15m.slice(0, -1) : [];
+        if (this.settings.eeeEnabled !== false) {
+          const klines5m = (this.settings.timeframe === '5m')
+            ? closedKlines
+            : ((await this.getKlines(symbol, '5m'))?.slice(0, -1) || closedKlines);
+          if (klines5m.length >= 25) {
+            const klines15m = await this.getKlines(symbol, '15m');
+            const closedKlines15m = klines15m ? klines15m.slice(0, -1) : [];
 
-          if (!this.eeeStates.has(symbol)) {
-            this.eeeStates.set(symbol, createEeeState());
-          }
-          const eeeState = this.eeeStates.get(symbol)!;
+            if (!this.eeeStates.has(symbol)) {
+              this.eeeStates.set(symbol, createEeeState());
+            }
+            const eeeState = this.eeeStates.get(symbol)!;
 
-          const eeeSig = evaluateEma5ExactEntry(
-            closedKlines,
-            closedKlines15m,
-            {
-              emaLength: this.settings.eeeEmaLength ?? 5,
-              minVolumeRatio: this.settings.eeeMinVolumeRatio ?? 1.05,
-              minBodyRatio: this.settings.eeeMinBodyRatio ?? 0.50,
-              minClosePosition: this.settings.eeeMinClosePosition ?? 0.60,
-              maxEmaDistanceRatio: this.settings.eeeMaxEmaDistanceRatio ?? 1.2,
-              maxStopRangeRatio: this.settings.eeeMaxStopRangeRatio ?? 2.0,
-              maxEmaCrosses: this.settings.eeeMaxEmaCrosses ?? 3,
-              riskReward: this.settings.eeeRiskReward ?? 1.5,
-              exitMode: this.settings.eeeExitMode ?? 'RR',
-              breakevenEnabled: this.settings.eeeBreakevenEnabled !== false,
-              breakevenTriggerR: this.settings.eeeBreakevenTriggerR ?? 1.0,
-              cooldownCandles: this.settings.eeeCooldownCandles ?? 2,
-              slBufferPct: this.settings.eeeSlBufferPct ?? 0.0005,
-              requireOpposingSpace: this.settings.eeeRequireOpposingSpace !== false,
-            },
-            eeeState,
-            symbol
-          );
+            const eeeSig = evaluateEma5ExactEntry(
+              klines5m,
+              closedKlines15m,
+              {
+                emaLength: this.settings.eeeEmaLength ?? 5,
+                minVolumeRatio: this.settings.eeeMinVolumeRatio ?? 1.05,
+                minBodyRatio: this.settings.eeeMinBodyRatio ?? 0.50,
+                minClosePosition: this.settings.eeeMinClosePosition ?? 0.60,
+                maxEmaDistanceRatio: this.settings.eeeMaxEmaDistanceRatio ?? 1.2,
+                maxStopRangeRatio: this.settings.eeeMaxStopRangeRatio ?? 2.0,
+                maxEmaCrosses: this.settings.eeeMaxEmaCrosses ?? 3,
+                riskReward: this.settings.eeeRiskReward ?? 1.5,
+                exitMode: this.settings.eeeExitMode ?? 'RR',
+                breakevenEnabled: this.settings.eeeBreakevenEnabled !== false,
+                breakevenTriggerR: this.settings.eeeBreakevenTriggerR ?? 1.0,
+                cooldownCandles: this.settings.eeeCooldownCandles ?? 2,
+                slBufferPct: this.settings.eeeSlBufferPct ?? 0.0005,
+                requireOpposingSpace: this.settings.eeeRequireOpposingSpace !== false,
+              },
+              eeeState,
+              symbol
+            );
 
-          if (eeeSig && !eeeSig.rejectionReason && (!candidate.direction || eeeSig.direction === candidate.direction)) {
-            pendingSignal = {
-              direction: eeeSig.direction,
-              score: eeeSig.setupScore,
-              atr: eeeSig.metrics.recentAverageRange || 0,
-              sl: eeeSig.sl,
-              tp1: eeeSig.tp1,
-              tp2: eeeSig.tp2,
-              tp3: eeeSig.tp3,
-              signalTime: eeeSig.candleTime,
-              reason: eeeSig.reason,
-            };
+            if (eeeSig && !eeeSig.rejectionReason && (!candidate.direction || eeeSig.direction === candidate.direction)) {
+              pendingSignal = {
+                direction: eeeSig.direction,
+                score: eeeSig.setupScore,
+                atr: eeeSig.metrics.recentAverageRange || 0,
+                sl: eeeSig.sl,
+                tp1: eeeSig.tp1,
+                tp2: eeeSig.tp2,
+                tp3: eeeSig.tp3,
+                signalTime: eeeSig.candleTime,
+                reason: eeeSig.reason,
+              };
+            }
           }
         }
       }
@@ -2869,7 +3255,8 @@ export class AutoTrader {
         try {
           const htf = this.settings.smcHtfResolution || '1h';
           const htfCandles = await this.getKlines(symbol, htf);
-          const smcSig = evaluateSmc(closedKlines, htfCandles, currentPrice, {
+          const closedHtf = htfCandles && htfCandles.length > 1 ? htfCandles.slice(0, -1) : (htfCandles || []);
+          const smcSig = evaluateSmc(closedKlines, closedHtf, currentPrice, {
             htfResolution: htf,
             structureLen: this.settings.smcStructureLen,
             wickRatio: this.settings.smcWickRatio,
@@ -2883,7 +3270,7 @@ export class AutoTrader {
             atrStopMult: this.settings.smcAtrStopMult,
             rrRatio: this.settings.smcRrRatio,
             strictHtfRegime: this.settings.smcStrictHtfRegime,
-            enforceRegimeFilter: true,
+            enforceRegimeFilter: !this.settings.bypassRegimeStandAside && !this.isGateDisabled('SMC_g1') && ((this.settings as any).smcEnforceRegimeFilter === true),
             symbol
           });
           if (smcSig && (!candidate.direction || smcSig.direction === candidate.direction)) {
@@ -2907,7 +3294,7 @@ export class AutoTrader {
 
       if (pendingSignal) {
         // Evaluate the 10 Hard Vetoes BEFORE confidence scoring
-        const gateResults: Record<string, 'PASS' | 'FAIL' | 'NOT_CHECKED'> = {
+        const gateResults: Record<string, 'PASS' | 'FAIL' | 'NOT_CHECKED' | 'BYPASS'> = {
           dataFresh: 'PASS',
           regimeConfirmed: 'PASS',
           strategyAllowedInRegime: 'PASS',
@@ -2935,51 +3322,61 @@ export class AutoTrader {
           }
         }
 
-        // 2. Higher-Timeframe Agreement Gate (1H vs 15m)
-        const htfCheck = await this.checkHtfAgreement(symbol, pendingSignal.direction);
+        // 2. Universal Higher-Timeframe Agreement & Structure Gate
+        const htfCheck = await this.checkUniversalHtfStructureAlignment(
+          symbol, 
+          pendingSignal.direction, 
+          currentPrice, 
+          closedKlines, 
+          candidate.id, 
+          currentRegime
+        );
         if (!htfCheck.passed) {
           gateResults.higherTimeframeAligned = 'FAIL';
-          rejectionReasons.push(htfCheck.reason || 'HTF 1H trend contradicts signal direction');
-        } else {
-          gateResults.higherTimeframeAligned = 'PASS';
-        }
-
-        // 3. Structure Invalidation Gate (Swing Points, Overextension, Stack, Opposing Vol Spike)
-        const structureCheck = this.checkStructureValid(closedKlines, pendingSignal.direction, currentPrice, currentRegime);
-        if (!structureCheck.valid) {
           gateResults.structureValid = 'FAIL';
-          rejectionReasons.push(structureCheck.reason || 'Structure invalidation gate failed');
+          rejectionReasons.push(htfCheck.reason || 'HTF Structure alignment failed');
         } else {
+          gateResults.higherTimeframeAligned = htfCheck.bypassed ? 'BYPASS' : 'PASS';
           gateResults.structureValid = 'PASS';
         }
 
         // 4. Stop Loss Structural Validity Gate
         const risk = Math.abs(currentPrice - pendingSignal.sl);
-        const minRisk = currentPrice * 0.003; // At least 0.3% to avoid spread / noise stop-out
+        const bypassStop = this.settings.bypassLiquidationBuffer || this.isGateDisabled('CR_stopDistance');
+        const rawMinPct = this.settings.minStopDistancePct ?? 0.003;
+        const minStopPct = rawMinPct > 0.02 ? 0.005 : rawMinPct;
+        const minRisk = currentPrice * minStopPct; // At least 0.3%-0.5% to avoid spread / noise stop-out
         const maxRisk = currentPrice * 0.045; // Max 4.5% to avoid oversized risk
-        if (risk < minRisk) {
+        if (!bypassStop && risk < minRisk) {
           gateResults.stopStructurallyValid = 'FAIL';
-          rejectionReasons.push(`Stop loss too tight: ${(risk / currentPrice * 100).toFixed(2)}% < 0.3% minimum distance`);
+          rejectionReasons.push(`Stop loss too tight: ${(risk / currentPrice * 100).toFixed(2)}% < ${(minStopPct * 100).toFixed(2)}% minimum distance`);
         } else if (risk > maxRisk) {
           gateResults.stopStructurallyValid = 'FAIL';
           rejectionReasons.push(`Stop loss too wide: ${(risk / currentPrice * 100).toFixed(2)}% > 4.5% maximum allowable risk`);
         } else {
-          gateResults.stopStructurallyValid = 'PASS';
+          gateResults.stopStructurallyValid = (bypassStop && risk < minRisk) ? 'BYPASS' : 'PASS';
         }
 
-        // 5. Structural Risk-to-Reward Gate (>= 3.0 required, or >= 2.5 for EMA_GAP_PULLBACK / Mean Reversion, or >= 1.5 for EMA5_PA_VOLUME_V1)
-        const minRR = candidate.id === 'EMA5_PA_VOLUME_V1' ? 1.5 : (candidate.id === 'EMA_GAP_PULLBACK' || candidate.id === 'BINANCE_COMPOSITE' || candidate.id === 'RANGE_MEAN_REVERSION' || currentRegime.startsWith('EXHAUSTION') || currentRegime === 'RANGING') ? 2.5 : 3.0;
+        // 5. Structural Risk-to-Reward Gate
+        const minRR = this.getMinStructuralRR(candidate.id, currentRegime);
         const reward3 = Math.abs(pendingSignal.tp3 - currentPrice);
         const structuralRR = risk > 0 ? (reward3 / risk) : 0;
-        if (structuralRR < minRR) {
+        const bypassRr = this.isGateDisabled('COMPOSITE_g7') || 
+                         this.isGateDisabled('EGP_g5') || 
+                         this.isGateDisabled('CR_structuralRR') || 
+                         this.isGateDisabled('RISK_structuralRR') || 
+                         !!(this.settings as any).bypassStructuralRR;
+        if (!bypassRr && structuralRR < (minRR - 0.05)) {
           gateResults.rrValid = 'FAIL';
           rejectionReasons.push(`Structural RR ${structuralRR.toFixed(1)} is below required ${minRR.toFixed(1)}:1 threshold`);
         } else {
-          gateResults.rrValid = 'PASS';
+          gateResults.rrValid = (bypassRr && structuralRR < (minRR - 0.05)) ? 'BYPASS' : 'PASS';
         }
 
-        const allGatesPassed = Object.values(gateResults).every(res => res === 'PASS');
-        const minRequiredScore = globalRegime.macroColor === 'AMBER' ? 80 : (this.settings.autoTradeThreshold || 70);
+        const allGatesPassed = Object.values(gateResults).every(res => res === 'PASS' || res === 'BYPASS');
+        const effectiveThreshold = this.settings.autoTradeThreshold ?? 70;
+        const thresholdBypassed = this.isGateDisabled('RISK_threshold') && effectiveThreshold <= 50;
+        const minRequiredScore = thresholdBypassed ? 50 : (globalRegime.macroColor === 'AMBER' ? Math.max(80, effectiveThreshold) : effectiveThreshold);
         const scorePassed = pendingSignal.score >= minRequiredScore;
 
         if (allGatesPassed && scorePassed) {
@@ -3049,7 +3446,7 @@ export class AutoTrader {
    * 4. Structure-Based Tight Stop: stop_distance = 1.5 * (entry_price - band_entry)
    * 5. Fixed 1:3 R:R Target: target_price = entry_price ± 3 * stop_distance (TP1 at 20-SMA middle band)
    */
-  private evaluateCompositeStrategy(klines: any[], currentPrice: number): {
+  private async evaluateCompositeStrategy(symbol: string, klines: any[], currentPrice: number): Promise<{
     direction: 'LONG' | 'SHORT';
     score: number;
     atr: number;
@@ -3058,9 +3455,60 @@ export class AutoTrader {
     tp2: number;
     tp3: number;
     reason?: string;
-  } | null {
+  } | null> {
     if (!klines || klines.length < 35) return null;
 
+    // 1. Dual-Timeframe Range Regime V1 Evaluation
+    try {
+      const execTf = (this.settings.rangeConfig?.executionTF as string) || this.settings.timeframe || '5m';
+      const execKlines = (this.settings.timeframe === execTf)
+        ? klines
+        : ((await this.getKlines(symbol, execTf as any))?.slice(0, -1) || klines);
+
+      const directionTf = (this.settings.rangeConfig?.directionTF as string) || '1h';
+      const htfKlines = await this.getKlines(symbol, directionTf as any);
+      const closedHtfKlines = htfKlines ? htfKlines.slice(0, -1) : [];
+
+      if (closedHtfKlines.length >= 30 && execKlines.length >= 30) {
+        const v1Result = evaluateRangeRegimeV1(
+          execKlines,
+          closedHtfKlines,
+          currentPrice,
+          this.settings.rangeConfig || {},
+          {},
+          {}
+        );
+
+        if (v1Result) {
+          if (v1Result.rejectionReason) {
+            this.logScanResult(symbol, 'NEUTRAL', false, `Range Gate [${v1Result.rejectionReason}]: ${v1Result.reason}`, currentPrice, 0, 0, 0, {
+              strategy: 'BINANCE_COMPOSITE',
+              regimeConfidence: v1Result.regimeScore
+            });
+            return null;
+          }
+
+          const sig = v1Result as RangeRegimeSignal;
+          const slBuffer = typeof this.settings.rangeConfig?.slBufferAtr === 'number' ? (this.settings.rangeConfig.slBufferAtr as number) : 0.20;
+          const estAtr = slBuffer > 0 ? sig.riskPerUnit / slBuffer : currentPrice * 0.015;
+
+          return {
+            direction: sig.direction,
+            score: sig.score,
+            atr: estAtr,
+            sl: sig.sl,
+            tp1: sig.tp1,
+            tp2: sig.tp2,
+            tp3: sig.tp3,
+            reason: `Range Regime V1 (${sig.setupType}, ${sig.grade}): ${sig.reason}`,
+          };
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[AutoTrader] evaluateRangeRegimeV1 error for ${symbol}, falling back to legacy:`, err?.message || err);
+    }
+
+    // 2. Legacy Range Mean Reversion Fallback
     const sig = evaluateRangeMeanReversion(klines, currentPrice, {
       maxAdx: this.settings.rmrMaxAdx ?? 22,
       maxAtrRatio: this.settings.rmrMaxAtrRatio ?? 1.25,
@@ -3075,21 +3523,23 @@ export class AutoTrader {
       maxSmaSlope: (this.settings as any).rangeMaxSmaSlope || 0.02,
       stopMult: (this.settings as any).rangeStopMult || 1.5,
       targetRr: (this.settings as any).rangeTargetRr || 3.0,
-      enforceRegimeFilter: true
+      enforceRegimeFilter: !this.settings.bypassRegimeStandAside && !this.isGateDisabled('COMPOSITE_g3') && ((this.settings as any).rmrEnforceEmaFilter === true)
     });
 
-    if (!sig) return null;
+    if (sig) {
+      return {
+        direction: sig.direction,
+        score: sig.score,
+        atr: sig.atr,
+        sl: sig.sl,
+        tp1: sig.tp1,
+        tp2: sig.tp2,
+        tp3: sig.tp3,
+        reason: sig.reason,
+      };
+    }
 
-    return {
-      direction: sig.direction,
-      score: sig.score,
-      atr: sig.atr,
-      sl: sig.sl,
-      tp1: sig.tp1,
-      tp2: sig.tp2,
-      tp3: sig.tp3,
-      reason: sig.reason,
-    };
+    return null;
   }
 
 
@@ -3109,42 +3559,40 @@ export class AutoTrader {
     checklist?: VcbChecklistResult;
   } | null> {
     if (candles.length < 30) return null;
-    
-    const lastClosedCandle = candles[candles.length - 1];
 
-    // Fetch BTC klines for context and relative strength filter in user's timeframe
-    let btcKlines: any[] = [];
+    // Fetch HTF klines for higher-timeframe trend & draw on liquidity
+    const htf = getHigherTimeframe(this.settings.timeframe || '15m');
+    let htfKlines: any[] = [];
     try {
-      btcKlines = await this.getKlines('BTCUSDT', this.settings.timeframe || '15m');
+      const fetched = await this.getKlines(symbol, htf);
+      htfKlines = fetched && fetched.length > 1 ? fetched.slice(0, -1) : (fetched || []);
     } catch (e) {
-      btcKlines = [];
+      htfKlines = [];
     }
 
-    // Evaluate strict Two-Sided Coil Breakout with structural 5R target and dynamic user timeframe
-    const coilSig = evaluateTwoSidedCoilBreakout(
+    const sig = evaluateVolatilityCompressionAdapter(
       candles,
-      btcKlines,
+      htfKlines,
+      currentPrice,
       {
+        ...this.settings,
         symbol,
         timeframe: this.settings.timeframe || '15m',
-        minRrRatio: 5.0, // Strictly enforce genuine 1:5 reward-to-risk minimum
-        aggressiveBreakoutMode: (this.settings as any).coilAggressiveBreakout === true
       }
     );
 
-    if (coilSig && coilSig.status.startsWith('VALID')) {
+    if (sig && !sig.rejectionReason) {
       return {
-        direction: coilSig.side,
-        score: coilSig.score,
-        atr: coilSig.coil.atrAtCoil,
-        sl: coilSig.stop,
-        tp1: coilSig.target,
-        tp2: coilSig.target,
-        tp3: coilSig.target,
-        compressionHigh: coilSig.coilRange.high,
-        compressionLow: coilSig.coilRange.low,
-        signalTime: lastClosedCandle.time,
-        reason: `${coilSig.setup} [1:${coilSig.rrRatio.toFixed(1)} RR] (${coilSig.status})`
+        direction: (sig.direction.toUpperCase() === 'LONG' ? 'LONG' : 'SHORT'),
+        score: sig.setupScore,
+        atr: sig.atr,
+        sl: sig.sl,
+        tp1: sig.tp1,
+        tp2: sig.tp2,
+        tp3: sig.tp3 || sig.tp2,
+        signalTime: sig.candleTime,
+        reason: sig.reason,
+        checklist: (sig as any).checklist,
       };
     }
 

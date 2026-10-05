@@ -116,6 +116,49 @@ export interface RegimeStrategyRecommendation {
 // UI Type Alias for backward compatibility
 export type StrategyRecommendation = RegimeStrategyRecommendation;
 
+export interface MarketBreadth100 {
+  timestamp: number;
+  totalCoins: number;
+  rangeCount: number;
+  rangePct: number;
+  trendCount: number;
+  trendPct: number;
+  bullTrendCount: number;
+  bullTrendPct: number;
+  bearTrendCount: number;
+  bearTrendPct: number;
+  compressionCount: number;
+  compressionPct: number;
+  expansionCount: number;
+  expansionPct: number;
+  pctAboveEma50: number;
+  pctAboveEma200: number;
+  medianAdx: number;
+  advancingCount: number;
+  advancingPct: number;
+  decliningCount: number;
+  decliningPct: number;
+  avgFundingRate: number;
+  consensusRegime: CoreRegimeType;
+  consensusConfidence: number;
+  favoredStrategy: string;
+  consensusReason: string;
+  topCoinsBreakdown?: Array<{
+    symbol: string;
+    price: number;
+    change24h: number;
+    quoteVolume: number;
+    fundingRate: number;
+    regime: CoreRegimeType;
+    trendDirection: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+    aboveEma50: boolean;
+    aboveEma200: boolean;
+    adx: number;
+    atrRatio: number;
+    bbw: number;
+  }>;
+}
+
 export interface ThreeLayerRegimeState {
   timestamp: number;
   symbol: string;
@@ -124,6 +167,7 @@ export interface ThreeLayerRegimeState {
   tradeability: TradeabilityAnalysis;
   levels: InvalidationLevels;
   recommendedStrategies: RegimeStrategyRecommendation[];
+  marketBreadth100?: MarketBreadth100;
 }
 
 /**
@@ -289,6 +333,7 @@ export function evaluateDirectionBias(params: {
   openInterest4h?: { priceChangePct: number; oiChangePct: number };
   takerCvd4h?: { isRising: boolean; netDelta: number };
   breadthTop30PctAboveEma50?: number; // 0 to 100
+  marketBreadth100?: MarketBreadth100;
   levels: {
     dailyOpen: number;
     weeklyOpen: number;
@@ -481,8 +526,8 @@ export function evaluateDirectionBias(params: {
     status: f6Status
   });
 
-  // Factor 7: Breadth (% of Top-30 perps above 4H EMA 50) (10%)
-  const breadthPct = params.breadthTop30PctAboveEma50 ?? 65;
+  // Factor 7: Breadth (% of Top-100 perps above 4H EMA 50) (10%)
+  const breadthPct = params.marketBreadth100?.pctAboveEma50 ?? params.breadthTop30PctAboveEma50 ?? 65;
   let f7Score: -1 | 0 | 1 = 0;
   let f7Status: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
   if (breadthPct >= 60) {
@@ -494,14 +539,14 @@ export function evaluateDirectionBias(params: {
   }
   factors.push({
     id: 'market_breadth',
-    name: 'Market Breadth (Top-30 vs 4H EMA 50)',
+    name: params.marketBreadth100 ? 'Cumulative Market Breadth (Top 100 vs 4H EMA 50)' : 'Market Breadth (Top-30 vs 4H EMA 50)',
     score: f7Score,
     weight: 10,
     value: `${breadthPct.toFixed(0)}% Above`,
     detail: breadthPct >= 60
-      ? `Broad participation: ${breadthPct.toFixed(0)}% of top altcoins above 4H EMA 50`
+      ? `Broad participation: ${breadthPct.toFixed(0)}% of ${params.marketBreadth100 ? 'Top 100 coins' : 'top altcoins'} above 4H EMA 50`
       : breadthPct <= 40
-      ? `Market deterioration: Only ${breadthPct.toFixed(0)}% of top altcoins above 4H EMA 50`
+      ? `Market deterioration: Only ${breadthPct.toFixed(0)}% of ${params.marketBreadth100 ? 'Top 100 coins' : 'top altcoins'} above 4H EMA 50`
       : `Neutral breadth: ${breadthPct.toFixed(0)}% hovering around dynamic equilibrium`,
     status: f7Status
   });
@@ -581,6 +626,7 @@ export function evaluateDirectionBias(params: {
 export function evaluateMarketRegime(params: {
   btc4h: { closes: number[]; highs: number[]; lows: number[] };
   btc1h?: { closes: number[]; highs: number[]; lows: number[] };
+  marketBreadth100?: MarketBreadth100;
   lastConfirmedRegime?: CoreRegimeType;
   lastCandidateRegime?: CoreRegimeType;
   consecutiveCandles?: number;
@@ -632,24 +678,29 @@ export function evaluateMarketRegime(params: {
     adx1h = adxSeries1h.adx[adxSeries1h.adx.length - 1] || currentAdx;
   }
 
-  // Evaluate candidate raw regime
+  // Evaluate candidate raw regime (Top 100 Cumulative Consensus has primary authority when available)
   let rawRegime: CoreRegimeType = 'RANGE';
 
-  // Rule 1: Compression (ADX < 18, ER < 0.20, BBW < 20th, ATR% < 25th)
-  if (bbwPercentile <= 0.22 && atrPercentile <= 0.28 && currentAdx <= 20) {
-    rawRegime = 'COMPRESSION';
-  }
-  // Rule 2: Expansion (ER > 0.40, BBW > 80th, ATR% > 80th, Fanning EMAs)
-  else if (bbwPercentile >= 0.78 && atrPercentile >= 0.75 && er20 >= 0.38) {
-    rawRegime = 'EXPANSION';
-  }
-  // Rule 3: Trend (ADX > 25 on 4H confirmed by 1H > 22, ER > 0.35, Stacked EMAs)
-  else if (currentAdx >= 24 && adx1h >= 20 && er20 >= 0.32 && (emaAlignment === 'STACKED_BULL' || emaAlignment === 'STACKED_BEAR' || emaAlignment === 'FANNING_WIDE')) {
-    rawRegime = 'TREND';
-  }
-  // Rule 4: Range (ADX < 18, ER < 0.22, Tangled EMAs, Mid BBW)
-  else {
-    rawRegime = 'RANGE';
+  if (params.marketBreadth100) {
+    rawRegime = params.marketBreadth100.consensusRegime;
+  } else {
+    // Fallback: BTC single-coin heuristics when 100-coin breadth is not passed
+    // Rule 1: Compression (ADX < 18, ER < 0.20, BBW < 20th, ATR% < 25th)
+    if (bbwPercentile <= 0.22 && atrPercentile <= 0.28 && currentAdx <= 20) {
+      rawRegime = 'COMPRESSION';
+    }
+    // Rule 2: Expansion (ER > 0.40, BBW > 80th, ATR% > 80th, Fanning EMAs)
+    else if (bbwPercentile >= 0.78 && atrPercentile >= 0.75 && er20 >= 0.38) {
+      rawRegime = 'EXPANSION';
+    }
+    // Rule 3: Trend (ADX > 25 on 4H confirmed by 1H > 22, ER > 0.35, Stacked EMAs)
+    else if (currentAdx >= 24 && adx1h >= 20 && er20 >= 0.32 && (emaAlignment === 'STACKED_BULL' || emaAlignment === 'STACKED_BEAR' || emaAlignment === 'FANNING_WIDE')) {
+      rawRegime = 'TREND';
+    }
+    // Rule 4: Range (ADX < 18, ER < 0.22, Tangled EMAs, Mid BBW)
+    else {
+      rawRegime = 'RANGE';
+    }
   }
 
   // 2-Closed-Bar Hysteresis Logic
@@ -683,10 +734,10 @@ export function evaluateMarketRegime(params: {
   };
 
   const descriptions: Record<CoreRegimeType, string> = {
-    TREND: `Established directional trend. ADX: ${currentAdx.toFixed(1)}, Efficiency: ${er20.toFixed(2)}. Favor pullbacks and structured continuations.`,
-    RANGE: `Oscillating consolidation. ADX: ${currentAdx.toFixed(1)} < 18, Tangled EMAs. Favor 2σ Bollinger mean reversion and range edge liquidity sweeps.`,
-    COMPRESSION: `Volatility coiled below 20th percentile (BBW: ${(bbwPercentile * 100).toFixed(0)}%). Stand aside or arm breakout compression traps (VCB / Coil).`,
-    EXPANSION: `Extreme volatility surge (ATR: ${(atrPercentile * 100).toFixed(0)}th percentile). Avoid chasing breakouts; look for climax exhaustion or trail tight stops.`
+    TREND: params.marketBreadth100 ? params.marketBreadth100.consensusReason : `Established directional trend. ADX: ${currentAdx.toFixed(1)}, Efficiency: ${er20.toFixed(2)}. Favor pullbacks and structured continuations.`,
+    RANGE: params.marketBreadth100 ? params.marketBreadth100.consensusReason : `Oscillating consolidation. ADX: ${currentAdx.toFixed(1)} < 18, Tangled EMAs. Favor 2σ Bollinger mean reversion and range edge liquidity sweeps.`,
+    COMPRESSION: params.marketBreadth100 ? params.marketBreadth100.consensusReason : `Volatility coiled below 20th percentile (BBW: ${(bbwPercentile * 100).toFixed(0)}%). Stand aside or arm breakout compression traps (VCB / Coil).`,
+    EXPANSION: params.marketBreadth100 ? params.marketBreadth100.consensusReason : `Extreme volatility surge (ATR: ${(atrPercentile * 100).toFixed(0)}th percentile). Avoid chasing breakouts; look for climax exhaustion or trail tight stops.`
   };
 
   let is1hConfirmed = true;
@@ -992,6 +1043,7 @@ export function analyzeThreeLayerRegime(input: {
   breadthTop30PctAboveEma50?: number;
   relativeVolume20?: number;
   spreadPct?: number;
+  marketBreadth100?: MarketBreadth100;
   lastConfirmedRegime?: CoreRegimeType;
   lastCandidateRegime?: CoreRegimeType;
   consecutiveCandles?: number;
@@ -1015,13 +1067,15 @@ export function analyzeThreeLayerRegime(input: {
     openInterest4h: input.openInterest4h,
     takerCvd4h: input.takerCvd4h,
     breadthTop30PctAboveEma50: input.breadthTop30PctAboveEma50,
+    marketBreadth100: input.marketBreadth100,
     levels
   });
 
-  // Layer 2: Market Regime
+  // Layer 2: Market Regime (Top 100 Cumulative Consensus has primary authority when provided)
   const regime = evaluateMarketRegime({
     btc4h: input.btc4h,
     btc1h: input.btc1h,
+    marketBreadth100: input.marketBreadth100,
     lastConfirmedRegime: input.lastConfirmedRegime,
     lastCandidateRegime: input.lastCandidateRegime,
     consecutiveCandles: input.consecutiveCandles,
@@ -1049,6 +1103,7 @@ export function analyzeThreeLayerRegime(input: {
     regime,
     tradeability,
     levels,
-    recommendedStrategies
+    recommendedStrategies,
+    marketBreadth100: input.marketBreadth100
   };
 }
