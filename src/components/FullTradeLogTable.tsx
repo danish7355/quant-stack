@@ -381,16 +381,15 @@ export default function FullTradeLogTable({ logs }: FullTradeLogTableProps) {
             <option value="EMA5_EXACT_ENTRY_V2">EMA 5 Exact Entry V2</option>
             <option value="EMA5_EXACT_ENTRY_V1">EMA 5 Exact Entry (V1)</option>
             <option value="EMA5_REJECTION_RECLAIM_V1">EMA 5 Rejection Reclaim</option>
-            <option value="BINANCE_COMPOSITE">10-Gate Scanner</option>
+            <option value="BINANCE_COMPOSITE">Range Mean Reversion</option>
             <option value="EMA_GAP_PULLBACK">5 EMA Gap Pullback</option>
             <option value="EMA5_PA_VOLUME_V1">EMA 5 PA + Volume</option>
-            <option value="DELTA_CLIMAX">Climax Reversal (Legacy)</option>
             <option value="VOLATILITY_COMPRESSION">VCB Breakout</option>
             <option value="TREND_PULLBACK">Trend Pullback</option>
             <option value="TREND_PULLBACK_RETEST">Pullback Retest</option>
             <option value="SMC_LIQUIDITY_SWEEP">SMC Liquidity Sweep</option>
             <option value="EARLY_COIL_BREAKOUT">Early Coil Breakout</option>
-            <option value="MACRO_RANGE_BREAKOUT">Macro Range Breakout</option>
+            <option value="TWO_SIDED_COIL_BREAKOUT">Two-Sided Coil Breakout</option>
           </select>
         </div>
 
@@ -514,10 +513,6 @@ export default function FullTradeLogTable({ logs }: FullTradeLogTableProps) {
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-teal-950/50 text-teal-300 border border-teal-700/50 text-[9.5px] font-bold w-fit">
                               <Zap className="w-2.5 h-2.5 text-teal-400" /> 5 EMA Gap
                             </span>
-                          ) : strat === 'DELTA_CLIMAX' ? (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-cyan-950/50 text-cyan-300 border border-cyan-700/50 text-[9.5px] font-bold w-fit">
-                              <Zap className="w-2.5 h-2.5 text-cyan-400" /> Climax (Legacy)
-                            </span>
                           ) : strat === 'VOLATILITY_COMPRESSION' ? (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-amber-950/50 text-amber-300 border border-amber-700/50 text-[9.5px] font-bold w-fit">
                               <Flame className="w-2.5 h-2.5 text-amber-400" /> VCB Breakout
@@ -534,17 +529,17 @@ export default function FullTradeLogTable({ logs }: FullTradeLogTableProps) {
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-purple-950/60 text-purple-300 border border-purple-700/50 text-[9.5px] font-bold w-fit">
                               <Sparkles className="w-2.5 h-2.5 text-purple-400" /> SMC Liquidity
                             </span>
+                          ) : strat === 'TWO_SIDED_COIL_BREAKOUT' ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-orange-950/50 text-orange-300 border border-orange-700/50 text-[9.5px] font-bold w-fit">
+                              <Flame className="w-2.5 h-2.5 text-orange-400" /> Coil Breakout
+                            </span>
                           ) : strat === 'EARLY_COIL_BREAKOUT' ? (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-orange-950/50 text-orange-300 border border-orange-700/50 text-[9.5px] font-bold w-fit">
                               <Flame className="w-2.5 h-2.5 text-orange-400" /> Early Coil
                             </span>
-                          ) : strat === 'MACRO_RANGE_BREAKOUT' ? (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-indigo-950/50 text-indigo-300 border border-indigo-700/50 text-[9.5px] font-bold w-fit">
-                              <Target className="w-2.5 h-2.5 text-indigo-400" /> Macro Range
-                            </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-emerald-950/50 text-emerald-300 border border-emerald-700/50 text-[9.5px] font-bold w-fit">
-                              <Activity className="w-2.5 h-2.5 text-emerald-400" /> {strat === 'BINANCE_COMPOSITE' ? '10-Gate Scanner' : strat.replace(/_/g, ' ')}
+                              <Activity className="w-2.5 h-2.5 text-emerald-400" /> {strat === 'BINANCE_COMPOSITE' ? 'Range Mean Reversion' : strat.replace(/_/g, ' ')}
                             </span>
                           )}
 

@@ -62,6 +62,20 @@ export class MarketBreadthService {
   private readonly CACHE_TTL_MS = 75000; // 75 seconds cache to balance real-time freshness and rate limits
   private isFetching = false;
 
+  constructor() {
+    // Initialize cache immediately so no request ever hangs or times out
+    this.cache = this.getFallbackBreadth();
+    // Warm up cache asynchronously in the background
+    setTimeout(() => {
+      this.computeMarketBreadth(100).then(res => {
+        this.cache = res;
+        this.lastFetchTime = Date.now();
+      }).catch(err => {
+        console.warn('[MarketBreadthService] Background initial warmup failed, using fallback:', err?.message || err);
+      });
+    }, 1500);
+  }
+
   /**
    * Fetches and computes the cumulative breadth and regime across the Top 100 coins
    */
@@ -71,8 +85,8 @@ export class MarketBreadthService {
       return this.cache;
     }
 
-    if (this.isFetching && this.cache) {
-      return this.cache;
+    if (this.isFetching) {
+      return this.cache || this.getFallbackBreadth();
     }
 
     this.isFetching = true;
@@ -83,8 +97,7 @@ export class MarketBreadthService {
       return result;
     } catch (err: any) {
       console.warn('[MarketBreadthService] Error computing breadth:', err?.message || err);
-      if (this.cache) return this.cache;
-      return this.getFallbackBreadth();
+      return this.cache || this.getFallbackBreadth();
     } finally {
       this.isFetching = false;
     }
@@ -337,7 +350,7 @@ export class MarketBreadthService {
     } else if (consensusRegime === 'COMPRESSION') {
       favoredStrategy = 'VOLATILITY_COMPRESSION';
     } else if (consensusRegime === 'EXPANSION') {
-      favoredStrategy = 'MACRO_RANGE_BREAKOUT';
+      favoredStrategy = 'SMC_LIQUIDITY_SWEEP';
     } else {
       favoredStrategy = 'BINANCE_COMPOSITE';
     }
@@ -347,7 +360,10 @@ export class MarketBreadthService {
     const breadthSkew = Math.abs(pctAboveEma50 - 50);
     const consensusConfidence = Math.min(98, Math.max(52, Math.round(dominantPct + breadthSkew * 0.35)));
 
-    const consensusReason = `Top 100 Cumulative Consensus: ${rangePct}% RANGE, ${trendPct}% TREND (${bullTrendPct}% Bull, ${bearTrendPct}% Bear), ${compressionPct}% COMPRESSION, ${expansionPct}% EXPANSION | Breadth: ${pctAboveEma50}% > EMA50, Median ADX: ${medianAdx.toFixed(1)} -> Confirmed Market Regime: ${consensusRegime}`;
+    const trendNote = trendPct > 20 && consensusRegime !== 'TREND'
+      ? ` | Trend Breadth: ${trendPct}% (>20%) -> Trend strategies active`
+      : '';
+    const consensusReason = `Top 100 Cumulative Consensus: ${rangePct}% RANGE, ${trendPct}% TREND (${bullTrendPct}% Bull, ${bearTrendPct}% Bear), ${compressionPct}% COMPRESSION, ${expansionPct}% EXPANSION | Breadth: ${pctAboveEma50}% > EMA50, Median ADX: ${medianAdx.toFixed(1)} -> Confirmed Market Regime: ${consensusRegime}${trendNote}`;
 
     return {
       timestamp,

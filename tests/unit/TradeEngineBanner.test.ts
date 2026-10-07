@@ -171,7 +171,7 @@ describe('TradeEngineBanner - Strategy & Trade Engine Active Evaluation', () => 
     expect(getStrategyDisplayName('SMC_LIQUIDITY_SWEEP').name).toBe('Smart Money Concepts (SMC Liquidity Sweep)');
     expect(getStrategyDisplayName('TREND_PULLBACK').name).toBe('Trend Pullback Continuation');
     expect(getStrategyDisplayName('EMA_GAP_PULLBACK').name).toBe('5 EMA Gap Pullback Continuation');
-    expect(getStrategyDisplayName('DELTA_CLIMAX').name).toBe('Delta Climax Reversal');
+    expect(getStrategyDisplayName('EMA5_EXACT_ENTRY_V2').name).toBe('EMA 5 Exact Price Action Entry V2');
     expect(getStrategyDisplayName('EARLY_COIL_BREAKOUT').name).toBe('Early Coil Breakout');
     expect(getStrategyDisplayName('AUTO_REGIME').name).toBe('Autonomous Multi-Regime Auto-Selector');
     expect(getStrategyDisplayName('BINANCE_COMPOSITE').name).toBe('Range Mean Reversion');

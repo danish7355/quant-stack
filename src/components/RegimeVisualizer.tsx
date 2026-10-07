@@ -81,12 +81,44 @@ export function RegimeVisualizer({
 
       // Auto-Arm logic if enabled
       const curSettings = settingsRef.current;
+      const deleted = curSettings.deletedStrategies || [];
       if (curSettings.autoActivateRegimeStrategies && data.recommendedStrategies?.length > 0) {
-        const topFavored = data.recommendedStrategies.find(s => s.suitability === 'FAVORED') || data.recommendedStrategies[0];
-        if (topFavored && topFavored.strategyId !== curSettings.activeStrategy) {
+        const validRecommended = data.recommendedStrategies.filter(s => !deleted.includes(s.strategyId));
+        const topFavored = validRecommended.find(s => s.suitability === 'FAVORED') || validRecommended[0];
+        // Prioritize consensus favored strategy from 100-coin breadth consensus if available (and not deleted)
+        let targetFavoredId = (data.marketBreadth100?.favoredStrategy && !deleted.includes(data.marketBreadth100.favoredStrategy)
+          ? data.marketBreadth100.favoredStrategy
+          : topFavored?.strategyId) as any;
+
+        if (deleted.includes(targetFavoredId)) {
+          targetFavoredId = validRecommended[0]?.strategyId || 'VOLATILITY_COMPRESSION';
+        }
+
+        const targetEnabled = validRecommended.length > 0
+          ? validRecommended.map(s => s.strategyId as any)
+          : [targetFavoredId];
+
+        // Operator Rule: If trend market regime is > 20% in market breadth, activate trend based strategy too
+        const trendPct = data.marketBreadth100?.trendPct ?? 0;
+        if (trendPct > 20) {
+          const trendStrats = ['TREND_PULLBACK', 'EMA5_EXACT_ENTRY_V2'];
+          for (const ts of trendStrats) {
+            if (!deleted.includes(ts) && !targetEnabled.includes(ts)) {
+              targetEnabled.push(ts as any);
+            }
+          }
+        }
+
+        const isEnabledChanged = !Array.isArray(curSettings.enabledStrategies) ||
+          curSettings.enabledStrategies.length !== targetEnabled.length ||
+          targetEnabled.some((s: any) => !curSettings.enabledStrategies?.includes(s));
+
+        if (targetFavoredId && (targetFavoredId !== curSettings.activeStrategy || curSettings.coindcxActiveRegime !== data.regime.confirmedRegime || isEnabledChanged)) {
           const nextSettings = {
             ...curSettings,
-            activeStrategy: topFavored.strategyId as any,
+            activeStrategy: targetFavoredId,
+            enabledStrategies: targetEnabled,
+            coindcxActiveRegime: data.regime.confirmedRegime,
             updatedAt: new Date().toISOString()
           };
           setSettings(nextSettings);
@@ -96,9 +128,10 @@ export function RegimeVisualizer({
             body: JSON.stringify(nextSettings)
           }).catch(err => console.warn('Auto-arm sync error:', err));
 
+          const stratNames = validRecommended.map(s => s.name).join(', ');
           addToast({
-            title: `Auto-Armed: ${topFavored.name}`,
-            description: `Regime (${data.regime.confirmedRegime}) favored ${topFavored.name} with ${topFavored.expectedR}R expectancy.`,
+            title: `Auto-Armed Suite (${validRecommended.length} Strategies)`,
+            description: `100-Coin Consensus (${data.regime.confirmedRegime}): Armed ${stratNames}`,
             type: 'info'
           });
         }
@@ -120,11 +153,25 @@ export function RegimeVisualizer({
     return () => clearInterval(interval);
   }, [fetchRegime]);
 
-  // Handle manual 1-click strategy arming
-  const handleArmStrategy = async (strat: StrategyRecommendation) => {
+  // Handle manual 1-click strategy arming / toggling
+  const handleToggleArmStrategy = async (strat: StrategyRecommendation) => {
+    const deleted = settings.deletedStrategies || [];
+    const currentEnabled = (settings.enabledStrategies || []).filter(s => !deleted.includes(s));
+    let nextEnabled: string[];
+    const isCurrentlyActive = currentEnabled.includes(strat.strategyId as any);
+
+    if (isCurrentlyActive && currentEnabled.length > 1) {
+      nextEnabled = currentEnabled.filter(s => s !== strat.strategyId);
+    } else {
+      nextEnabled = Array.from(new Set([...currentEnabled, strat.strategyId as any]));
+    }
+
+    const nextActive = nextEnabled.includes(settings.activeStrategy) ? settings.activeStrategy : (nextEnabled[0] || strat.strategyId as any);
     const nextSettings = {
       ...settings,
-      activeStrategy: strat.strategyId as any,
+      activeStrategy: nextActive,
+      enabledStrategies: nextEnabled as any,
+      coindcxActiveRegime: regimeState?.regime.confirmedRegime || settings.coindcxActiveRegime,
       updatedAt: new Date().toISOString()
     };
     setSettings(nextSettings);
@@ -137,17 +184,68 @@ export function RegimeVisualizer({
       });
       if (res.ok) {
         addToast({
-          title: `Armed ${strat.name}`,
-          description: `Engine active strategy switched to ${strat.name} (${strat.expectedR}R expectancy).`,
+          title: isCurrentlyActive ? `Disarmed ${strat.name}` : `Armed ${strat.name}`,
+          description: `Active Suite: ${nextEnabled.length} strategies armed.`,
+          type: isCurrentlyActive ? 'info' : 'success'
+        });
+      }
+    } catch (e) {
+      addToast({
+        title: 'Updated Locally',
+        description: 'Updated in UI state.',
+        type: 'warning'
+      });
+    }
+  };
+
+  // Handle 1-click arming of ALL recommended strategies for the regime
+  const handleArmAllRecommended = async () => {
+    if (!regimeState || !regimeState.recommendedStrategies) return;
+    const deleted = settings.deletedStrategies || [];
+    const validRecommended = regimeState.recommendedStrategies
+      .filter(s => !deleted.includes(s.strategyId));
+    if (validRecommended.length === 0) return;
+
+    const recommendedIds = validRecommended.map(s => s.strategyId as any);
+
+    // Operator Rule: If trend market regime is > 20% in market breadth, activate trend based strategy too
+    const trendPct = regimeState.marketBreadth100?.trendPct ?? 0;
+    if (trendPct > 20) {
+      const trendStrats = ['TREND_PULLBACK', 'EMA5_EXACT_ENTRY_V2'];
+      for (const ts of trendStrats) {
+        if (!deleted.includes(ts) && !recommendedIds.includes(ts)) {
+          recommendedIds.push(ts as any);
+        }
+      }
+    }
+
+    const primaryActive = recommendedIds[0] || settings.activeStrategy;
+    const nextSettings = {
+      ...settings,
+      activeStrategy: primaryActive,
+      enabledStrategies: recommendedIds,
+      coindcxActiveRegime: regimeState.regime.confirmedRegime || settings.coindcxActiveRegime,
+      updatedAt: new Date().toISOString()
+    };
+    setSettings(nextSettings);
+
+    try {
+      const res = await fetch('/api/bot/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(nextSettings)
+      });
+      if (res.ok) {
+        addToast({
+          title: `All Recommended Strategies Armed (${validRecommended.length})`,
+          description: `Armed ${validRecommended.map(s => s.name).join(', ')} for ${regimeState.regime.confirmedRegime} regime.`,
           type: 'success'
         });
-      } else {
-        throw new Error('Save failed');
       }
     } catch (e) {
       addToast({
         title: 'Armed Locally',
-        description: 'Updated in UI state. Background sync in progress.',
+        description: 'Updated in UI state.',
         type: 'warning'
       });
     }
@@ -1181,16 +1279,39 @@ export function RegimeVisualizer({
                 <Sparkles className="w-5 h-5 text-indigo-400" />
                 REGIME → PRODUCTION STRATEGY EXPECTANCY MATRIX
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Active strategy alignment for <strong className="text-white font-mono">{regimeState.regime.confirmedRegime}</strong> regime with <strong className="text-white font-mono">{regimeState.bias.nuanceLabel}</strong> bias.
+              <p className="text-xs text-slate-400 mt-0.5 flex flex-wrap items-center gap-2">
+                <span>Active strategy alignment for <strong className="text-white font-mono">{regimeState.regime.confirmedRegime}</strong> regime with <strong className="text-white font-mono">{regimeState.bias.nuanceLabel}</strong> bias.</span>
+                {regimeState.marketBreadth100 && regimeState.marketBreadth100.trendPct > 20 && regimeState.regime.confirmedRegime !== 'TREND' && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold font-mono">
+                    🔥 Trend Breadth: {regimeState.marketBreadth100.trendPct}% (&gt;20%) — Multi-Regime Trend Strategies Active
+                  </span>
+                )}
               </p>
             </div>
             
-            <div className="flex items-center gap-2 text-xs">
-              <span className="text-slate-400">Active Engine Strategy:</span>
-              <span className="px-2.5 py-1 bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 rounded-lg font-mono font-bold">
-                {settings.activeStrategy}
-              </span>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-slate-400">Active Suite ({((settings.enabledStrategies || []).filter(s => !(settings.deletedStrategies || []).includes(s))).length}):</span>
+              <div className="flex items-center flex-wrap gap-1">
+                {((settings.enabledStrategies && settings.enabledStrategies.length > 0)
+                  ? settings.enabledStrategies.filter(s => !(settings.deletedStrategies || []).includes(s))
+                  : [settings.activeStrategy]
+                ).map((stratId) => {
+                  const item = regimeState.recommendedStrategies.find(s => s.strategyId === stratId);
+                  return (
+                    <span key={stratId} className="px-2 py-0.5 bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 rounded-md font-mono font-bold text-[11px]">
+                      {item ? item.name : stratId?.replace(/_/g, ' ')}
+                    </span>
+                  );
+                })}
+              </div>
+              <button
+                onClick={handleArmAllRecommended}
+                className="ml-1 sm:ml-2 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold text-xs shadow-md transition active:scale-95 cursor-pointer flex items-center gap-1.5"
+                title="Arm all recommended strategies for this confirmed regime at once"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Arm All Recommended</span>
+              </button>
             </div>
           </div>
 
@@ -1209,7 +1330,7 @@ export function RegimeVisualizer({
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-mono">
                 {regimeState.recommendedStrategies.map((strat) => {
-                  const isCurrentActive = settings.activeStrategy === strat.strategyId;
+                  const isCurrentActive = (settings.enabledStrategies && settings.enabledStrategies.includes(strat.strategyId as any)) || settings.activeStrategy === strat.strategyId;
                   return (
                     <tr 
                       key={strat.strategyId}
@@ -1246,15 +1367,14 @@ export function RegimeVisualizer({
                       </td>
                       <td className="py-3.5 px-4 text-right">
                         <button
-                          onClick={() => handleArmStrategy(strat)}
-                          disabled={isCurrentActive}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                          onClick={() => handleToggleArmStrategy(strat)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                             isCurrentActive
-                              ? 'bg-slate-800 text-slate-500 cursor-default'
+                              ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/20 active:scale-95'
                               : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/20 active:scale-95'
                           }`}
                         >
-                          {isCurrentActive ? 'Armed' : 'Arm Strategy'}
+                          {isCurrentActive ? '✓ Armed (Active)' : '+ Arm Strategy'}
                         </button>
                       </td>
                     </tr>

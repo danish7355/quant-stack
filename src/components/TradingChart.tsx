@@ -173,7 +173,6 @@ export default function TradingChart({ coin, activePosition }: TradingChartProps
         activePosition.strategy === 'EMA_GAP_PULLBACK' ? '5 EMA GAP' :
         activePosition.strategy === 'TREND_PULLBACK_RETEST' ? 'RETEST' :
         activePosition.strategy === 'EMA5_PA_VOLUME_V1' ? 'EMA5 PA' :
-        activePosition.strategy === 'DELTA_CLIMAX' ? 'CLIMAX' :
         activePosition.strategy === 'VOLATILITY_COMPRESSION' ? 'VCB' :
         activePosition.strategy === 'TREND_PULLBACK' ? 'PULLBACK' :
         activePosition.strategy === 'SMC_LIQUIDITY_SWEEP' ? 'SMC' :

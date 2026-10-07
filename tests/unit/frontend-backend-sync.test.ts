@@ -218,7 +218,7 @@ describe('Frontend-Backend Synchronization & Integration Suite', () => {
         'SMC_LIQUIDITY_SWEEP',
         'EMA_GAP_PULLBACK',
         'EMA5_PA_VOLUME_V1',
-        'MACRO_RANGE_BREAKOUT'
+        'TWO_SIDED_COIL_BREAKOUT'
       ];
 
       for (const item of DEFAULT_STRATEGY_BUCKET) {

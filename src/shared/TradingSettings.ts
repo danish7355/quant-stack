@@ -54,8 +54,8 @@ export interface TradingSettings {
   equitySnapshots?: { time: string; balance: number }[];
 
   // Execution & Strategy Engine
-  activeStrategy: 'EMA5_EXACT_ENTRY_V2' | 'BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1' | 'EMA5_EXACT_ENTRY_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'AUTO_REGIME' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL';
-  enabledStrategies?: ('EMA5_EXACT_ENTRY_V2' | 'BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1' | 'EMA5_EXACT_ENTRY_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'MACRO_RANGE_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL')[];
+  activeStrategy: 'EMA5_EXACT_ENTRY_V2' | 'BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1' | 'EMA5_EXACT_ENTRY_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'TWO_SIDED_COIL_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'AUTO_REGIME' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL';
+  enabledStrategies?: ('EMA5_EXACT_ENTRY_V2' | 'BINANCE_COMPOSITE' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1' | 'EMA5_EXACT_ENTRY_V1' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'TWO_SIDED_COIL_BREAKOUT' | 'EARLY_COIL_BREAKOUT' | 'SMC_LIQUIDITY_SWEEP' | 'LIQUIDITY_SWEEP_REVERSAL')[];
   autoActivateRegimeStrategies?: boolean; // When true, trading engine auto-aligns active strategies with detected regime
   coindcxRegimeMode?: boolean;           // Enables CoinDCX intraday fee and risk defaults
   coindcxActiveRegime?: 'TREND' | 'RANGE' | 'COMPRESSION' | 'EXPANSION' | 'BULL_TREND' | 'BEAR_TREND' | 'RANGE_CHOP' | 'HIGH_VOL';
@@ -714,9 +714,9 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   tradingMode: 'PAPER',
   activeStrategy: 'VOLATILITY_COMPRESSION',
   enabledStrategies: ['VOLATILITY_COMPRESSION'],
-  autoActivateRegimeStrategies: false,
+  autoActivateRegimeStrategies: true,
   coindcxRegimeMode: true,
-  coindcxActiveRegime: 'RANGE_CHOP',
+  coindcxActiveRegime: 'RANGE',
   coindcxRegimeSymbol: 'BTCUSDT',
   enableRegimeLayer3Gate: true,
   bypassRegimeStandAside: false,

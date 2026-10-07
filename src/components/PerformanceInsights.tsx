@@ -67,10 +67,9 @@ export function getMarketConditionForStrategy(strategy?: string): 'Trending' | '
   if ((s === 'TREND_PULLBACK' || s.includes('PULLBACK')) && s !== 'EMA_GAP_PULLBACK' && s !== 'TREND_PULLBACK_RETEST') return 'Trending';
   if (s === 'TREND_PULLBACK_RETEST') return 'Trend Continuation / Pullback Retest';
   if (s === 'BINANCE_COMPOSITE' || s.includes('COMPOSITE')) return 'Trending';
-  if (s === 'VOLATILITY_COMPRESSION' || s.includes('COMPRESSION') || s === 'VCB') return 'Ranging / Consolidation';
+  if (s === 'VOLATILITY_COMPRESSION' || s.includes('COMPRESSION') || s === 'VCB' || s === 'EARLY_COIL_BREAKOUT' || s === 'TWO_SIDED_COIL_BREAKOUT') return 'Ranging / Consolidation';
   if (s === 'EMA5_PA_VOLUME_V1') return 'Trend Continuation / 5 EMA Gap';
   if (s === 'EMA_GAP_PULLBACK') return 'Trend Continuation / 5 EMA Gap';
-  if (s === 'DELTA_CLIMAX' || s.includes('CLIMAX')) return 'Mean-Reversion / Climax';
   return 'Unspecified';
 }
 
@@ -143,12 +142,6 @@ export default function PerformanceInsights({ logs }: PerformanceInsightsProps) 
             desc = '5 EMA momentum gap pullback continuation in strong trends';
             diag = 'High win rate setup following established EMA trend alignment.';
             rec = 'Trail stop along 5 EMA and lock profit at structural targets.';
-          } else if (stratKey === 'DELTA_CLIMAX') {
-            displayName = 'Delta Climax';
-            cond = 'Mean-Reversion / Climax';
-            desc = 'Overextended price exhaustion with rejection wicks';
-            diag = 'Highest historical profit factor and reliable edge on sharp market blow-offs.';
-            rec = 'Maintain standard ATR target multipliers.';
           } else if (stratKey === 'BINANCE_COMPOSITE') {
             displayName = 'Binance Composite';
             cond = 'Trending';
@@ -167,12 +160,12 @@ export default function PerformanceInsights({ logs }: PerformanceInsightsProps) 
             desc = 'Fractal compression breakout with structural trigger';
             diag = 'Consistent risk-reward on early spring breakouts.';
             rec = 'Require volume surge on breakout candle.';
-          } else if (stratKey === 'MACRO_RANGE_BREAKOUT') {
-            displayName = 'Macro Range Breakout';
-            cond = 'Trending';
-            desc = 'Macro accumulation breakout beyond multi-day range';
-            diag = 'Produces extended multi-day trend moves.';
-            rec = 'Hold runners to 3R and 5R targets.';
+          } else if (stratKey === 'TWO_SIDED_COIL_BREAKOUT') {
+            displayName = 'Two-Sided Coil Breakout';
+            cond = 'Ranging / Consolidation';
+            desc = 'Symmetrical triangular compression breakout';
+            diag = 'Asymmetric payoff on compression expansion bursts.';
+            rec = 'Hold runners to 2R+ targets.';
           } else if (stratKey === 'SMC_LIQUIDITY_SWEEP' || stratKey === 'SMC') {
             displayName = 'SMC Liquidity Sweep';
             cond = 'Mean-Reversion / Climax';

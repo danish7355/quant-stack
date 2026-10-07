@@ -763,12 +763,24 @@ export class AutoTrader {
       newSettings.forceClearCredentials === true
     );
 
+    // Keep activeStrategy and enabledStrategies strictly synchronized
+    if (newSettings.activeStrategy && (!newSettings.enabledStrategies || newSettings.enabledStrategies.length === 0)) {
+      if ((newSettings.activeStrategy as string) !== 'AUTO_REGIME') {
+        this.settings.enabledStrategies = [newSettings.activeStrategy as any];
+      }
+    } else if (newSettings.enabledStrategies && newSettings.enabledStrategies.length > 0 && !newSettings.activeStrategy) {
+      this.settings.activeStrategy = newSettings.enabledStrategies[0] as any;
+    }
+
     if (newSettings.autoTradeEnabled !== undefined) {
       if (newSettings.autoTradeEnabled) {
         this.startLoop();
       } else {
         this.stopLoop();
       }
+    } else if (this.isRunning && newSettings.scanInterval !== undefined) {
+      // Re-arm loop with updated scan interval
+      this.startLoop();
     }
     if (this.settings.telegramBotToken && this.settings.telegramChatId) {
       telegramService.updateConfig(this.settings.telegramBotToken, this.settings.telegramChatId);
@@ -1211,11 +1223,11 @@ export class AutoTrader {
     this.isRunning = true;
     this.settings.autoTradeEnabled = true;
     if (this.loopInterval) clearInterval(this.loopInterval);
-    // Background autonomous scan every 5 seconds for sniper execution
+    const intervalMs = Math.max(5000, (this.settings.scanInterval || 15) * 1000);
     this.loopInterval = setInterval(() => {
       this.runScanCycle();
-    }, 5000);
-    console.log('▶️ [AutoTrader] Engine STARTED. Autonomous scanning & new trade execution active.');
+    }, intervalMs);
+    console.log(`▶️ [AutoTrader] Engine STARTED. Autonomous scanning active every ${intervalMs / 1000}s.`);
   }
 
   public stopLoop() {
@@ -1280,23 +1292,55 @@ export class AutoTrader {
         try {
           const threeLayer = await this.getThreeLayerRegime();
           const confirmedRegime = threeLayer.regime.confirmedRegime;
-          const topFavored = threeLayer.recommendedStrategies?.find(s => s.suitability === 'FAVORED') || threeLayer.recommendedStrategies?.[0];
+          const deleted = this.settings.deletedStrategies || [];
+          const validRecommended = (threeLayer.recommendedStrategies || [])
+            .filter(s => !deleted.includes(s.strategyId));
+          const topFavored = validRecommended.find(s => s.suitability === 'FAVORED') || validRecommended[0];
 
           if (topFavored) {
             const currentRegime = this.settings.coindcxActiveRegime;
             const currentActive = this.settings.activeStrategy;
-            // Prefer strategy auto-selected by Cumulative Top 100 Coins Breadth
-            const targetActive = (threeLayer.marketBreadth100?.favoredStrategy || topFavored.strategyId) as any;
 
-            if (currentRegime !== confirmedRegime || currentActive !== targetActive) {
+            // Prefer strategy auto-selected by Cumulative Top 100 Coins Breadth (if not deleted)
+            let targetActive = (threeLayer.marketBreadth100?.favoredStrategy && !deleted.includes(threeLayer.marketBreadth100.favoredStrategy)
+              ? threeLayer.marketBreadth100.favoredStrategy
+              : topFavored.strategyId) as any;
+
+            if (deleted.includes(targetActive)) {
+              targetActive = validRecommended[0]?.strategyId || 'VOLATILITY_COMPRESSION';
+            }
+
+            // Unify multi-strategy suite: Arm all valid recommended strategies for this regime
+            const targetEnabled = validRecommended.length > 0
+              ? validRecommended.map(s => s.strategyId as any)
+              : [targetActive];
+
+            // Operator Rule: If trend market regime is > 20% across the top 100 coins, activate trend based strategy too
+            const trendPct = threeLayer.marketBreadth100?.trendPct ?? 0;
+            if (trendPct > 20) {
+              const trendStrats = ['TREND_PULLBACK', 'EMA5_EXACT_ENTRY_V2'];
+              for (const ts of trendStrats) {
+                if (!deleted.includes(ts) && !targetEnabled.includes(ts)) {
+                  targetEnabled.push(ts as any);
+                }
+              }
+            }
+
+            const currentEnabled = this.settings.enabledStrategies || [];
+            const isEnabledChanged = !Array.isArray(currentEnabled) ||
+              currentEnabled.length !== targetEnabled.length ||
+              targetEnabled.some((s: any) => !currentEnabled.includes(s));
+
+            if (currentRegime !== confirmedRegime || currentActive !== targetActive || isEnabledChanged) {
+              const trendNote = trendPct > 20 && confirmedRegime !== 'TREND' ? ` [Trend Breadth ${trendPct}% > 20%: Multi-regime Trend strategies active]` : '';
               const consensusInfo = threeLayer.marketBreadth100
-                ? `Top 100 Consensus: ${confirmedRegime} (${threeLayer.marketBreadth100.consensusConfidence}% confidence)`
+                ? `Top 100 Consensus: ${confirmedRegime} (${threeLayer.marketBreadth100.consensusConfidence}% confidence)${trendNote}`
                 : `Regime: ${confirmedRegime}`;
-              console.log(`🧭 [Cumulative 100-Coin Regime Auto-Sync] ${consensusInfo}. Auto-activating favored strategy: ${targetActive} (${topFavored.name})`);
+              console.log(`🧭 [Cumulative 100-Coin Regime Auto-Sync] ${consensusInfo}. Auto-activating ${targetEnabled.length} strategies: ${targetEnabled.join(', ')} (Primary: ${targetActive})`);
               const updatedSettings = {
                 ...this.settings,
                 activeStrategy: targetActive,
-                enabledStrategies: [targetActive],
+                enabledStrategies: targetEnabled,
                 coindcxActiveRegime: confirmedRegime as any,
                 coindcxRegimeSymbol: this.settings.coindcxRegimeSymbol || 'BTCUSDT',
                 updatedAt: new Date().toISOString()
@@ -1325,7 +1369,13 @@ export class AutoTrader {
             globalRegime.btcPrice || 0,
             0,
             0,
-            0
+            0,
+            {
+              strategy: this.settings.activeStrategy || 'AUTONOMOUS',
+              marketRegime: globalRegime.label || globalRegime.regime || 'Macro Paused',
+              macroColor: globalRegime.macroColor,
+              regimeConfidence: 100
+            }
           );
           return; // Block new entries on all 100 coins. Existing open positions continue managing SL/TP.
         } else {
@@ -1403,8 +1453,6 @@ export class AutoTrader {
              strategyPriority: (signal as any).strategyPriority,
              structuralRR: (signal as any).structuralRR
            });
-        } else {
-           this.logScanResult(symbol, 'NEUTRAL', false, 'Failed Technical Gates (5 EMA Gap/VCB/Composite)', currentPrice, 0, 0, 0);
         }
         
         if (signal && signal.score >= minPassScore) {
@@ -1680,9 +1728,9 @@ export class AutoTrader {
         sl,
         tp1,
         score,
-        macroColor: extra?.macroColor || null,
-        marketRegime: extra?.marketRegime || null,
-        regimeConfidence: extra?.regimeConfidence ?? null,
+        macroColor: extra?.macroColor || this.cachedGlobalRegime?.macroColor || 'AMBER',
+        marketRegime: extra?.marketRegime || this.cachedGlobalRegime?.label || (this.settings.coindcxActiveRegime ? String(this.settings.coindcxActiveRegime) : 'Consolidation Range'),
+        regimeConfidence: extra?.regimeConfidence ?? (score > 0 ? score : 50),
         tradeQuality: extra?.tradeQuality || null,
         strategyPriority: extra?.strategyPriority || null,
         structuralRR: extra?.structuralRR ?? null,
@@ -1697,19 +1745,22 @@ export class AutoTrader {
     // Signal Audit Trail integration
     try {
       const decision = passes ? 'ENTER' : (rejectReason?.includes('Paused') || rejectReason?.includes('Failed Technical') ? 'WATCH' : 'REJECT');
+      const defaultRegime = this.cachedGlobalRegime?.label 
+        || (this.settings.coindcxActiveRegime ? String(this.settings.coindcxActiveRegime) : 'Consolidation Range');
+      const defaultStrategy = this.settings.activeStrategy || 'AUTONOMOUS';
       
       writeSignalAudit({
         signalId: `${symbol}-${Date.now()}`,
         symbol: symbol,
         timeframe: this.settings.timeframe || '15m',
-        strategy: extra?.strategy || extra?.strategyPriority || 'UNKNOWN_STRATEGY',
-        regime: extra?.marketRegime || 'UNKNOWN_REGIME',
+        strategy: extra?.strategy || extra?.strategyPriority || defaultStrategy,
+        regime: extra?.marketRegime || defaultRegime,
         direction: (direction === 'LONG' || direction === 'SHORT') ? direction : 'NONE',
-        confidence: extra?.regimeConfidence || score || 0,
+        confidence: extra?.regimeConfidence || (score > 0 ? score : 50),
         decision: decision,
         rejectionReasons: extra?.rejectionReasons && extra.rejectionReasons.length > 0 ? extra.rejectionReasons : (rejectReason ? [rejectReason] : []),
         gateResults: extra?.gateResults || {
-          macro: extra?.macroColor ? 'PASS' : 'NOT_CHECKED'
+          macro: (extra?.macroColor || this.cachedGlobalRegime?.macroColor) ? 'PASS' : 'NOT_CHECKED'
         },
         entryPrice: price || null,
         stopPrice: sl || null,
@@ -1882,8 +1933,6 @@ export class AutoTrader {
         return (this.settings as any)?.coilMinRrRatio ?? 2.0;
       case 'EARLY_COIL_BREAKOUT':
         return (this.settings as any)?.earlyCoilMinRr ?? 2.0;
-      case 'MACRO_RANGE_BREAKOUT':
-        return 2.0;
       case 'SMC_LIQUIDITY_SWEEP':
       case 'LIQUIDITY_SWEEP_REVERSAL':
         return this.settings.smcRrRatio ?? 1.8;
@@ -1912,6 +1961,12 @@ export class AutoTrader {
         // RED - Non-Tradable (Safety Lockout): No new entries on any 100 coins. Stand aside in cash.
         this.globalFilterBlockActive = true;
         this.globalFilterBlockReason = `Global Market & BTC Safety Filter: ${globalRegime.symbol} is in extreme distress (${globalRegime.details}). Macro risk management active — new entries paused.`;
+        this.logScanResult(symbol, 'NEUTRAL', false, `Global Macro Filter: Paused (${globalRegime.details})`, currentPrice, 0, 0, 0, {
+          strategy: this.settings.activeStrategy || 'AUTONOMOUS',
+          marketRegime: globalRegime.label || 'Macro Paused',
+          macroColor: globalRegime.macroColor,
+          regimeConfidence: 100
+        });
         return null;
       }
     }
@@ -1932,6 +1987,7 @@ export class AutoTrader {
       // Stand-Aside Rule: Skip if local regime is non-tradable (dead volume, extreme panic, or messy chop)
       if (classification.regime === 'PANIC' || classification.regime === 'DEAD_VOLUME' || classification.regime === 'TRANSITION') {
         this.logScanResult(symbol, 'NEUTRAL', false, `Stand-aside: Local regime ${classification.regime} (untradeable)`, currentPrice, 0, 0, 0, {
+          strategy: this.settings.activeStrategy || 'AUTONOMOUS',
           marketRegime: classification.label,
           macroColor: globalRegime.macroColor,
           regimeConfidence: classification.confidence
@@ -1943,6 +1999,7 @@ export class AutoTrader {
       const minConfidenceThreshold = globalRegime.macroColor === 'AMBER' ? 65 : 60;
       if (classification.confidence < minConfidenceThreshold) {
         this.logScanResult(symbol, 'NEUTRAL', false, `Stand-aside: Low regime confidence ${classification.confidence.toFixed(0)}% (min: ${minConfidenceThreshold}%)`, currentPrice, 0, 0, 0, {
+          strategy: this.settings.activeStrategy || 'AUTONOMOUS',
           marketRegime: classification.label,
           macroColor: globalRegime.macroColor,
           regimeConfidence: classification.confidence
@@ -1953,7 +2010,15 @@ export class AutoTrader {
 
     // 2. Evaluate Strategy Routing (pass closed-candle classification to prevent dead code)
     const rawSignal = await this._evaluateSignalRaw(symbol, klines, currentPrice, classification, globalRegime);
-    if (!rawSignal) return null;
+    if (!rawSignal) {
+      this.logScanResult(symbol, 'NEUTRAL', false, 'Failed Technical Gates (No Setup Confirmation)', currentPrice, 0, 0, 0, {
+        strategy: this.settings.activeStrategy || 'AUTONOMOUS',
+        marketRegime: classification.label,
+        macroColor: globalRegime.macroColor,
+        regimeConfidence: classification.confidence
+      });
+      return null;
+    }
     
     // 3. Structural R:R Filter >= 3.0 (Stand-Aside Rule)
     const risk = Math.abs(currentPrice - rawSignal.sl);
@@ -1971,7 +2036,15 @@ export class AutoTrader {
       });
       return null;
     }
-    if (risk <= 0) return null;
+    if (risk <= 0) {
+      this.logScanResult(symbol, rawSignal.direction, false, 'Gate Failed: Invalid SL (Risk <= 0)', currentPrice, rawSignal.sl, rawSignal.tp1, rawSignal.score, {
+        strategy: rawSignal.strategy,
+        marketRegime: classification.label,
+        macroColor: globalRegime.macroColor,
+        regimeConfidence: classification.confidence
+      });
+      return null;
+    }
     
     const reward3 = Math.abs(rawSignal.tp3 - currentPrice);
     const structuralRR = reward3 / risk;
@@ -2111,7 +2184,12 @@ export class AutoTrader {
           this.logScanResult(symbol, sig.direction!, false,
             `Real 3R Room Failed: ${roomResult.reason}`,
             currentPrice, sig.stop!, sig.tp1!, sig.score || 0,
-            { strategy: 'EMA_GAP_PULLBACK' });
+            { 
+              strategy: 'EMA_GAP_PULLBACK',
+              marketRegime: classification?.label || '5 EMA Trend Continuation',
+              macroColor: globalRegime?.macroColor,
+              regimeConfidence: classification?.confidence
+            });
           return null;
         }
         // Attach diagnostics to signal
@@ -2254,16 +2332,7 @@ export class AutoTrader {
       return { ...signal, strategy: 'TREND_PULLBACK', marketRegime: 'Trending [EMA Pullback]' };
     }
 
-    // 5. Macro Range Breakout
-    if (strat === 'MACRO_RANGE_BREAKOUT') {
-      const atrSeries = calculateATR(closedKlines, 14);
-      const currentAtr = atrSeries[atrSeries.length - 1];
-      const sig = detectMacroRangeBreakout(closedKlines, currentPrice, currentAtr);
-      if (!sig) return null;
-      return { ...sig, strategy: 'MACRO_RANGE_BREAKOUT', marketRegime: 'Macro Accumulation' };
-    }
-
-    // 6. SMC Liquidity Sweep
+    // 5. SMC Liquidity Sweep
     if (strat === 'SMC_LIQUIDITY_SWEEP' || strat === 'LIQUIDITY_SWEEP_REVERSAL') {
       try {
         const htf = this.settings.smcHtfResolution || '1h';
@@ -2643,7 +2712,9 @@ export class AutoTrader {
         activeStrategies = [this.settings.activeStrategy];
       }
     } else {
-      activeStrategies = ['VOLATILITY_COMPRESSION'].filter(s => !deletedList.includes(s));
+      const isRange = this.settings.coindcxActiveRegime === 'RANGE' || (this.settings.coindcxActiveRegime as string) === 'RANGE_CHOP';
+      const defaultStrat = isRange ? 'BINANCE_COMPOSITE' : 'VOLATILITY_COMPRESSION';
+      activeStrategies = [defaultStrat].filter(s => !deletedList.includes(s));
     }
 
     // Evaluate all active selective strategies
@@ -2918,17 +2989,7 @@ export class AutoTrader {
         }
       }
 
-      if (candidate.id === 'MACRO_RANGE_BREAKOUT' && (currentRegime.startsWith('BREAKOUT') || currentRegime === 'RANGING')) {
-        const atrSeries = calculateATR(closedKlines, 14);
-        const currentAtr = atrSeries[atrSeries.length - 1];
-        const macroSig = detectMacroRangeBreakout(closedKlines, currentPrice, currentAtr);
-        if (macroSig && (!candidate.direction || macroSig.direction === candidate.direction)) {
-          pendingSignal = {
-            ...macroSig,
-            strategy: 'MACRO_RANGE_BREAKOUT'
-          };
-        }
-      }
+
 
       if (candidate.id === 'EMA_GAP_PULLBACK' && currentRegime.startsWith('TRENDING')) {
         const htfCandles = await this.getKlines(symbol, '1h');
@@ -3479,15 +3540,7 @@ export class AutoTrader {
           {}
         );
 
-        if (v1Result) {
-          if (v1Result.rejectionReason) {
-            this.logScanResult(symbol, 'NEUTRAL', false, `Range Gate [${v1Result.rejectionReason}]: ${v1Result.reason}`, currentPrice, 0, 0, 0, {
-              strategy: 'BINANCE_COMPOSITE',
-              regimeConfidence: v1Result.regimeScore
-            });
-            return null;
-          }
-
+        if (v1Result && !v1Result.rejectionReason) {
           const sig = v1Result as RangeRegimeSignal;
           const slBuffer = typeof this.settings.rangeConfig?.slBufferAtr === 'number' ? (this.settings.rangeConfig.slBufferAtr as number) : 0.20;
           const estAtr = slBuffer > 0 ? sig.riskPerUnit / slBuffer : currentPrice * 0.015;

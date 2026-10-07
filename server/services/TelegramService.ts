@@ -352,8 +352,6 @@ export class TelegramService {
       stratName = '🎯 Trend Pullback Retest (State Machine)';
     } else if (pos.strategy === 'EMA_GAP_PULLBACK') {
       stratName = '📊 5 EMA Gap Pullback';
-    } else if (pos.strategy === 'DELTA_CLIMAX') {
-      stratName = '⚡ Climax Reversal';
     } else if (pos.strategy === 'VOLATILITY_COMPRESSION') {
       stratName = '💥 VCB Breakout (Squeeze)';
     } else if (pos.strategy === 'EARLY_COIL_BREAKOUT') {
@@ -444,8 +442,6 @@ export class TelegramService {
       stratName = '🎯 Trend Pullback Retest';
     } else if (pos.strategy === 'EMA_GAP_PULLBACK') {
       stratName = '📊 5 EMA Gap Pullback';
-    } else if (pos.strategy === 'DELTA_CLIMAX') {
-      stratName = '⚡ Climax Reversal';
     } else if (pos.strategy === 'VOLATILITY_COMPRESSION') {
       stratName = '💥 VCB Breakout';
     } else if (pos.strategy === 'EARLY_COIL_BREAKOUT') {

@@ -238,7 +238,7 @@ export default function GateManager({
           <button
             onClick={() => {
               setSelectedStrategy('BINANCE_COMPOSITE');
-              const next: AppSettings = { ...settings, activeStrategy: 'BINANCE_COMPOSITE' };
+              const next: AppSettings = { ...settings, activeStrategy: 'BINANCE_COMPOSITE', enabledStrategies: ['BINANCE_COMPOSITE'] };
               setSettings(next);
               fetch('/api/bot/settings', {
                 method: 'POST',
@@ -258,7 +258,7 @@ export default function GateManager({
           <button
             onClick={() => {
               setSelectedStrategy('EMA_GAP_PULLBACK');
-              const next: AppSettings = { ...settings, activeStrategy: 'EMA_GAP_PULLBACK', egpEnabled: true };
+              const next: AppSettings = { ...settings, activeStrategy: 'EMA_GAP_PULLBACK', enabledStrategies: ['EMA_GAP_PULLBACK'], egpEnabled: true };
               setSettings(next);
               fetch('/api/bot/settings', {
                 method: 'POST',
@@ -278,7 +278,7 @@ export default function GateManager({
           <button
             onClick={() => {
               setSelectedStrategy('VOLATILITY_COMPRESSION');
-              const next: AppSettings = { ...settings, activeStrategy: 'VOLATILITY_COMPRESSION' };
+              const next: AppSettings = { ...settings, activeStrategy: 'VOLATILITY_COMPRESSION', enabledStrategies: ['VOLATILITY_COMPRESSION'] };
               setSettings(next);
               fetch('/api/bot/settings', {
                 method: 'POST',
@@ -298,7 +298,7 @@ export default function GateManager({
           <button
             onClick={() => {
               setSelectedStrategy('TREND_PULLBACK');
-              const next: AppSettings = { ...settings, activeStrategy: 'TREND_PULLBACK' };
+              const next: AppSettings = { ...settings, activeStrategy: 'TREND_PULLBACK', enabledStrategies: ['TREND_PULLBACK'] };
               setSettings(next);
               fetch('/api/bot/settings', {
                 method: 'POST',
@@ -318,7 +318,7 @@ export default function GateManager({
           <button
             onClick={() => {
               setSelectedStrategy('EARLY_COIL_BREAKOUT');
-              const next: AppSettings = { ...settings, activeStrategy: 'EARLY_COIL_BREAKOUT' };
+              const next: AppSettings = { ...settings, activeStrategy: 'EARLY_COIL_BREAKOUT', enabledStrategies: ['EARLY_COIL_BREAKOUT'] };
               setSettings(next);
               fetch('/api/bot/settings', {
                 method: 'POST',

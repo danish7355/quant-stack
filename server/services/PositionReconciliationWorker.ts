@@ -37,12 +37,30 @@ export class PositionReconciliationWorker {
       const exchange = executionAdapter.getExchangeInstance();
       if (!exchange) return;
 
-      // 1. Fetch Open Binance Positions
-      const binancePositionsRaw = await exchange.fapiPrivateGetPositionRisk();
-      const activeBinancePositions = binancePositionsRaw.filter((p: any) => parseFloat(p.positionAmt) !== 0);
+      // 1. Fetch Open Binance Positions (use v2/v3 as v1 was deprecated and removed by Binance)
+      let binancePositionsRaw: any[] = [];
+      if (typeof exchange.fapiPrivateV2GetPositionRisk === 'function') {
+        binancePositionsRaw = await exchange.fapiPrivateV2GetPositionRisk();
+      } else if (typeof exchange.fapiPrivateV3GetPositionRisk === 'function') {
+        binancePositionsRaw = await exchange.fapiPrivateV3GetPositionRisk();
+      } else if (typeof exchange.fetchPositions === 'function') {
+        binancePositionsRaw = await exchange.fetchPositions();
+      }
+      const activeBinancePositions = Array.isArray(binancePositionsRaw)
+        ? binancePositionsRaw.filter((p: any) => parseFloat(p.positionAmt || (p.info && p.info.positionAmt) || 0) !== 0)
+        : [];
       
       // 2. Fetch Open Binance Orders (to verify stops exist)
-      const openOrders = await exchange.fapiPrivateGetOpenOrders();
+      let openOrders: any[] = [];
+      try {
+        if (typeof exchange.fetchOpenOrders === 'function') {
+          openOrders = await exchange.fetchOpenOrders();
+        } else if (typeof exchange.fapiPrivateGetOpenOrders === 'function') {
+          openOrders = await exchange.fapiPrivateGetOpenOrders();
+        }
+      } catch (orderErr) {
+        console.warn('[Reconciliation] Warning fetching open orders:', orderErr);
+      }
       
       // 3. Fetch Internal Positions (safe check)
       let activeDbPositions: any[] = [];

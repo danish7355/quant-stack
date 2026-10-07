@@ -461,7 +461,7 @@ function buildSetupsAndSettingsForRegime(
           name: 'Setup 1: Range Boundary Fade',
           type: 'RANGE_FADE',
           timeframe: '5m',
-          mappedStrategyId: 'MACRO_RANGE_BREAKOUT',
+          mappedStrategyId: 'BINANCE_COMPOSITE',
           summary: 'Fade range extremes (buy support, sell resistance) — strictly no breakout chasing',
           conditions: [
             '15m chart displays clear horizontal boundaries with 2–3 touches each',

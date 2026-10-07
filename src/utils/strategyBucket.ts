@@ -47,7 +47,7 @@ export const DEFAULT_STRATEGY_BUCKET: StrategyBucketItem[] = [
   { id: 'EMA5_REJECTION_RECLAIM_V1', name: 'EMA5 Rejection Reclaim V1', description: 'Rejection wick and displacement reclaim across 5 EMA', priority: 2, enabled: true },
   { id: 'VOLATILITY_COMPRESSION', name: 'VCB Breakout', description: 'Volatility compression breakout with volume confirmation', priority: 2, enabled: true },
   { id: 'EARLY_COIL_BREAKOUT', name: 'Early Coil Breakout', description: 'Fractal compression breakout with structural trigger', priority: 2, enabled: true },
-  { id: 'MACRO_RANGE_BREAKOUT', name: 'Macro Range Breakout', description: 'Multi-day range boundary expansion breakout', priority: 2, enabled: true },
+  { id: 'TWO_SIDED_COIL_BREAKOUT', name: 'Two-Sided Coil Breakout', description: 'Symmetrical compression coil breakout', priority: 2, enabled: true },
   { id: 'BINANCE_COMPOSITE', name: 'Range Mean Reversion', description: 'Bollinger Band extreme & RSI re-entry inside verified range', priority: 1, enabled: true },
   { id: 'SMC_LIQUIDITY_SWEEP', name: 'LSR Liquidity Sweep', description: 'Protected structure sweep and institutional FVG retest', priority: 2, enabled: true }
 ];
@@ -82,20 +82,17 @@ export const strategyBucketMap: Record<MarketRegimeType, StrategyBucketItem[]> =
   RANGING: [
     { id: 'BINANCE_COMPOSITE', name: 'Range Mean Reversion', description: 'Bollinger Bands & RSI re-entry mean reversion', priority: 1, enabled: true },
     { id: 'EMA5_REJECTION_RECLAIM_V1', name: 'EMA5 Rejection Reclaim V1', description: 'Range boundary rejection and reclaim', priority: 2, enabled: true },
-    { id: 'MACRO_RANGE_BREAKOUT', name: 'Macro Range Breakout', description: 'Macro boundary test and breakout', priority: 2, enabled: true },
     { id: 'SMC_LIQUIDITY_SWEEP', name: 'LSR Liquidity Sweep', description: 'Sweep of range boundaries', priority: 2, enabled: true }
   ],
   BREAKOUT_UP: [
     { id: 'VOLATILITY_COMPRESSION', name: 'VCB Breakout', description: 'Long volatility breakout beyond compression', priority: 1, direction: 'LONG', enabled: true },
     { id: 'EARLY_COIL_BREAKOUT', name: 'Early Coil Breakout', description: 'Long coil expansion', priority: 2, direction: 'LONG', enabled: true },
-    { id: 'TWO_SIDED_COIL_BREAKOUT', name: 'Two-Sided Coil Breakout', description: 'Long symmetrical coil breakout', priority: 2, direction: 'LONG', enabled: true },
-    { id: 'MACRO_RANGE_BREAKOUT', name: 'Macro Range Breakout', description: 'Long macro range breakout', priority: 2, direction: 'LONG', enabled: true }
+    { id: 'TWO_SIDED_COIL_BREAKOUT', name: 'Two-Sided Coil Breakout', description: 'Long symmetrical coil breakout', priority: 2, direction: 'LONG', enabled: true }
   ],
   BREAKOUT_DOWN: [
     { id: 'VOLATILITY_COMPRESSION', name: 'VCB Breakout', description: 'Short volatility breakdown beyond compression', priority: 1, direction: 'SHORT', enabled: true },
     { id: 'EARLY_COIL_BREAKOUT', name: 'Early Coil Breakout', description: 'Short coil expansion', priority: 2, direction: 'SHORT', enabled: true },
-    { id: 'TWO_SIDED_COIL_BREAKOUT', name: 'Two-Sided Coil Breakout', description: 'Short symmetrical coil breakdown', priority: 2, direction: 'SHORT', enabled: true },
-    { id: 'MACRO_RANGE_BREAKOUT', name: 'Macro Range Breakout', description: 'Short macro range breakdown', priority: 2, direction: 'SHORT', enabled: true }
+    { id: 'TWO_SIDED_COIL_BREAKOUT', name: 'Two-Sided Coil Breakout', description: 'Short symmetrical coil breakdown', priority: 2, direction: 'SHORT', enabled: true }
   ],
   EXHAUSTION_UP: [
     { id: 'SMC_LIQUIDITY_SWEEP', name: 'LSR Liquidity Sweep', description: 'Short liquidity run exhaustion', priority: 1, direction: 'SHORT', enabled: true },

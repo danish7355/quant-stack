@@ -17,7 +17,7 @@ interface StrategyPanelProps {
 }
 
 export const AVAILABLE_STRATEGIES: {
-  id: 'EMA5_EXACT_ENTRY_V2' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'SMC_LIQUIDITY_SWEEP' | 'BINANCE_COMPOSITE' | 'EARLY_COIL_BREAKOUT' | 'TWO_SIDED_COIL_BREAKOUT' | 'MACRO_RANGE_BREAKOUT' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1';
+  id: 'EMA5_EXACT_ENTRY_V2' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'SMC_LIQUIDITY_SWEEP' | 'BINANCE_COMPOSITE' | 'EARLY_COIL_BREAKOUT' | 'TWO_SIDED_COIL_BREAKOUT' | 'EMA5_EXACT_ENTRY_V1' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1';
   name: string;
   shortName: string;
   type: string;
@@ -98,13 +98,13 @@ export const AVAILABLE_STRATEGIES: {
     icon: Layers,
   },
   {
-    id: 'MACRO_RANGE_BREAKOUT',
-    name: 'Macro Range Breakout',
-    shortName: 'Macro Breakout',
-    type: 'Range Expansion',
-    badgeBg: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40',
-    description: 'Multi-day range boundary expansion breakout on institutional volume surge.',
-    icon: Compass,
+    id: 'EMA5_EXACT_ENTRY_V1',
+    name: 'EMA 5 Exact Price Action Entry V1',
+    shortName: 'EMA 5 Exact V1',
+    type: 'Exact Touch/Pullback',
+    badgeBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+    description: 'Exact 5m EMA 5 touch and rejection trigger with structured ATR stop loss and 1:3 asymmetric target.',
+    icon: Zap,
   },
   {
     id: 'EMA_GAP_PULLBACK',
@@ -355,6 +355,55 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
     setSaveStatus(`Strategy removed from engine`);
     setStrategyToDelete(null);
     setTimeout(() => setSaveStatus(null), 3000);
+  };
+
+  const handlePermanentDeleteStrategy = (stratId: string) => {
+    const nextDeleted = deletedStrategies.filter(id => id !== stratId);
+    const nextEnabled = enabledStrategies.filter(id => id !== stratId);
+    const nextBucket = bucket.filter(item => item.id !== stratId);
+    const remaining = visibleStrategies.filter(s => s.id !== stratId);
+    const nextActive = (settings.activeStrategy === stratId
+      ? (nextEnabled[0] || remaining[0]?.id || 'EMA5_EXACT_ENTRY_V2')
+      : settings.activeStrategy) as any;
+
+    const nextSettings: AppSettings = {
+      ...settings,
+      deletedStrategies: nextDeleted,
+      enabledStrategies: nextEnabled,
+      strategyBucket: nextBucket,
+      activeStrategy: nextActive,
+      eev2Enabled: nextEnabled.includes('EMA5_EXACT_ENTRY_V2'),
+      tprEnabled: nextEnabled.includes('TREND_PULLBACK_RETEST'),
+    };
+
+    setSettings(nextSettings);
+    fetch('/api/bot/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(nextSettings)
+    }).catch(console.error);
+
+    setSaveStatus(`Strategy permanently purged`);
+    setStrategyToDelete(null);
+    setTimeout(() => setSaveStatus(null), 3000);
+  };
+
+  const handlePurgeAllDeletedStrategies = () => {
+    const nextSettings: AppSettings = {
+      ...settings,
+      deletedStrategies: [],
+    };
+
+    setSettings(nextSettings);
+    fetch('/api/bot/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(nextSettings)
+    }).catch(console.error);
+
+    setSaveStatus(`All deleted strategies permanently purged`);
+    setShowRestoreModal(false);
+    setTimeout(() => setSaveStatus(null), 2500);
   };
 
   const handleRestoreStrategy = (stratId: string) => {
@@ -1248,9 +1297,16 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                 <button
                   type="button"
                   onClick={() => handleConfirmDelete(strategyToDelete)}
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-600/80 hover:bg-amber-500 text-white transition-colors cursor-pointer"
+                >
+                  Archive / Disable
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePermanentDeleteStrategy(strategyToDelete)}
                   className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white transition-colors cursor-pointer flex items-center gap-1.5 shadow-lg shadow-rose-950/50"
                 >
-                  <Trash2 className="w-3.5 h-3.5" /> Confirm Delete
+                  <Trash2 className="w-3.5 h-3.5" /> Purge Permanently
                 </button>
               </div>
             </div>
@@ -1278,7 +1334,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
               <div className="space-y-2 max-h-72 overflow-y-auto custom-scrollbar">
                 {deletedStrategies.length === 0 ? (
                   <div className="py-6 px-4 text-center space-y-2">
-                    <p className="text-xs text-gray-300 font-medium">All 10 strategies are present in your active engine registry.</p>
+                    <p className="text-xs text-gray-300 font-medium">All {AVAILABLE_STRATEGIES.length} canonical strategies are active in your engine registry.</p>
                     <p className="text-[11px] text-gray-500">To enable or disable any strategy, use the toggle checkboxes on the strategy cards.</p>
                   </div>
                 ) : (
@@ -1290,27 +1346,48 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
                           <div className="text-xs font-bold text-white truncate">{stratMeta?.name || stratId}</div>
                           <div className="text-[10px] text-gray-500 font-mono">{stratId}</div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleRestoreStrategy(stratId)}
-                          className="px-2.5 py-1 text-xs font-semibold rounded bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center gap-1 shrink-0 cursor-pointer"
-                        >
-                          <Plus className="w-3 h-3" /> Add Back
-                        </button>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleRestoreStrategy(stratId)}
+                            className="px-2.5 py-1 text-xs font-semibold rounded bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center gap-1 cursor-pointer"
+                          >
+                            <Plus className="w-3 h-3" /> Add Back
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handlePermanentDeleteStrategy(stratId)}
+                            className="px-2 py-1 text-xs font-semibold rounded bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800/60 transition-colors flex items-center gap-1 cursor-pointer"
+                            title="Permanently remove from deleted list"
+                          >
+                            <Trash2 className="w-3 h-3" /> Purge
+                          </button>
+                        </div>
                       </div>
                     );
                   })
                 )}
               </div>
 
-              <div className="flex items-center justify-between pt-3 border-t border-gray-800">
-                <button
-                  type="button"
-                  onClick={handleRestoreAllStrategies}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-amber-300 border border-amber-800/40 transition-colors cursor-pointer"
-                >
-                  Restore All Defaults
-                </button>
+              <div className="flex items-center justify-between pt-3 border-t border-gray-800 flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleRestoreAllStrategies}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-amber-300 border border-amber-800/40 transition-colors cursor-pointer"
+                  >
+                    Restore All Defaults
+                  </button>
+                  {deletedStrategies.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handlePurgeAllDeletedStrategies}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800/50 transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      <Trash2 className="w-3 h-3" /> Purge All Deleted
+                    </button>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => setShowRestoreModal(false)}

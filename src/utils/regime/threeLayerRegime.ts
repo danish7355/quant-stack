@@ -889,20 +889,14 @@ export function evaluateTradeabilityGate(params: {
  */
 export function mapRegimeToStrategies(
   regime: CoreRegimeType,
-  bias: DirectionBiasAnalysis['biasDirection']
+  bias: DirectionBiasAnalysis['biasDirection'],
+  marketBreadth100?: MarketBreadth100
 ): RegimeStrategyRecommendation[] {
+  let baseStrategies: RegimeStrategyRecommendation[];
+
   switch (regime) {
     case 'TREND':
-      return [
-        {
-          strategyId: 'EMA5_EXACT_ENTRY_V2',
-          name: 'EMA 5 Exact Entry V2',
-          expectedR: 1.45,
-          winRatePct: 62,
-          sampleTrades: 128,
-          suitability: 'FAVORED',
-          rationale: `Exact alert-break trigger aligned with ${bias} trend and 15m structure.`
-        },
+      baseStrategies = [
         {
           strategyId: 'TREND_PULLBACK',
           name: 'Trend EMA Pullback',
@@ -911,6 +905,15 @@ export function mapRegimeToStrategies(
           sampleTrades: 94,
           suitability: 'FAVORED',
           rationale: `Dynamic 20/50 EMA value zone pullback with ${bias} bias.`
+        },
+        {
+          strategyId: 'EMA5_EXACT_ENTRY_V2',
+          name: 'EMA 5 Exact Entry V2',
+          expectedR: 1.45,
+          winRatePct: 62,
+          sampleTrades: 128,
+          suitability: 'FAVORED',
+          rationale: `Exact alert-break trigger aligned with ${bias} trend and 15m structure.`
         },
         {
           strategyId: 'TREND_PULLBACK_RETEST',
@@ -922,9 +925,10 @@ export function mapRegimeToStrategies(
           rationale: '5-stage confirmation state machine for conservative entries.'
         }
       ];
+      break;
 
     case 'RANGE':
-      return [
+      baseStrategies = [
         {
           strategyId: 'BINANCE_COMPOSITE',
           name: 'Range Mean Reversion',
@@ -944,9 +948,10 @@ export function mapRegimeToStrategies(
           rationale: 'Captures stop hunts beyond range boundaries with FVG retests.'
         }
       ];
+      break;
 
     case 'COMPRESSION':
-      return [
+      baseStrategies = [
         {
           strategyId: 'VOLATILITY_COMPRESSION',
           name: 'VCB Breakout',
@@ -964,22 +969,75 @@ export function mapRegimeToStrategies(
           sampleTrades: 64,
           suitability: 'FAVORED',
           rationale: 'Enters symmetrical triangle apex early with tight risk (<0.8% stop).'
+        },
+        {
+          strategyId: 'TWO_SIDED_COIL_BREAKOUT',
+          name: 'Two-Sided Coil Breakout',
+          expectedR: 1.70,
+          winRatePct: 50,
+          sampleTrades: 52,
+          suitability: 'ACCEPTABLE',
+          rationale: 'Symmetrical compression breakout capturing asymmetric expansion bursts.'
         }
       ];
+      break;
 
     case 'EXPANSION':
-      return [
+      baseStrategies = [
         {
           strategyId: 'SMC_LIQUIDITY_SWEEP',
           name: 'SMC Liquidity Sweep',
-          expectedR: 1.15,
-          winRatePct: 46,
-          sampleTrades: 58,
-          suitability: 'ACCEPTABLE',
+          expectedR: 1.45,
+          winRatePct: 54,
+          sampleTrades: 78,
+          suitability: 'FAVORED',
           rationale: 'Climax reversal sweeps at extreme exhaustion. Avoids breakout chasing into late-stage bars.'
+        },
+        {
+          strategyId: 'VOLATILITY_COMPRESSION',
+          name: 'VCB Breakout',
+          expectedR: 1.50,
+          winRatePct: 50,
+          sampleTrades: 62,
+          suitability: 'ACCEPTABLE',
+          rationale: 'Follow-through expansion on newly emerging trends after volatility surge.'
         }
       ];
+      break;
   }
+
+  // Operator Rule: If trend market regime is > 20% across the top 100 coins, activate trend based strategy too
+  const trendPct = marketBreadth100?.trendPct ?? 0;
+  if (regime !== 'TREND' && trendPct > 20) {
+    const trendStrategies: RegimeStrategyRecommendation[] = [
+      {
+        strategyId: 'TREND_PULLBACK',
+        name: 'Trend EMA Pullback',
+        expectedR: 1.25,
+        winRatePct: 58,
+        sampleTrades: 94,
+        suitability: 'FAVORED',
+        rationale: `Market Breadth condition: ${trendPct.toFixed(0)}% (>20%) of Top 100 coins are in TREND regime. Arms trend pullback entries for trending pairs alongside ${regime.toLowerCase()} strategies.`
+      },
+      {
+        strategyId: 'EMA5_EXACT_ENTRY_V2',
+        name: 'EMA 5 Exact Entry V2',
+        expectedR: 1.45,
+        winRatePct: 62,
+        sampleTrades: 128,
+        suitability: 'ACCEPTABLE',
+        rationale: `Market Breadth condition: ${trendPct.toFixed(0)}% (>20%) of Top 100 coins are in TREND regime. Arms 5 EMA momentum breakout entries.`
+      }
+    ];
+
+    for (const ts of trendStrategies) {
+      if (!baseStrategies.some(s => s.strategyId === ts.strategyId)) {
+        baseStrategies.push(ts);
+      }
+    }
+  }
+
+  return baseStrategies;
 }
 
 /**
@@ -1094,7 +1152,7 @@ export function analyzeThreeLayerRegime(input: {
   });
 
   // Strategy Recommendations
-  const recommendedStrategies = mapRegimeToStrategies(regime.confirmedRegime, bias.biasDirection);
+  const recommendedStrategies = mapRegimeToStrategies(regime.confirmedRegime, bias.biasDirection, input.marketBreadth100);
 
   return {
     timestamp,

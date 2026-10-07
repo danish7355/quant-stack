@@ -146,7 +146,7 @@ describe('Multi-Strategy Activation & Arbitration Engine', () => {
       expect(ids).toContain('EARLY_COIL_BREAKOUT');
       expect(ids).toContain('EMA5_PA_VOLUME_V1');
       expect(ids).toContain('EMA5_REJECTION_RECLAIM_V1');
-      expect(ids).toContain('MACRO_RANGE_BREAKOUT');
+      expect(ids).toContain('EMA5_EXACT_ENTRY_V1');
       expect(ids).toContain('EMA_GAP_PULLBACK');
       expect(ids).toContain('TWO_SIDED_COIL_BREAKOUT');
       expect(AVAILABLE_STRATEGIES.length).toBe(12);

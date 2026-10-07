@@ -105,13 +105,21 @@ export function getStrategyDisplayName(strategyKey?: string): {
         badgeBg: 'bg-teal-500/20 text-teal-300 border-teal-500/40',
         description: '5 EMA gap candle breakout following structured pullback with HTF 50 EMA trend alignment and anti-overextension guard.'
       };
-    case 'DELTA_CLIMAX':
+    case 'EMA5_EXACT_ENTRY_V2':
       return {
-        name: 'Delta Climax Reversal',
-        shortName: 'Delta Climax',
-        tag: 'REVERSAL',
-        badgeBg: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
-        description: 'Exhaustion volume spikes with rejection wicks and momentum divergence at macro extremes.'
+        name: 'EMA 5 Exact Price Action Entry V2',
+        shortName: 'EMA 5 Exact V2',
+        tag: 'EXACT ENTRY',
+        badgeBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+        description: 'Exact 5m EMA 5 Alert → Break trigger with 15m structure regime and multi-TF level targets.'
+      };
+    case 'TWO_SIDED_COIL_BREAKOUT':
+      return {
+        name: 'Two-Sided Coil Breakout',
+        shortName: 'Coil Breakout',
+        tag: 'SQUEEZE',
+        badgeBg: 'bg-orange-500/20 text-orange-300 border-orange-500/40',
+        description: 'Symmetrical triangular compression breakout capturing asymmetric expansion bursts.'
       };
     case 'EARLY_COIL_BREAKOUT':
       return {
@@ -120,14 +128,6 @@ export function getStrategyDisplayName(strategyKey?: string): {
         tag: 'MOMENTUM',
         badgeBg: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40',
         description: 'Pre-blast micro-consolidation detection for early high-conviction breakout entries.'
-      };
-    case 'MACRO_RANGE_BREAKOUT':
-      return {
-        name: 'Macro Range Box Breakout',
-        shortName: 'Macro Box',
-        tag: 'RANGE',
-        badgeBg: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
-        description: 'Darvas box accumulation breakout targeting long-term trending expansions above multi-week range highs.'
       };
     case 'AUTO_REGIME':
       return {
@@ -140,7 +140,7 @@ export function getStrategyDisplayName(strategyKey?: string): {
     case 'BINANCE_COMPOSITE':
       return {
         name: 'Range Mean Reversion',
-        shortName: 'Mean Reversion',
+        shortName: 'Range Mean Reversion',
         tag: 'RANGE-FADE',
         badgeBg: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
         description: 'Fades 2-sigma Bollinger Band extremes back to 200 SMA mean in verified horizontal ranges.'
@@ -157,13 +157,17 @@ export function getStrategyDisplayName(strategyKey?: string): {
 }
 
 export function getActiveStrategiesList(settings: AppSettings): StrategyMeta[] {
+  const deleted = settings.deletedStrategies || [];
   let keys: string[] = [];
   if (settings.enabledStrategies && Array.isArray(settings.enabledStrategies) && settings.enabledStrategies.length > 0) {
-    keys = settings.enabledStrategies;
-  } else if (settings.activeStrategy) {
+    keys = settings.enabledStrategies.filter(k => !deleted.includes(k));
+  } else if (settings.activeStrategy && !deleted.includes(settings.activeStrategy)) {
     keys = [settings.activeStrategy];
   } else {
-    keys = ['VOLATILITY_COMPRESSION'];
+    const defaultStrat = (settings.coindcxActiveRegime === 'RANGE' || settings.coindcxActiveRegime === 'RANGE_CHOP')
+      ? 'BINANCE_COMPOSITE'
+      : 'VOLATILITY_COMPRESSION';
+    keys = [defaultStrat].filter(k => !deleted.includes(k));
   }
 
   // Deduplicate keys preserving order
@@ -252,7 +256,12 @@ export function evaluateEngineStatus(
   }
 
   // 5. Risk Limits (Max Positions, Daily Loss, Consecutive Losses)
+  const bypassPositions = Boolean(settings.bypassMaxPositions || settings.disabledGates?.RISK_maxConcurrent);
+  const bypassDailyLoss = Boolean(settings.bypassDailyLossLimit || settings.disabledGates?.RISK_dailyLoss);
+  const bypassLossStreak = Boolean(settings.bypassMaxConsecutiveLosses);
+
   if (
+    !bypassPositions &&
     systemHealth?.activePositions !== undefined &&
     systemHealth?.maxConcurrentTrades !== undefined &&
     systemHealth.activePositions >= systemHealth.maxConcurrentTrades &&
@@ -262,6 +271,7 @@ export function evaluateEngineStatus(
   }
 
   if (
+    !bypassDailyLoss &&
     systemHealth?.dailyLossPct !== undefined &&
     systemHealth?.dailyLossLimitPct !== undefined &&
     systemHealth.dailyLossPct <= systemHealth.dailyLossLimitPct
@@ -270,6 +280,7 @@ export function evaluateEngineStatus(
   }
 
   if (
+    !bypassLossStreak &&
     systemHealth?.consecutiveLosses !== undefined &&
     systemHealth?.maxConsecutiveLosses !== undefined &&
     systemHealth.consecutiveLosses >= systemHealth.maxConsecutiveLosses &&
@@ -295,18 +306,18 @@ export function evaluateEngineStatus(
   const isFeedOk = connectionStatus === 'CONNECTED' && !isStale && systemHealth?.marketData !== 'STALE';
   const isKillSwitchOk = !settings.killSwitchActive;
   const isMacroFilterOk = !globalFilterState.isPausing && !systemHealth?.globalFilterActive;
-  const isPositionsOk = !(
+  const isPositionsOk = bypassPositions || !(
     systemHealth?.activePositions !== undefined &&
     systemHealth?.maxConcurrentTrades !== undefined &&
     systemHealth.activePositions >= systemHealth.maxConcurrentTrades &&
     systemHealth.maxConcurrentTrades > 0
   );
-  const isDailyLossOk = !(
+  const isDailyLossOk = bypassDailyLoss || !(
     systemHealth?.dailyLossPct !== undefined &&
     systemHealth?.dailyLossLimitPct !== undefined &&
     systemHealth.dailyLossPct <= systemHealth.dailyLossLimitPct
   );
-  const isLossStreakOk = !(
+  const isLossStreakOk = bypassLossStreak || !(
     systemHealth?.consecutiveLosses !== undefined &&
     systemHealth?.maxConsecutiveLosses !== undefined &&
     systemHealth.consecutiveLosses >= systemHealth.maxConsecutiveLosses &&
@@ -360,12 +371,14 @@ export function evaluateEngineStatus(
       category: 'RISK',
       status: isPositionsOk ? 'PASS' : 'BLOCK',
       value: (systemHealth?.activePositions !== undefined && systemHealth?.maxConcurrentTrades !== undefined)
-        ? `${systemHealth.activePositions} / ${systemHealth.maxConcurrentTrades} in use`
-        : `Max ${settings.maxConcurrentTrades || 3} Concurrent`,
+        ? `${systemHealth.activePositions} / ${systemHealth.maxConcurrentTrades} in use${bypassPositions ? ' (Bypassed)' : ''}`
+        : `Max ${settings.maxConcurrentTrades || 3} Concurrent${bypassPositions ? ' (Bypassed)' : ''}`,
       detail: isPositionsOk
-        ? (systemHealth?.activePositions !== undefined && systemHealth?.maxConcurrentTrades !== undefined
-            ? `${systemHealth.maxConcurrentTrades - systemHealth.activePositions} open slot(s) ready for new setups`
-            : 'Sufficient open position capacity')
+        ? (bypassPositions
+            ? 'Bypassed by operator (unlimited positions permitted)'
+            : (systemHealth?.activePositions !== undefined && systemHealth?.maxConcurrentTrades !== undefined
+                ? `${systemHealth.maxConcurrentTrades - systemHealth.activePositions} open slot(s) ready for new setups`
+                : 'Sufficient open position capacity'))
         : `All ${systemHealth?.maxConcurrentTrades} position slots full. Waiting for an open position to close (TP/SL).`
     },
     {
@@ -374,10 +387,10 @@ export function evaluateEngineStatus(
       category: 'RISK',
       status: isDailyLossOk ? (systemHealth?.dailyLossPct && systemHealth.dailyLossPct < 0 ? 'WARN' : 'PASS') : 'BLOCK',
       value: systemHealth?.dailyLossPct !== undefined
-        ? `${systemHealth.dailyLossPct.toFixed(2)}% (Limit: ${systemHealth.dailyLossLimitPct ?? -Math.abs(settings.dailyLossLimitPct || 3)}%)`
-        : `Limit: ${settings.dailyLossLimitPct || 3}%`,
+        ? `${systemHealth.dailyLossPct.toFixed(2)}% (Limit: ${systemHealth.dailyLossLimitPct ?? -Math.abs(settings.dailyLossLimitPct || 3)}%)${bypassDailyLoss ? ' (Bypassed)' : ''}`
+        : `Limit: ${settings.dailyLossLimitPct || 3}%${bypassDailyLoss ? ' (Bypassed)' : ''}`,
       detail: isDailyLossOk
-        ? 'Account is safely within the daily loss tolerance limit'
+        ? (bypassDailyLoss ? 'Bypassed by operator (daily loss limits will not block orders)' : 'Account is safely within the daily loss tolerance limit')
         : 'Daily loss limit reached. Trading halted until the daily reset to protect capital.'
     },
     {
@@ -386,9 +399,9 @@ export function evaluateEngineStatus(
       category: 'RISK',
       status: isLossStreakOk ? 'PASS' : 'BLOCK',
       value: systemHealth?.consecutiveLosses !== undefined
-        ? `${systemHealth.consecutiveLosses} / ${systemHealth.maxConsecutiveLosses ?? settings.maxConsecutiveLosses ?? 4} Losses`
-        : `Max ${settings.maxConsecutiveLosses || 4} Losses`,
-      detail: isLossStreakOk ? 'Loss streak counter clear; no cooldown enforced' : 'Loss streak cooldown active. Paused to prevent emotional drawdown.'
+        ? `${systemHealth.consecutiveLosses} / ${systemHealth.maxConsecutiveLosses ?? settings.maxConsecutiveLosses ?? 4} Losses${bypassLossStreak ? ' (Bypassed)' : ''}`
+        : `Max ${settings.maxConsecutiveLosses || 4} Losses${bypassLossStreak ? ' (Bypassed)' : ''}`,
+      detail: isLossStreakOk ? (bypassLossStreak ? 'Bypassed by operator' : 'Loss streak counter clear; no cooldown enforced') : 'Loss streak cooldown active. Paused to prevent emotional drawdown.'
     },
     {
       id: 'killSwitch',
@@ -814,6 +827,17 @@ export function TradeEngineBanner({
                 {modeLabel}
               </span>
 
+              {settings.coindcxActiveRegime && onOpenRegime && (
+                <button
+                  onClick={onOpenRegime}
+                  className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 transition cursor-pointer shrink-0"
+                  title="100-Coin Consensus Regime (Click to open Regime Visualizer)"
+                >
+                  <Compass size={11} className="text-indigo-400" />
+                  <span>{settings.coindcxActiveRegime?.replace('_', ' ')}</span>
+                </button>
+              )}
+
               <div className="h-3.5 w-px bg-[#30363D] hidden lg:block"></div>
 
               {/* Status / Working Fine / Blocker Text */}
@@ -992,13 +1016,22 @@ export function TradeEngineBanner({
                 <span className={`px-1.5 py-0.5 rounded font-bold border ${isLive ? 'bg-red-500/10 text-red-400 border-red-500/40' : 'bg-blue-500/10 text-blue-400 border-blue-500/40'}`}>
                   {modeLabel}
                 </span>
-                {settings.autoActivateRegimeStrategies && (
+                {settings.coindcxActiveRegime && (
                   <>
                     <span>•</span>
-                    <span className="px-1.5 py-0.5 rounded font-bold border bg-emerald-500/10 text-emerald-400 border-emerald-500/40 flex items-center gap-1">
-                      <Compass size={10} className="text-emerald-400 animate-spin" />
-                      <span>{settings.coindcxActiveRegime?.replace('_', ' ') || 'AUTO REGIME'}</span>
-                    </span>
+                    <button
+                      onClick={onOpenRegime}
+                      className="px-2 py-0.5 rounded font-bold border bg-indigo-500/10 text-indigo-300 border-indigo-500/40 flex items-center gap-1.5 hover:bg-indigo-500/20 transition cursor-pointer"
+                      title="100-Coin Market Consensus Regime (Click to open Regime Visualizer)"
+                    >
+                      <Compass size={11} className="text-indigo-400" />
+                      <span>REGIME: {settings.coindcxActiveRegime?.replace('_', ' ')}</span>
+                      {settings.autoActivateRegimeStrategies && (
+                        <span className="text-[9px] px-1 py-0.1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          AUTO-ARMED
+                        </span>
+                      )}
+                    </button>
                   </>
                 )}
               </div>
@@ -1012,6 +1045,14 @@ export function TradeEngineBanner({
                 <span className="text-gray-300">{coinCount}p</span>
                 <span>•</span>
                 <span className={`font-semibold ${isLive ? 'text-red-400' : 'text-blue-400'}`}>{isLive ? 'LIVE' : 'PAPER'}</span>
+                {settings.coindcxActiveRegime && (
+                  <>
+                    <span>•</span>
+                    <button onClick={onOpenRegime} className="text-indigo-300 font-bold hover:underline cursor-pointer">
+                      {settings.coindcxActiveRegime}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
@@ -1163,11 +1204,6 @@ export function TradeEngineBanner({
                   {evaluation.activeStrategies.some(s => s.id === 'EMA5_PA_VOLUME_V1') && (
                     <p>
                       <strong className="text-emerald-400">EMA 5 PA Vol:</strong> 15m Market Structure Swings • Vol &ge; {settings.ema5PaMinVolumeRatio ?? 1.10}x • Gap Range Gate
-                    </p>
-                  )}
-                  {evaluation.activeStrategies.some(s => s.id === 'DELTA_CLIMAX') && (
-                    <p>
-                      <strong className="text-amber-400">Delta Climax:</strong> Capitulation Vol Spike • 3-Bar Exhaustion Reversal
                     </p>
                   )}
                   <p className="text-emerald-400 pt-0.5 flex items-center gap-1 font-medium">

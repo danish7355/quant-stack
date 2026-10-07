@@ -243,6 +243,26 @@ describe('3-Layer Quantitative Regime Engine', () => {
       expect(ids).toContain('EARLY_COIL_BREAKOUT');
       expect(strategies[0].suitability).toBe('FAVORED');
     });
+
+    it('activates trend-based strategies alongside range strategies when market breadth trendPct > 20%', () => {
+      const mockBreadth: any = {
+        trendPct: 24,
+        rangePct: 43,
+        compressionPct: 14,
+        expansionPct: 19,
+        consensusRegime: 'RANGE'
+      };
+      const strategies = mapRegimeToStrategies('RANGE', 'NEUTRAL', mockBreadth);
+      const ids = strategies.map(s => s.strategyId);
+
+      // Base Range strategies
+      expect(ids).toContain('BINANCE_COMPOSITE');
+      expect(ids).toContain('SMC_LIQUIDITY_SWEEP');
+
+      // Trend strategies activated too because trendPct (24%) > 20%
+      expect(ids).toContain('TREND_PULLBACK');
+      expect(ids).toContain('EMA5_EXACT_ENTRY_V2');
+    });
   });
 
   describe('Master analyzeThreeLayerRegime Integration', () => {

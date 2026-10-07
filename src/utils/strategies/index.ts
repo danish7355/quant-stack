@@ -3,7 +3,7 @@
 // Barrel export for all strategy modules, adapters, and core utilities.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export * from './core/index.js';
+export * from './core/index.ts';
 export {
   evaluateStrictGapPullback,
   formatSignalOutput,

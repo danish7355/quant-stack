@@ -377,7 +377,7 @@ export default function ScannerList({
                     : 'hover:bg-gray-800/40';
                 }
 
-                const allPassed = coin.statusReason === 'All gates passed' || (coin.statusReason && (coin.statusReason.includes('EMA5_EXACT_ENTRY_V2') || coin.statusReason.includes('EMA5_EXACT_ENTRY_V1') || coin.statusReason.includes('EMA 5 Exact') || coin.statusReason.includes('EMA5_REJECTION_RECLAIM_V1') || coin.statusReason.includes('EMA 5 Rejection') || coin.statusReason.includes('EMA5 PA') || coin.statusReason.includes('5 EMA Gap') || coin.statusReason.includes('Trend Pullback Retest') || coin.statusReason.includes('TREND_PULLBACK_RETEST') || coin.statusReason.includes('Climax Reversal') || coin.statusReason.includes('EMA_GAP_PULLBACK') || coin.statusReason.includes('EMA5_PA_VOLUME_V1') || coin.statusReason.includes('DELTA_CLIMAX')));
+                const allPassed = coin.statusReason === 'All gates passed' || (coin.statusReason && (coin.statusReason.includes('EMA5_EXACT_ENTRY_V2') || coin.statusReason.includes('EMA5_EXACT_ENTRY_V1') || coin.statusReason.includes('EMA 5 Exact') || coin.statusReason.includes('EMA5_REJECTION_RECLAIM_V1') || coin.statusReason.includes('EMA 5 Rejection') || coin.statusReason.includes('EMA5 PA') || coin.statusReason.includes('5 EMA Gap') || coin.statusReason.includes('Trend Pullback Retest') || coin.statusReason.includes('TREND_PULLBACK_RETEST') || coin.statusReason.includes('EMA_GAP_PULLBACK') || coin.statusReason.includes('EMA5_PA_VOLUME_V1')));
 
                 return (
                   <tr

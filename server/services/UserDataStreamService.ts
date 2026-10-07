@@ -142,6 +142,7 @@ export class UserDataStreamService {
     }
     if (this.ws) {
       this.ws.removeAllListeners();
+      this.ws.on('error', () => {}); // Catch unhandled errors during terminate
       try { this.ws.terminate(); } catch (_) {}
       this.ws = null;
     }

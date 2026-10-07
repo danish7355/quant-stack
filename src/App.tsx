@@ -16,6 +16,7 @@ import TradingChart from './components/TradingChart';
 import PerformancePage from './components/PerformancePage';
 import StrategyPanel from './components/StrategyPanel';
 import GateManager from './components/GateManager';
+import BacktestPanel from './components/BacktestPanel';
 import { RegimeVisualizer } from './components/RegimeVisualizer';
 import { runScoringEngine } from './utils/indicators';
 import { findEmaGapSetup } from './utils/strategies/emaGapPullback';
@@ -1622,6 +1623,7 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
     { id: 'scanner', label: 'Scanner', icon: List },
     { id: 'positions', label: 'Positions & Orders', icon: Activity },
     { id: 'signals', label: 'Signals & Rejects', icon: Activity },
+    { id: 'backtest', label: 'Backtest', icon: Play },
     { id: 'history', label: 'Analytics & Journal', icon: History },
     { id: 'strategy', label: 'Strategies & Gates', icon: GitBranch },
     { id: 'risk', label: 'Risk Center', icon: ShieldAlert },
@@ -1706,7 +1708,7 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative">
         <TopNavigationBar 
-          mode={settings.binanceTestnet ? 'TESTNET' : 'PAPER'} 
+          mode={settings.tradingMode === 'LIVE' ? 'LIVE' : (settings.binanceTestnet ? 'TESTNET' : 'PAPER')} 
           health={systemHealth || {
             engine: engineRunning ? 'RUNNING' : 'PAUSED',
             marketData: isStale ? 'STALE' : 'CONNECTED',
@@ -1873,6 +1875,10 @@ TP3 / Runner: ${finalTp3.toFixed(5)} (Runner, 20%)`;
                 </div>
               </div>
             </div>
+          )}
+
+          {activeTab === 'backtest' && (
+            <BacktestPanel />
           )}
 
           {activeTab === 'history' && (

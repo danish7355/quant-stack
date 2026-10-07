@@ -27,6 +27,7 @@ import { getSignalAudits } from "./server/services/SignalAuditService.js";
 import { getSettingsAudits } from "./server/services/SettingsAuditService.js";
 import { validateTradingSettings } from "./src/shared/TradingSettings.js";
 import { isQuotaExhausted, getRecentTradeLogsFromDisk, readLocalJson } from "./server/services/firestoreSafe.js";
+import { backtestJobManager } from "./server/services/BacktestJobManager.js";
 
 async function startServer() {
   const { app } = expressWs(express());
@@ -77,6 +78,11 @@ async function startServer() {
   positionMonitor.onPositionsChange((positions) => {
     broadcastWsEvent('POSITIONS_UPDATE', positions);
   });
+
+  // Wire BacktestJobManager updates to instant WebSocket broadcasting
+  backtestJobManager.onJobUpdate = (job) => {
+    broadcastWsEvent('BACKTEST_PROGRESS', job);
+  };
 
   // Synchronize ExecutionAdapter and UserDataStreamService with settings
   const syncExecutionModes = (settings: any) => {
@@ -712,6 +718,127 @@ async function startServer() {
       res.json(result);
     } catch (e) {
       res.status(400).json({ valid: false, errors: [String(e)], warnings: [], sanitized: {} });
+    }
+  });
+
+  // ─── BACKTEST API ENDPOINTS ────────────────────────────────────────────────
+  const AVAILABLE_BACKTEST_STRATEGIES = [
+    { id: 'EMA5_EXACT_ENTRY_V2', name: 'EMA 5 Exact Entry V2', description: 'Exact Alert-Break entry with multi-timeframe level targets & fee-drag protection', priority: 1, regime: 'TRENDING' },
+    { id: 'TREND_PULLBACK', name: 'Trend EMA Pullback', description: 'Confirmed pullback to dynamic value area in directional trend', priority: 1, regime: 'TRENDING' },
+    { id: 'TREND_PULLBACK_RETEST', name: 'Trend Pullback Retest', description: 'Full state-machine: trend → pullback → retest → confirmation → entry', priority: 1, regime: 'TRENDING' },
+    { id: 'EMA_GAP_PULLBACK', name: '5 EMA Gap Pullback', description: 'Trend continuation impulse on 5 EMA displacement', priority: 1, regime: 'TRENDING' },
+    { id: 'EMA5_PA_VOLUME_V1', name: 'EMA5 PA Volume V1', description: 'Pure price action gap and volume momentum on 5 EMA', priority: 1, regime: 'TRENDING' },
+    { id: 'EMA5_EXACT_ENTRY_V1', name: 'EMA5 Exact Entry V1', description: 'Exact candle alert-break re-entry on 5 EMA with structure clearance', priority: 2, regime: 'TRENDING' },
+    { id: 'EMA5_REJECTION_RECLAIM_V1', name: 'EMA5 Rejection Reclaim V1', description: 'Rejection wick and displacement reclaim across 5 EMA', priority: 2, regime: 'TRENDING' },
+    { id: 'VOLATILITY_COMPRESSION', name: 'VCB Breakout', description: 'Volatility compression breakout with volume confirmation', priority: 2, regime: 'COMPRESSION' },
+    { id: 'EARLY_COIL_BREAKOUT', name: 'Early Coil Breakout', description: 'Fractal compression breakout with structural trigger', priority: 2, regime: 'COMPRESSION' },
+    { id: 'TWO_SIDED_COIL_BREAKOUT', name: 'Two-Sided Coil Breakout', description: 'Symmetrical compression coil breakout', priority: 2, regime: 'COMPRESSION' },
+    { id: 'BINANCE_COMPOSITE', name: 'Range Mean Reversion', description: 'Bollinger Band extreme & RSI re-entry inside verified range', priority: 1, regime: 'RANGING' },
+    { id: 'SMC_LIQUIDITY_SWEEP', name: 'LSR Liquidity Sweep', description: 'Protected structure sweep and institutional FVG retest', priority: 2, regime: 'EXHAUSTION' },
+  ];
+
+  app.get("/api/backtest/strategies", (req, res) => {
+    res.json(AVAILABLE_BACKTEST_STRATEGIES);
+  });
+
+  app.post("/api/backtest/run", async (req, res) => {
+    try {
+      const {
+        strategies,
+        symbols,
+        execTf = '15m',
+        dirTf = '1h',
+        from,
+        to,
+        capital = 10000,
+        riskSettings,
+        strategyParams,
+        fees,
+        slippagePct,
+        mode = 'portfolio'
+      } = req.body;
+
+      if (!Array.isArray(strategies) || strategies.length === 0) {
+        return res.status(400).json({ error: 'At least one strategy must be selected.' });
+      }
+
+      if (!Array.isArray(symbols) || symbols.length === 0) {
+        return res.status(400).json({ error: 'At least one symbol must be selected.' });
+      }
+
+      const fromMs = Number(from) || (Date.now() - 30 * 24 * 3600 * 1000);
+      const toMs = Number(to) || Date.now();
+
+      if (fromMs >= toMs) {
+        return res.status(400).json({ error: 'Start date must be earlier than end date.' });
+      }
+
+      const jobId = backtestJobManager.startJob({
+        strategies,
+        symbols,
+        execTf,
+        dirTf,
+        from: fromMs,
+        to: toMs,
+        capital: Number(capital) || 10000,
+        riskSettings,
+        strategyParams,
+        fees,
+        slippagePct: slippagePct !== undefined ? Number(slippagePct) : 0.05,
+        mode: mode === 'single' ? 'single' : 'portfolio'
+      });
+
+      res.json({ success: true, jobId });
+    } catch (e: any) {
+      console.error('[POST /api/backtest/run] Error:', e);
+      res.status(500).json({ error: e?.message || String(e) });
+    }
+  });
+
+  app.get("/api/backtest/jobs", (req, res) => {
+    try {
+      res.json(backtestJobManager.getAllJobs());
+    } catch (e: any) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.get("/api/backtest/:id", (req, res) => {
+    try {
+      const job = backtestJobManager.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: 'Backtest job not found.' });
+      }
+      res.json(job);
+    } catch (e: any) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.get("/api/backtest/:id/progress", (req, res) => {
+    try {
+      const job = backtestJobManager.getJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: 'Backtest job not found.' });
+      }
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders?.();
+
+      backtestJobManager.registerSseClient(req.params.id, res);
+    } catch (e: any) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.post("/api/backtest/:id/cancel", (req, res) => {
+    try {
+      const ok = backtestJobManager.cancelJob(req.params.id);
+      res.json({ success: ok });
+    } catch (e: any) {
+      res.status(500).json({ error: String(e) });
     }
   });
 

@@ -57,39 +57,48 @@ export function SignalAuditTable() {
             </tr>
           </thead>
           <tbody>
-            {signals.map((sig) => (
-              <tr key={sig.signalId} className="border-b border-slate-700/50 hover:bg-slate-800/50 transition-colors">
-                <td className="px-4 py-3 text-gray-400">
-                  {new Date(sig.createdAt).toLocaleTimeString()}
-                </td>
-                <td className="px-4 py-3 font-medium">
-                  {sig.symbol}
-                </td>
-                <td className="px-4 py-3">
-                  {sig.decision === 'ENTER' ? (
-                    <span className="px-2 py-1 bg-emerald-500/20 text-emerald-400 rounded text-xs font-bold">ENTER</span>
-                  ) : sig.decision === 'WATCH' ? (
-                    <span className="px-2 py-1 bg-amber-500/20 text-amber-400 rounded text-xs font-bold">WATCH</span>
-                  ) : (
-                    <span className="px-2 py-1 bg-red-500/20 text-red-400 rounded text-xs font-bold">REJECT</span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-gray-300">
-                  {sig.strategy}
-                </td>
-                <td className="px-4 py-3 text-gray-300">
-                  {sig.regime}
-                </td>
-                <td className="px-4 py-3">
-                  <span className={sig.confidence >= 80 ? 'text-emerald-400' : sig.confidence >= 60 ? 'text-amber-400' : 'text-red-400'}>
-                    {sig.confidence}%
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-gray-400 text-xs">
-                  {sig.rejectionReasons?.join(', ') || '—'}
-                </td>
-              </tr>
-            ))}
+            {signals.map((sig) => {
+              const displayRegime = (!sig.regime || sig.regime === 'UNKNOWN_REGIME')
+                ? 'Consolidation Range'
+                : sig.regime;
+              const displayStrategy = (!sig.strategy || sig.strategy === 'UNKNOWN_STRATEGY')
+                ? 'Autonomous'
+                : sig.strategy.replace(/_/g, ' ');
+
+              return (
+                <tr key={sig.signalId} className="border-b border-slate-700/50 hover:bg-slate-800/50 transition-colors">
+                  <td className="px-4 py-3 text-gray-400">
+                    {new Date(sig.createdAt).toLocaleTimeString()}
+                  </td>
+                  <td className="px-4 py-3 font-medium">
+                    {sig.symbol}
+                  </td>
+                  <td className="px-4 py-3">
+                    {sig.decision === 'ENTER' ? (
+                      <span className="px-2 py-1 bg-emerald-500/20 text-emerald-400 rounded text-xs font-bold">ENTER</span>
+                    ) : sig.decision === 'WATCH' ? (
+                      <span className="px-2 py-1 bg-amber-500/20 text-amber-400 rounded text-xs font-bold">WATCH</span>
+                    ) : (
+                      <span className="px-2 py-1 bg-red-500/20 text-red-400 rounded text-xs font-bold">REJECT</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-gray-300 font-mono text-xs">
+                    {displayStrategy}
+                  </td>
+                  <td className="px-4 py-3 text-cyan-300/90 font-medium">
+                    {displayRegime}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={sig.confidence >= 80 ? 'text-emerald-400 font-semibold' : sig.confidence >= 60 ? 'text-amber-400' : 'text-red-400'}>
+                      {sig.confidence}%
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-gray-400 text-xs">
+                    {sig.rejectionReasons?.join(', ') || '—'}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
