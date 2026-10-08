@@ -3516,6 +3516,7 @@ export class AutoTrader {
     tp1: number;
     tp2: number;
     tp3: number;
+    regimeConfidence?: number;
     reason?: string;
   } | null> {
     if (!klines || klines.length < 35) return null;
@@ -3554,6 +3555,7 @@ export class AutoTrader {
             tp1: sig.tp1,
             tp2: sig.tp2,
             tp3: sig.tp3,
+            regimeConfidence: sig.regimeScore,
             reason: `Range Regime V1 (${sig.setupType}, ${sig.grade}): ${sig.reason}`,
           };
         }

@@ -229,6 +229,7 @@ export class OMS {
         score_at_entry: score || 80,
         time_open: new Date().toISOString(),
         status: 'OPEN',
+        stopStatus: (sl && sl > 0) ? 'CONFIRMED' : 'UNKNOWN',
         execution_state: executionState,
         client_order_id_base: baseId
       };

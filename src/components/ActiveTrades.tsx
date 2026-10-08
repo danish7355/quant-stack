@@ -611,51 +611,67 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
 
                 {/* Targets Slider / Status List */}
                 <div className="border-t border-gray-800/80 pt-3">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[10px] text-gray-500 font-semibold uppercase">
-                      Target Levels (1:3 R:R)
-                    </span>
-                    <span className="text-[9.5px] font-bold text-indigo-300 bg-indigo-950/40 px-1.5 py-0.2 rounded border border-indigo-800/30">
-                      Asymmetric 1:3
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
-                    <div className="flex items-center justify-between bg-gray-900/40 p-1.5 rounded">
-                      <span className="text-gray-500 flex items-center">
-                        <Shield className="w-2.5 h-2.5 mr-1 stroke-rose-400" /> SL (1R)
-                      </span>
-                      <span className="text-rose-300 font-bold">
-                        ${formatPrice(pos.sl)}
-                      </span>
-                    </div>
+                  {(() => {
+                    const riskDist = Math.abs(pos.entryPrice - pos.sl);
+                    const calcR = (target: number, defaultR: string) => {
+                      if (!riskDist || riskDist <= 0 || !target) return defaultR;
+                      const r = Math.abs(target - pos.entryPrice) / riskDist;
+                      return `${r.toFixed(1)}R`;
+                    };
+                    const tp1R = calcR(pos.tp1, '1R');
+                    const tp2R = calcR(pos.tp2, '2R');
+                    const tp3R = calcR(pos.tp3, '3R');
 
-                    <div className="flex items-center justify-between bg-gray-900/40 p-1.5 rounded">
-                      <span className="text-gray-500 flex items-center">
-                        <Target className="w-2.5 h-2.5 mr-1 stroke-emerald-400" /> TP1 (1R)
-                      </span>
-                      <span className={`text-emerald-300 ${sizeRemaining <= 60 ? 'line-through text-gray-500 font-normal' : ''}`}>
-                        ${formatPrice(pos.tp1)}
-                      </span>
-                    </div>
+                    return (
+                      <>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-[10px] text-gray-500 font-semibold uppercase">
+                            Target Levels {pos.structuralRR ? `(${pos.structuralRR.toFixed(1)}:1 R:R)` : '(1:3 R:R)'}
+                          </span>
+                          <span className="text-[9.5px] font-bold text-indigo-300 bg-indigo-950/40 px-1.5 py-0.2 rounded border border-indigo-800/30">
+                            {pos.structuralRR && pos.structuralRR > 3 ? `Asymmetric ${pos.structuralRR.toFixed(1)}:1` : 'Asymmetric 1:3'}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                          <div className="flex items-center justify-between bg-gray-900/40 p-1.5 rounded">
+                            <span className="text-gray-500 flex items-center">
+                              <Shield className="w-2.5 h-2.5 mr-1 stroke-rose-400" /> SL (1R)
+                            </span>
+                            <span className="text-rose-300 font-bold">
+                              ${formatPrice(pos.sl)}
+                            </span>
+                          </div>
 
-                    <div className="flex items-center justify-between bg-gray-900/40 p-1.5 rounded">
-                      <span className="text-gray-500 flex items-center">
-                        <Target className="w-2.5 h-2.5 mr-1 stroke-emerald-400" /> TP2 (2R)
-                      </span>
-                      <span className={`text-emerald-300 ${sizeRemaining <= 20 ? 'line-through text-gray-500 font-normal' : ''}`}>
-                        ${formatPrice(pos.tp2)}
-                      </span>
-                    </div>
+                          <div className="flex items-center justify-between bg-gray-900/40 p-1.5 rounded">
+                            <span className="text-gray-500 flex items-center">
+                              <Target className="w-2.5 h-2.5 mr-1 stroke-emerald-400" /> TP1 ({tp1R})
+                            </span>
+                            <span className={`text-emerald-300 ${sizeRemaining <= 60 ? 'line-through text-gray-500 font-normal' : ''}`}>
+                              ${formatPrice(pos.tp1)}
+                            </span>
+                          </div>
 
-                    <div className="flex items-center justify-between bg-indigo-950/30 border border-indigo-800/30 p-1.5 rounded">
-                      <span className="text-indigo-300 flex items-center font-bold">
-                        <Target className="w-2.5 h-2.5 mr-1 stroke-cyan-400" /> TP3 (3R)
-                      </span>
-                      <span className="text-cyan-300 font-bold">
-                        ${formatPrice(pos.tp3)}
-                      </span>
-                    </div>
-                  </div>
+                          <div className="flex items-center justify-between bg-gray-900/40 p-1.5 rounded">
+                            <span className="text-gray-500 flex items-center">
+                              <Target className="w-2.5 h-2.5 mr-1 stroke-emerald-400" /> TP2 ({tp2R})
+                            </span>
+                            <span className={`text-emerald-300 ${sizeRemaining <= 20 ? 'line-through text-gray-500 font-normal' : ''}`}>
+                              ${formatPrice(pos.tp2)}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between bg-indigo-950/30 border border-indigo-800/30 p-1.5 rounded">
+                            <span className="text-indigo-300 flex items-center font-bold">
+                              <Target className="w-2.5 h-2.5 mr-1 stroke-cyan-400" /> TP3 ({tp3R})
+                            </span>
+                            <span className="text-cyan-300 font-bold">
+                              ${formatPrice(pos.tp3)}
+                            </span>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
             );
