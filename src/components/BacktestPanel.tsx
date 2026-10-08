@@ -39,7 +39,7 @@ export default function BacktestPanel() {
   // Strategy Registry
   const [availableStrategies, setAvailableStrategies] = useState<StrategyInfo[]>([]);
   const [selectedStrategies, setSelectedStrategies] = useState<string[]>([
-    'EMA_GAP_PULLBACK', 'VOLATILITY_COMPRESSION', 'BINANCE_COMPOSITE'
+    'EMA5_EXACT_ENTRY_V2', 'VOLATILITY_COMPRESSION', 'BINANCE_COMPOSITE'
   ]);
 
   // Symbols
@@ -199,13 +199,13 @@ export default function BacktestPanel() {
 
   const handlePresetStrategies = (type: 'trend' | 'range' | 'breakout' | 'ema5') => {
     if (type === 'trend') {
-      setSelectedStrategies(['TREND_PULLBACK', 'TREND_PULLBACK_RETEST', 'EMA_GAP_PULLBACK']);
+      setSelectedStrategies(['TREND_PULLBACK', 'EMA5_EXACT_ENTRY_V2']);
     } else if (type === 'range') {
       setSelectedStrategies(['BINANCE_COMPOSITE', 'SMC_LIQUIDITY_SWEEP']);
     } else if (type === 'breakout') {
-      setSelectedStrategies(['VOLATILITY_COMPRESSION', 'EARLY_COIL_BREAKOUT', 'TWO_SIDED_COIL_BREAKOUT']);
+      setSelectedStrategies(['VOLATILITY_COMPRESSION', 'EARLY_COIL_BREAKOUT']);
     } else if (type === 'ema5') {
-      setSelectedStrategies(['EMA5_EXACT_ENTRY_V2', 'EMA5_PA_VOLUME_V1', 'EMA5_EXACT_ENTRY_V1', 'EMA5_REJECTION_RECLAIM_V1']);
+      setSelectedStrategies(['EMA5_EXACT_ENTRY_V2']);
     }
   };
 

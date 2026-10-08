@@ -232,6 +232,7 @@ export interface TradingSettings {
   alertOnTsMoved: boolean;
   alertOnDailyLossLimit: boolean;
   alertOnRangingDetected: boolean;
+  alertOnExternalPositions?: boolean;
   alertSilentMode?: boolean;
   alertFormat?: 'Verbose' | 'Minimal';
 
@@ -571,6 +572,7 @@ export function validateTradingSettings(input: unknown): ValidationResult {
     'allowFractionalContracts', 'killSwitchActive',
     'alertOnNewSignal', 'alertOnTradeExecuted', 'alertOnTpHit', 'alertOnSlHit',
     'alertOnTsMoved', 'alertOnDailyLossLimit', 'alertOnRangingDetected',
+    'alertOnExternalPositions',
     'alertSilentMode', 'binanceTestnet', 'scanOnlyWatchlist', 'egpRequireReal3RRoom',
     'egpStrictGapOnly', 'ema5PaEnabled', 'ema5PaBreakevenEnabled', 'ema5PaRequireStructureBreak',
     'tprEnabled', 'tprTrailingEnabled', 'tprBreakevenEnabled', 'tprAllowLongs', 'tprAllowShorts',
@@ -802,6 +804,7 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   alertOnTsMoved: true,
   alertOnDailyLossLimit: true,
   alertOnRangingDetected: false,
+  alertOnExternalPositions: false,
 
   egpEnabled: true,
   egpEma5Period: 5,

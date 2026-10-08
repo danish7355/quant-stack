@@ -17,7 +17,7 @@ interface StrategyPanelProps {
 }
 
 export const AVAILABLE_STRATEGIES: {
-  id: 'EMA5_EXACT_ENTRY_V2' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'TREND_PULLBACK_RETEST' | 'SMC_LIQUIDITY_SWEEP' | 'BINANCE_COMPOSITE' | 'EARLY_COIL_BREAKOUT' | 'TWO_SIDED_COIL_BREAKOUT' | 'EMA5_EXACT_ENTRY_V1' | 'EMA_GAP_PULLBACK' | 'EMA5_PA_VOLUME_V1' | 'EMA5_REJECTION_RECLAIM_V1';
+  id: 'EMA5_EXACT_ENTRY_V2' | 'VOLATILITY_COMPRESSION' | 'TREND_PULLBACK' | 'SMC_LIQUIDITY_SWEEP' | 'BINANCE_COMPOSITE' | 'EARLY_COIL_BREAKOUT';
   name: string;
   shortName: string;
   type: string;
@@ -53,15 +53,6 @@ export const AVAILABLE_STRATEGIES: {
     icon: Target,
   },
   {
-    id: 'TREND_PULLBACK_RETEST',
-    name: 'Trend Pullback Retest (State Machine)',
-    shortName: 'Pullback Retest',
-    type: 'Trend Continuation',
-    badgeBg: 'bg-sky-500/20 text-sky-300 border-sky-500/40',
-    description: 'Full 5-stage state machine: trend detected → pullback → EMA retest → confirmation candle → entry. Requires ALL stages in order.',
-    icon: Target,
-  },
-  {
     id: 'SMC_LIQUIDITY_SWEEP',
     name: 'Smart Money Liquidity Sweep (SMC)',
     shortName: 'SMC Liquidity',
@@ -87,51 +78,6 @@ export const AVAILABLE_STRATEGIES: {
     badgeBg: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40',
     description: 'Fractal coil compression that triggers early at the boundary of narrowing consolidation triangles.',
     icon: Flame,
-  },
-  {
-    id: 'TWO_SIDED_COIL_BREAKOUT',
-    name: 'Two-Sided Coil Breakout',
-    shortName: 'Coil Breakout',
-    type: 'Squeeze Breakout',
-    badgeBg: 'bg-orange-500/20 text-orange-300 border-orange-500/40',
-    description: 'Symmetrical triangular compression breakout targeting 1:2+ to 1:5+ asymmetric expansion moves.',
-    icon: Layers,
-  },
-  {
-    id: 'EMA5_EXACT_ENTRY_V1',
-    name: 'EMA 5 Exact Price Action Entry V1',
-    shortName: 'EMA 5 Exact V1',
-    type: 'Exact Touch/Pullback',
-    badgeBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
-    description: 'Exact 5m EMA 5 touch and rejection trigger with structured ATR stop loss and 1:3 asymmetric target.',
-    icon: Zap,
-  },
-  {
-    id: 'EMA_GAP_PULLBACK',
-    name: '5 EMA Gap Pullback (Impulse)',
-    shortName: '5 EMA Gap',
-    type: 'Gap Continuation',
-    badgeBg: 'bg-teal-500/20 text-teal-300 border-teal-500/40',
-    description: 'Trend continuation impulse when price gaps cleanly away from 5 EMA with confirmed 1h alignment.',
-    icon: Zap,
-  },
-  {
-    id: 'EMA5_PA_VOLUME_V1',
-    name: 'EMA 5 PA Gap + Volume (Momentum)',
-    shortName: 'EMA 5 PA Vol',
-    type: 'Pure Price Action',
-    badgeBg: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
-    description: 'Pure price action gap and volume momentum on 5m EMA 5 with 15m structure alignment.',
-    icon: Flame,
-  },
-  {
-    id: 'EMA5_REJECTION_RECLAIM_V1',
-    name: 'EMA 5 Rejection → Reclaim (Displacement)',
-    shortName: 'EMA 5 Rejection',
-    type: 'Trap Reversal',
-    badgeBg: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
-    description: 'Captures false breakout traps: wick rejection beyond 5 EMA followed by impulsive reclaim displacement.',
-    icon: RotateCcw,
   },
 ];
 
@@ -282,9 +228,6 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
   const handleInputChange = (field: keyof AppSettings, value: any) => {
     const nextSettings = { ...settings, [field]: value };
     if (field === 'activeStrategy') {
-      if (value === 'TREND_PULLBACK_RETEST') {
-        nextSettings.tprEnabled = true;
-      }
       if (value === 'EMA5_EXACT_ENTRY_V2') {
         nextSettings.eev2Enabled = true;
       }
@@ -314,7 +257,6 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
       enabledStrategies: nextEnabled,
       activeStrategy: (nextEnabled[0] || visibleStrategies[0]?.id || 'EMA5_EXACT_ENTRY_V2') as any,
       eev2Enabled: nextEnabled.includes('EMA5_EXACT_ENTRY_V2'),
-      tprEnabled: nextEnabled.includes('TREND_PULLBACK_RETEST'),
     };
     setSettings(nextSettings);
     fetch('/api/bot/settings', {
@@ -342,7 +284,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
       strategyBucket: nextBucket,
       activeStrategy: nextActive,
       eev2Enabled: nextEnabled.includes('EMA5_EXACT_ENTRY_V2'),
-      tprEnabled: nextEnabled.includes('TREND_PULLBACK_RETEST'),
+      tprEnabled: false,
     };
 
     setSettings(nextSettings);
@@ -358,7 +300,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
   };
 
   const handlePermanentDeleteStrategy = (stratId: string) => {
-    const nextDeleted = deletedStrategies.filter(id => id !== stratId);
+    const nextDeleted = Array.from(new Set([...deletedStrategies, stratId]));
     const nextEnabled = enabledStrategies.filter(id => id !== stratId);
     const nextBucket = bucket.filter(item => item.id !== stratId);
     const remaining = visibleStrategies.filter(s => s.id !== stratId);
@@ -373,7 +315,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
       strategyBucket: nextBucket,
       activeStrategy: nextActive,
       eev2Enabled: nextEnabled.includes('EMA5_EXACT_ENTRY_V2'),
-      tprEnabled: nextEnabled.includes('TREND_PULLBACK_RETEST'),
+      tprEnabled: false,
     };
 
     setSettings(nextSettings);
@@ -458,7 +400,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
     } else if (preset === 'VCB') {
       nextEnabled = ['VOLATILITY_COMPRESSION'].filter(s => !deletedStrategies.includes(s));
     } else if (preset === 'TREND') {
-      nextEnabled = ['EMA5_EXACT_ENTRY_V2', 'VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'TREND_PULLBACK_RETEST', 'EARLY_COIL_BREAKOUT'].filter(s => !deletedStrategies.includes(s));
+      nextEnabled = ['EMA5_EXACT_ENTRY_V2', 'VOLATILITY_COMPRESSION', 'TREND_PULLBACK', 'EARLY_COIL_BREAKOUT'].filter(s => !deletedStrategies.includes(s));
     } else if (preset === 'REVERSAL') {
       nextEnabled = ['BINANCE_COMPOSITE', 'SMC_LIQUIDITY_SWEEP'].filter(s => !deletedStrategies.includes(s));
     } else if (preset === 'CLEAR') {
@@ -469,7 +411,7 @@ const StrategyPanel: React.FC<StrategyPanelProps> = ({
       enabledStrategies: nextEnabled,
       activeStrategy: (nextEnabled[0] || visibleStrategies[0]?.id || 'EMA5_EXACT_ENTRY_V2') as any,
       eev2Enabled: nextEnabled.includes('EMA5_EXACT_ENTRY_V2'),
-      tprEnabled: nextEnabled.includes('TREND_PULLBACK_RETEST'),
+      tprEnabled: false,
     };
     setSettings(nextSettings);
     fetch('/api/bot/settings', {

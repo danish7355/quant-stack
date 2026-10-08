@@ -40,14 +40,8 @@ export interface GlobalMarketRegime {
 export const DEFAULT_STRATEGY_BUCKET: StrategyBucketItem[] = [
   { id: 'EMA5_EXACT_ENTRY_V2', name: 'EMA 5 Exact Entry V2', description: 'Exact Alert-Break entry with multi-timeframe level targets & fee-drag protection', priority: 1, enabled: true },
   { id: 'TREND_PULLBACK', name: 'Trend EMA Pullback', description: 'Confirmed pullback to dynamic value area in directional trend', priority: 1, enabled: true },
-  { id: 'TREND_PULLBACK_RETEST', name: 'Trend Pullback Retest', description: 'Full state-machine: trend → pullback → retest → confirmation → entry', priority: 1, enabled: true },
-  { id: 'EMA_GAP_PULLBACK', name: '5 EMA Gap Pullback', description: 'Trend continuation impulse on 5 EMA displacement', priority: 1, enabled: true },
-  { id: 'EMA5_PA_VOLUME_V1', name: 'EMA5 PA Volume V1', description: 'Pure price action gap and volume momentum on 5 EMA', priority: 1, enabled: true },
-  { id: 'EMA5_EXACT_ENTRY_V1', name: 'EMA5 Exact Entry V1', description: 'Exact candle alert-break re-entry on 5 EMA with structure clearance', priority: 2, enabled: true },
-  { id: 'EMA5_REJECTION_RECLAIM_V1', name: 'EMA5 Rejection Reclaim V1', description: 'Rejection wick and displacement reclaim across 5 EMA', priority: 2, enabled: true },
-  { id: 'VOLATILITY_COMPRESSION', name: 'VCB Breakout', description: 'Volatility compression breakout with volume confirmation', priority: 2, enabled: true },
+  { id: 'VOLATILITY_COMPRESSION', name: 'VCB Breakout', description: 'Volatility compression breakout with volume confirmation', priority: 1, enabled: true },
   { id: 'EARLY_COIL_BREAKOUT', name: 'Early Coil Breakout', description: 'Fractal compression breakout with structural trigger', priority: 2, enabled: true },
-  { id: 'TWO_SIDED_COIL_BREAKOUT', name: 'Two-Sided Coil Breakout', description: 'Symmetrical compression coil breakout', priority: 2, enabled: true },
   { id: 'BINANCE_COMPOSITE', name: 'Range Mean Reversion', description: 'Bollinger Band extreme & RSI re-entry inside verified range', priority: 1, enabled: true },
   { id: 'SMC_LIQUIDITY_SWEEP', name: 'LSR Liquidity Sweep', description: 'Protected structure sweep and institutional FVG retest', priority: 2, enabled: true }
 ];
@@ -56,51 +50,34 @@ export const strategyBucketMap: Record<MarketRegimeType, StrategyBucketItem[]> =
   TRENDING_UP: [
     { id: 'EMA5_EXACT_ENTRY_V2', name: 'EMA 5 Exact Entry V2', description: 'Long: Alert-break trigger with 15m bullish regime & multi-TF targets', priority: 1, direction: 'LONG', enabled: true },
     { id: 'TREND_PULLBACK', name: 'Trend EMA Pullback', description: 'Long pullback to EMA21/50 zone', priority: 1, direction: 'LONG', enabled: true },
-    { id: 'TREND_PULLBACK_RETEST', name: 'Trend Pullback Retest', description: 'Long: full trend → pullback → retest → confirmation state machine', priority: 1, direction: 'LONG', enabled: true },
-    { id: 'EMA_GAP_PULLBACK', name: '5 EMA Gap Pullback', description: 'Long trend continuation impulse', priority: 1, direction: 'LONG', enabled: true },
-    { id: 'EMA5_PA_VOLUME_V1', name: 'EMA5 PA Volume V1', description: 'Long price action momentum and volume expansion', priority: 1, direction: 'LONG', enabled: true },
-    { id: 'EMA5_EXACT_ENTRY_V1', name: 'EMA5 Exact Entry V1', description: 'Long 5 EMA alert-break entry', priority: 2, direction: 'LONG', enabled: true },
-    { id: 'EMA5_REJECTION_RECLAIM_V1', name: 'EMA5 Rejection Reclaim V1', description: 'Long 5 EMA rejection-reclaim displacement', priority: 2, direction: 'LONG', enabled: true },
     { id: 'VOLATILITY_COMPRESSION', name: 'VCB Breakout', description: 'Long continuation breakout', priority: 2, direction: 'LONG', enabled: true },
     { id: 'EARLY_COIL_BREAKOUT', name: 'Early Coil Breakout', description: 'Long early coil breakout', priority: 2, direction: 'LONG', enabled: true },
-    { id: 'TWO_SIDED_COIL_BREAKOUT', name: 'Two-Sided Coil Breakout', description: 'Long coil squeeze breakout', priority: 2, direction: 'LONG', enabled: true },
     { id: 'SMC_LIQUIDITY_SWEEP', name: 'LSR Liquidity Sweep', description: 'Long liquidity sweep of local lows', priority: 3, direction: 'LONG', enabled: true }
   ],
   TRENDING_DOWN: [
     { id: 'EMA5_EXACT_ENTRY_V2', name: 'EMA 5 Exact Entry V2', description: 'Short: Alert-break trigger with 15m bearish regime & multi-TF targets', priority: 1, direction: 'SHORT', enabled: true },
     { id: 'TREND_PULLBACK', name: 'Trend EMA Pullback', description: 'Short pullback to EMA21/50 zone', priority: 1, direction: 'SHORT', enabled: true },
-    { id: 'TREND_PULLBACK_RETEST', name: 'Trend Pullback Retest', description: 'Short: full trend → pullback → retest → confirmation state machine', priority: 1, direction: 'SHORT', enabled: true },
-    { id: 'EMA_GAP_PULLBACK', name: '5 EMA Gap Pullback', description: 'Short trend continuation breakdown', priority: 1, direction: 'SHORT', enabled: true },
-    { id: 'EMA5_PA_VOLUME_V1', name: 'EMA5 PA Volume V1', description: 'Short price action momentum and volume expansion', priority: 1, direction: 'SHORT', enabled: true },
-    { id: 'EMA5_EXACT_ENTRY_V1', name: 'EMA5 Exact Entry V1', description: 'Short 5 EMA alert-break entry', priority: 2, direction: 'SHORT', enabled: true },
-    { id: 'EMA5_REJECTION_RECLAIM_V1', name: 'EMA5 Rejection Reclaim V1', description: 'Short 5 EMA rejection-reclaim displacement', priority: 2, direction: 'SHORT', enabled: true },
     { id: 'VOLATILITY_COMPRESSION', name: 'VCB Breakout', description: 'Short breakdown expansion', priority: 2, direction: 'SHORT', enabled: true },
     { id: 'EARLY_COIL_BREAKOUT', name: 'Early Coil Breakout', description: 'Short early coil breakdown', priority: 2, direction: 'SHORT', enabled: true },
-    { id: 'TWO_SIDED_COIL_BREAKOUT', name: 'Two-Sided Coil Breakout', description: 'Short coil squeeze breakdown', priority: 2, direction: 'SHORT', enabled: true },
     { id: 'SMC_LIQUIDITY_SWEEP', name: 'LSR Liquidity Sweep', description: 'Short liquidity sweep of local highs', priority: 3, direction: 'SHORT', enabled: true }
   ],
   RANGING: [
     { id: 'BINANCE_COMPOSITE', name: 'Range Mean Reversion', description: 'Bollinger Bands & RSI re-entry mean reversion', priority: 1, enabled: true },
-    { id: 'EMA5_REJECTION_RECLAIM_V1', name: 'EMA5 Rejection Reclaim V1', description: 'Range boundary rejection and reclaim', priority: 2, enabled: true },
     { id: 'SMC_LIQUIDITY_SWEEP', name: 'LSR Liquidity Sweep', description: 'Sweep of range boundaries', priority: 2, enabled: true }
   ],
   BREAKOUT_UP: [
     { id: 'VOLATILITY_COMPRESSION', name: 'VCB Breakout', description: 'Long volatility breakout beyond compression', priority: 1, direction: 'LONG', enabled: true },
-    { id: 'EARLY_COIL_BREAKOUT', name: 'Early Coil Breakout', description: 'Long coil expansion', priority: 2, direction: 'LONG', enabled: true },
-    { id: 'TWO_SIDED_COIL_BREAKOUT', name: 'Two-Sided Coil Breakout', description: 'Long symmetrical coil breakout', priority: 2, direction: 'LONG', enabled: true }
+    { id: 'EARLY_COIL_BREAKOUT', name: 'Early Coil Breakout', description: 'Long coil expansion', priority: 2, direction: 'LONG', enabled: true }
   ],
   BREAKOUT_DOWN: [
     { id: 'VOLATILITY_COMPRESSION', name: 'VCB Breakout', description: 'Short volatility breakdown beyond compression', priority: 1, direction: 'SHORT', enabled: true },
-    { id: 'EARLY_COIL_BREAKOUT', name: 'Early Coil Breakout', description: 'Short coil expansion', priority: 2, direction: 'SHORT', enabled: true },
-    { id: 'TWO_SIDED_COIL_BREAKOUT', name: 'Two-Sided Coil Breakout', description: 'Short symmetrical coil breakdown', priority: 2, direction: 'SHORT', enabled: true }
+    { id: 'EARLY_COIL_BREAKOUT', name: 'Early Coil Breakout', description: 'Short coil expansion', priority: 2, direction: 'SHORT', enabled: true }
   ],
   EXHAUSTION_UP: [
-    { id: 'SMC_LIQUIDITY_SWEEP', name: 'LSR Liquidity Sweep', description: 'Short liquidity run exhaustion', priority: 1, direction: 'SHORT', enabled: true },
-    { id: 'EMA5_REJECTION_RECLAIM_V1', name: 'EMA5 Rejection Reclaim V1', description: 'Short exhaustion fade and displacement reclaim', priority: 2, direction: 'SHORT', enabled: true }
+    { id: 'SMC_LIQUIDITY_SWEEP', name: 'LSR Liquidity Sweep', description: 'Short liquidity run exhaustion', priority: 1, direction: 'SHORT', enabled: true }
   ],
   EXHAUSTION_DOWN: [
-    { id: 'SMC_LIQUIDITY_SWEEP', name: 'LSR Liquidity Sweep', description: 'Long liquidity run capitulation', priority: 1, direction: 'LONG', enabled: true },
-    { id: 'EMA5_REJECTION_RECLAIM_V1', name: 'EMA5 Rejection Reclaim V1', description: 'Long exhaustion capitulation fade and reclaim', priority: 2, direction: 'LONG', enabled: true }
+    { id: 'SMC_LIQUIDITY_SWEEP', name: 'LSR Liquidity Sweep', description: 'Long liquidity run capitulation', priority: 1, direction: 'LONG', enabled: true }
   ],
   TRANSITION: [],
   UNCLEAR: [],

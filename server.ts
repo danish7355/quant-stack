@@ -725,14 +725,8 @@ async function startServer() {
   const AVAILABLE_BACKTEST_STRATEGIES = [
     { id: 'EMA5_EXACT_ENTRY_V2', name: 'EMA 5 Exact Entry V2', description: 'Exact Alert-Break entry with multi-timeframe level targets & fee-drag protection', priority: 1, regime: 'TRENDING' },
     { id: 'TREND_PULLBACK', name: 'Trend EMA Pullback', description: 'Confirmed pullback to dynamic value area in directional trend', priority: 1, regime: 'TRENDING' },
-    { id: 'TREND_PULLBACK_RETEST', name: 'Trend Pullback Retest', description: 'Full state-machine: trend → pullback → retest → confirmation → entry', priority: 1, regime: 'TRENDING' },
-    { id: 'EMA_GAP_PULLBACK', name: '5 EMA Gap Pullback', description: 'Trend continuation impulse on 5 EMA displacement', priority: 1, regime: 'TRENDING' },
-    { id: 'EMA5_PA_VOLUME_V1', name: 'EMA5 PA Volume V1', description: 'Pure price action gap and volume momentum on 5 EMA', priority: 1, regime: 'TRENDING' },
-    { id: 'EMA5_EXACT_ENTRY_V1', name: 'EMA5 Exact Entry V1', description: 'Exact candle alert-break re-entry on 5 EMA with structure clearance', priority: 2, regime: 'TRENDING' },
-    { id: 'EMA5_REJECTION_RECLAIM_V1', name: 'EMA5 Rejection Reclaim V1', description: 'Rejection wick and displacement reclaim across 5 EMA', priority: 2, regime: 'TRENDING' },
-    { id: 'VOLATILITY_COMPRESSION', name: 'VCB Breakout', description: 'Volatility compression breakout with volume confirmation', priority: 2, regime: 'COMPRESSION' },
+    { id: 'VOLATILITY_COMPRESSION', name: 'VCB Breakout', description: 'Volatility compression breakout with volume confirmation', priority: 1, regime: 'COMPRESSION' },
     { id: 'EARLY_COIL_BREAKOUT', name: 'Early Coil Breakout', description: 'Fractal compression breakout with structural trigger', priority: 2, regime: 'COMPRESSION' },
-    { id: 'TWO_SIDED_COIL_BREAKOUT', name: 'Two-Sided Coil Breakout', description: 'Symmetrical compression coil breakout', priority: 2, regime: 'COMPRESSION' },
     { id: 'BINANCE_COMPOSITE', name: 'Range Mean Reversion', description: 'Bollinger Band extreme & RSI re-entry inside verified range', priority: 1, regime: 'RANGING' },
     { id: 'SMC_LIQUIDITY_SWEEP', name: 'LSR Liquidity Sweep', description: 'Protected structure sweep and institutional FVG retest', priority: 2, regime: 'EXHAUSTION' },
   ];

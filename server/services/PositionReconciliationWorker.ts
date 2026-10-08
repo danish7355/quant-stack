@@ -9,6 +9,7 @@ export class PositionReconciliationWorker {
   private syncInterval: any = null;
   private isReconciling = false;
   private lastReconciliationTime: number = Date.now();
+  private lastAlertSentTime = new Map<string, number>();
 
   public getLastReconciliationTime(): number {
     return this.lastReconciliationTime;
@@ -30,6 +31,8 @@ export class PositionReconciliationWorker {
     if (this.isReconciling) return;
     this.lastReconciliationTime = Date.now();
     if (!executionAdapter.getIsLive()) return; // Only cross-check with exchange when live trading is active
+    const currentSettings = readLocalJson<any>('settings.json', {});
+    if (currentSettings.tradingMode !== 'LIVE') return;
 
     this.isReconciling = true;
 
@@ -85,9 +88,22 @@ export class PositionReconciliationWorker {
         // Find corresponding DB position
         const dbPos = activeDbPositions.find(p => p.symbol === symbol);
         
+        const now = Date.now();
+        const ALERT_COOLDOWN_MS = 30 * 60 * 1000; // Throttle: 30 minutes between repeated urgent alerts per symbol
+
         if (!dbPos) {
-          console.error(`🚨 [CRITICAL MISMATCH] Binance is exposed on ${symbol} (${bPosAmt}), but DB has no OPEN record.`);
-          telegramService.sendUrgentAlert(`🚨 CRITICAL MISMATCH 🚨\nBinance has an open position on ${symbol} not tracked in the DB. Immediate manual intervention required.`);
+          // If the user hasn't explicitly opted in to alert on external/foreign positions, ignore them cleanly
+          if (currentSettings.alertOnExternalPositions === true) {
+            console.warn(`[Reconciliation] Untracked Binance position on ${symbol} (${bPosAmt}). Alerting as requested.`);
+            const alertKey = `MISMATCH_${symbol}`;
+            if (!this.lastAlertSentTime.has(alertKey) || now - (this.lastAlertSentTime.get(alertKey) || 0) > ALERT_COOLDOWN_MS) {
+              this.lastAlertSentTime.set(alertKey, now);
+              telegramService.sendUrgentAlert(`🚨 CRITICAL MISMATCH 🚨\nBinance has an open position on ${symbol} not tracked in the DB. Immediate manual intervention required.`);
+            }
+          } else {
+            // External bot or manual position detected on shared Binance account - ignore cleanly
+            console.log(`[Reconciliation] External position detected on Binance: ${symbol} (${bPosAmt}). Managed by another bot or manual trade. Skipping.`);
+          }
           continue;
         }
 
@@ -105,7 +121,11 @@ export class PositionReconciliationWorker {
 
         if (!hasStop) {
           console.error(`🚨 [CRITICAL RISK] ${symbol} position exists but NO PROTECTIVE STOP is active on Binance!`);
-          telegramService.sendUrgentAlert(`🚨 UNPROTECTED POSITION 🚨\n${symbol} is open but has no active stop loss on Binance. Emergency close recommended.`);
+          const alertKey = `UNPROTECTED_${symbol}`;
+          if (!this.lastAlertSentTime.has(alertKey) || now - (this.lastAlertSentTime.get(alertKey) || 0) > ALERT_COOLDOWN_MS) {
+            this.lastAlertSentTime.set(alertKey, now);
+            telegramService.sendUrgentAlert(`🚨 UNPROTECTED POSITION 🚨\n${symbol} is open but has no active stop loss on Binance. Emergency close recommended.`);
+          }
         }
 
         if (dbPos.stopStatus !== stopStatus) {

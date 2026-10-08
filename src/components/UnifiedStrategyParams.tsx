@@ -112,22 +112,27 @@ export const UnifiedStrategyParams: React.FC<UnifiedStrategyParamsProps> = ({
   const [selectedFilter, setSelectedFilter] = useState<string>(activeStrategyFilter || 'ALL');
 
   const STRATEGY_FILTERS = [
-    { id: 'ALL', name: 'All 12 Strategies', count: 12 },
+    { id: 'ALL', name: 'All 6 Strategies', count: 6 },
     { id: 'EMA5_EXACT_ENTRY_V2', name: 'EMA 5 Exact V2', icon: Zap, color: 'text-emerald-400' },
     { id: 'VOLATILITY_COMPRESSION', name: 'VCB Breakout', icon: ShieldCheck, color: 'text-emerald-400' },
     { id: 'TREND_PULLBACK', name: 'Trend Pullback', icon: Target, color: 'text-blue-400' },
-    { id: 'TREND_PULLBACK_RETEST', name: 'Pullback Retest (TPR)', icon: Target, color: 'text-sky-400' },
     { id: 'SMC_LIQUIDITY_SWEEP', name: 'SMC Liquidity', icon: Sparkles, color: 'text-purple-400' },
-    { id: 'BINANCE_COMPOSITE', name: 'Range Regime V1', icon: Activity, color: 'text-cyan-400' },
-    { id: 'EMA5_PA_VOLUME_V1', name: 'EMA5 PA Volume', icon: Flame, color: 'text-amber-400' },
-    { id: 'EMA5_REJECTION_RECLAIM_V1', name: 'EMA5 Rejection Reclaim', icon: RotateCcw, color: 'text-teal-400' },
-    { id: 'EMA_GAP_PULLBACK', name: '5 EMA Gap', icon: Zap, color: 'text-indigo-400' },
-    { id: 'COIL_BREAKOUTS', name: 'Coil Breakouts', icon: Layers, color: 'text-orange-400' }
+    { id: 'BINANCE_COMPOSITE', name: 'Range Mean Reversion', icon: Activity, color: 'text-cyan-400' },
+    { id: 'EARLY_COIL_BREAKOUT', name: 'Early Coil Breakout', icon: Flame, color: 'text-orange-400' }
   ];
 
+  const CORE_STRATEGY_IDS = new Set([
+    'EMA5_EXACT_ENTRY_V2',
+    'VOLATILITY_COMPRESSION',
+    'TREND_PULLBACK',
+    'SMC_LIQUIDITY_SWEEP',
+    'BINANCE_COMPOSITE',
+    'EARLY_COIL_BREAKOUT'
+  ]);
+
   const shouldShow = (id: string) => {
+    if (!CORE_STRATEGY_IDS.has(id)) return false;
     if (selectedFilter === 'ALL') return true;
-    if (selectedFilter === 'COIL_BREAKOUTS') return id === 'EARLY_COIL_BREAKOUT' || id === 'TWO_SIDED_COIL_BREAKOUT';
     return selectedFilter === id;
   };
 
@@ -522,7 +527,7 @@ export const UnifiedStrategyParams: React.FC<UnifiedStrategyParamsProps> = ({
         </div>
       )}
 
-      {/* STRATEGY 6: Range Regime V1 & Mean Reversion (BINANCE_COMPOSITE) */}
+      {/* STRATEGY 5: Range Mean Reversion (BINANCE_COMPOSITE) */}
       {shouldShow('BINANCE_COMPOSITE') && (
         <div className="space-y-4">
           <RangeStrategyConfigPanel
@@ -712,14 +717,14 @@ export const UnifiedStrategyParams: React.FC<UnifiedStrategyParamsProps> = ({
         </div>
       )}
 
-      {/* STRATEGY 10: Early Coil & Two-Sided Coil Breakouts */}
-      {(shouldShow('EARLY_COIL_BREAKOUT') || shouldShow('TWO_SIDED_COIL_BREAKOUT')) && (
+      {/* STRATEGY 6: Early Coil Breakout */}
+      {shouldShow('EARLY_COIL_BREAKOUT') && (
         <div className="bg-[#161B22] rounded-xl p-5 sm:p-6 border border-orange-500/30 space-y-4 shadow-xl shadow-orange-950/10">
           <div className="flex items-center justify-between border-b border-[#30363D] pb-3 flex-wrap gap-2">
             <div>
               <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
                 <Layers className="w-4 h-4 text-orange-400" />
-                <span>10. Early Coil & Two-Sided Coil Breakout Parameters</span>
+                <span>6. Early Coil Breakout Parameters</span>
               </h3>
               <p className="text-xs text-gray-400 mt-0.5">Detects multi-bar fractal triangular contraction and executes explosive expansion breakouts with high R:R targets.</p>
             </div>

@@ -1181,29 +1181,19 @@ export function TradeEngineBanner({
                       <strong className="text-purple-400">SMC:</strong> Liquidity Sweep + MSS + FVG Retest • 1:{settings.smcRrRatio ?? 3.0} R:R Target
                     </p>
                   )}
-                  {evaluation.activeStrategies.some(s => s.id === 'EMA_GAP_PULLBACK') && (
+                  {evaluation.activeStrategies.some(s => s.id === 'EMA5_EXACT_ENTRY_V2') && (
                     <p>
-                      <strong className="text-teal-400">5 EMA Gap:</strong> HTF 50 EMA Trend Filter • Pullback Confirmation • Anti-Overextension Guard
+                      <strong className="text-emerald-400">EMA 5 Exact V2:</strong> 5m Alert-Break • 15m Structure • Level Targets • Fee-Drag Floor
                     </p>
                   )}
-                  {evaluation.activeStrategies.some(s => s.id === 'EMA5_EXACT_ENTRY_V1') && (
+                  {evaluation.activeStrategies.some(s => s.id === 'EARLY_COIL_BREAKOUT') && (
                     <p>
-                      <strong className="text-emerald-400">EMA 5 Exact:</strong> Exact PA pattern trigger • 15m structure filter • Dynamic RR
+                      <strong className="text-indigo-400">Early Coil:</strong> Triangular Compression • Range Expansion • 1:5+ R:R Target
                     </p>
                   )}
-                  {evaluation.activeStrategies.some(s => s.id === 'EMA5_REJECTION_RECLAIM_V1') && (
+                  {evaluation.activeStrategies.some(s => s.id === 'BINANCE_COMPOSITE') && (
                     <p>
-                      <strong className="text-amber-400">EMA 5 Reclaim:</strong> Rejection Wick &ge; {settings.errMinRejectionWickBodyRatio ?? 1.0}x • Vol &ge; {settings.errMinVolumeRatio ?? 1.10}x • 15m Confirmed Swing Structure
-                    </p>
-                  )}
-                  {evaluation.activeStrategies.some(s => s.id === 'TREND_PULLBACK_RETEST') && (
-                    <p>
-                      <strong className="text-sky-400">Pullback Retest:</strong> 5-Stage State Machine • Retest &plusmn; {settings.tprRetestToleranceAtr ?? 0.20} ATR • Dynamic ATR Stop
-                    </p>
-                  )}
-                  {evaluation.activeStrategies.some(s => s.id === 'EMA5_PA_VOLUME_V1') && (
-                    <p>
-                      <strong className="text-emerald-400">EMA 5 PA Vol:</strong> 15m Market Structure Swings • Vol &ge; {settings.ema5PaMinVolumeRatio ?? 1.10}x • Gap Range Gate
+                      <strong className="text-cyan-400">Range Mean Reversion:</strong> 2-Sigma BB Extreme • RSI Re-entry • Equilibrium Target
                     </p>
                   )}
                   <p className="text-emerald-400 pt-0.5 flex items-center gap-1 font-medium">

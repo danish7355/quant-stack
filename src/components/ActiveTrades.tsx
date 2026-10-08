@@ -264,15 +264,9 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
               <span className="text-gray-400">Bot Strategy:</span>
               <span className="text-[#00e696]">
                 {activeStrategiesList[0] === 'EMA5_EXACT_ENTRY_V2' ? '⚡ EMA 5 Exact Entry V2'
-                  : activeStrategiesList[0] === 'EMA5_EXACT_ENTRY_V1' ? '⚡ EMA 5 Exact Entry V1'
-                  : activeStrategiesList[0] === 'EMA5_REJECTION_RECLAIM_V1' ? '⚡ EMA 5 Rejection Reclaim'
-                  : activeStrategiesList[0] === 'EMA5_PA_VOLUME_V1' ? '⚡ EMA 5 PA + Volume'
-                  : activeStrategiesList[0] === 'EMA_GAP_PULLBACK' ? '⚡ 5 EMA Gap Pullback'
                   : activeStrategiesList[0] === 'VOLATILITY_COMPRESSION' ? '💥 VCB Breakout'
                   : activeStrategiesList[0] === 'EARLY_COIL_BREAKOUT' ? '🔥 Early Coil Breakout'
-                  : activeStrategiesList[0] === 'TWO_SIDED_COIL_BREAKOUT' ? '🔥 Coil Breakout'
                   : activeStrategiesList[0] === 'TREND_PULLBACK' ? '🎯 Trend Pullback'
-                  : activeStrategiesList[0] === 'TREND_PULLBACK_RETEST' ? '🎯 Pullback Retest'
                   : activeStrategiesList[0] === 'SMC_LIQUIDITY_SWEEP' ? '💧 Liquidity Sweep Reversal'
                   : '📊 Range Mean Reversion'}
               </span>
@@ -377,7 +371,7 @@ export default function ActiveTrades({ positions, onManualClose, settings, globa
           <Clock className="w-8 h-8 mb-2 stroke-gray-600" />
           <p className="text-sm font-medium">No open positions at the moment</p>
           <span className="text-xs text-gray-500 mt-1 max-w-sm text-center leading-relaxed">
-            Scanning {settings?.coinCount || 100} Binance Futures pairs across <strong className="text-gray-400">{activeStrategiesList.length > 1 ? `${activeStrategiesList.length} Active Strategies` : (activeStrategiesList[0] === 'EMA5_REJECTION_RECLAIM_V1' ? 'EMA 5 Rejection Reclaim' : activeStrategiesList[0] === 'EMA5_PA_VOLUME_V1' ? 'EMA 5 PA + Volume' : activeStrategiesList[0] === 'EMA_GAP_PULLBACK' ? '5 EMA Gap Pullback' : activeStrategiesList[0] === 'VOLATILITY_COMPRESSION' ? 'VCB Breakout' : activeStrategiesList[0] === 'TREND_PULLBACK' ? 'Trend Pullback' : activeStrategiesList[0] === 'TREND_PULLBACK_RETEST' ? 'Pullback Retest' : activeStrategiesList[0] === 'SMC_LIQUIDITY_SWEEP' ? 'SMC Liquidity' : activeStrategiesList[0] || 'Autonomous')}</strong> fully-confirmed signals with tight invalidation Stop Loss and <strong className="text-indigo-400">1:3 Asymmetric Target</strong>.
+            Scanning {settings?.coinCount || 100} Binance Futures pairs across <strong className="text-gray-400">{activeStrategiesList.length > 1 ? `${activeStrategiesList.length} Active Strategies` : (activeStrategiesList[0] === 'EMA5_EXACT_ENTRY_V2' ? 'EMA 5 Exact V2' : activeStrategiesList[0] === 'VOLATILITY_COMPRESSION' ? 'VCB Breakout' : activeStrategiesList[0] === 'EARLY_COIL_BREAKOUT' ? 'Early Coil Breakout' : activeStrategiesList[0] === 'TREND_PULLBACK' ? 'Trend Pullback' : activeStrategiesList[0] === 'SMC_LIQUIDITY_SWEEP' ? 'SMC Liquidity' : activeStrategiesList[0] === 'BINANCE_COMPOSITE' ? 'Range Mean Reversion' : activeStrategiesList[0] || 'Autonomous')}</strong> fully-confirmed signals with tight invalidation Stop Loss and <strong className="text-indigo-400">1:3 Asymmetric Target</strong>.
           </span>
         </div>
       ) : (

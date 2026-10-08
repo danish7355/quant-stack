@@ -1493,6 +1493,7 @@ export default function SettingsPanel({
                  { id: 'alertOnTsMoved', label: 'Trailing Stop Moved' },
                  { id: 'alertOnDailyLossLimit', label: 'Daily Loss Limit Reached' },
                  { id: 'alertOnRangingDetected', label: 'Ranging Market Detected' },
+                 { id: 'alertOnExternalPositions', label: 'Alert on External / Manual Positions (multi-bot accounts)' },
                ].map((setting) => (
                  <div key={setting.id} className="flex justify-between items-center py-2 px-3 bg-gray-800/20 rounded border border-[#30363D]">
                    <span className="text-sm text-gray-400">{setting.label}</span>

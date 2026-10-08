@@ -105,18 +105,6 @@ export const STRATEGY_DEFINITIONS: Array<{
     defaultMinScore: 7
   },
   {
-    id: 'TREND_PULLBACK_RETEST',
-    name: 'Trend Pullback Retest (State Machine)',
-    shortName: 'Pullback Retest',
-    tag: 'CONTINUATION',
-    badgeBg: 'bg-sky-500/20 text-sky-300 border-sky-500/40',
-    icon: Target,
-    description: 'Full 5-stage state machine: trend detected → pullback → EMA retest → confirmation candle → entry.',
-    entryGateDescription: 'Requires every state machine transition to verify in chronological sequence. No early front-running before retest confirmation.',
-    maxScore: 10,
-    defaultMinScore: 8
-  },
-  {
     id: 'SMC_LIQUIDITY_SWEEP',
     name: 'Smart Money Concepts (SMC Sweep)',
     shortName: 'SMC Liquidity',

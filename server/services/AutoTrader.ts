@@ -711,6 +711,7 @@ export class AutoTrader {
     positionMonitor.settings = this.settings;
 
     console.log(`⚙️ [AutoTrader] Settings ready. Version: v${this.settings.settingsVersion || 1}, Strategy: ${this.settings.activeStrategy}, Telegram: ${this.settings.telegramBotToken ? 'Configured' : 'Missing'}`);
+    this.onSettingsChanged?.(this.settings);
     return this.settings;
   }
 
