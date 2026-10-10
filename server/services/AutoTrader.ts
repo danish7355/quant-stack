@@ -2298,14 +2298,33 @@ export class AutoTrader {
       };
     }
 
-    // 4. Trend Pullback Strategy (5-pillar confirmation)
+    // 4. Trend Pullback Strategy (TPSR - Trend Pullback Sweep Reversal)
     if (strat === 'TREND_PULLBACK') {
       const tradeTf = this.settings.timeframe || '15m';
-      const htf = getHigherTimeframe(tradeTf);
+      const htf = (this.settings.tpsrOverrides && this.settings.tpsrOverrides['direction.timeframe']) || getHigherTimeframe(tradeTf);
       let htfKlines: any[] | null = null;
       try {
         htfKlines = await this.getKlines(symbol, htf);
       } catch (e) {}
+
+      let dailyCandles: any[] = [];
+      try {
+        const rawDaily = await this.getKlines(symbol, '1d');
+        if (rawDaily) dailyCandles = rawDaily.slice(0, -1);
+      } catch (_) {}
+
+      const isUp = classification?.metrics?.isUptrend || classification?.regime === 'TRENDING_UP';
+      const isDown = classification?.metrics?.isDowntrend || classification?.regime === 'TRENDING_DOWN';
+      const tpsrRegime = {
+        direction: (isUp ? 'bull' : isDown ? 'bear' : 'neutral') as any,
+        tier: ((classification?.confidence ?? 60) >= 75 ? 'strong' : (classification?.confidence ?? 60) >= 55 ? 'moderate' : 'emerging') as any,
+        confidence: (classification?.confidence ?? 60) / 100,
+        btcTrend: (globalRegime?.regime === 'TRENDING_UP' ? 'UP' : globalRegime?.regime === 'TRENDING_DOWN' ? 'DOWN' : 'NEUTRAL') as any,
+        ethTrend: 'NEUTRAL' as const,
+        btcMacroColor: globalRegime?.macroColor,
+        timestamp: Date.now(),
+        label: classification?.label
+      };
 
       const signal = evaluateTrendPullback(
         closedKlines,
@@ -2315,6 +2334,10 @@ export class AutoTrader {
           tradeTimeframe: tradeTf,
           htfTimeframe: htf,
           symbol,
+          tpsrMode: this.settings.tpsrMode || 'balanced',
+          tpsrOverrides: this.settings.tpsrOverrides || {},
+          tpsrRegime,
+          dailyCandles,
           emaFast: this.settings.tpbEmaFast || 20,
           emaSlow: this.settings.tpbEmaSlow || 50,
           adxMin: this.settings.tpbAdxMin || 18,
@@ -2336,7 +2359,7 @@ export class AutoTrader {
         }
       );
       if (!signal) return null;
-      return { ...signal, strategy: 'TREND_PULLBACK', marketRegime: 'Trending [EMA Pullback]' };
+      return { ...signal, strategy: 'TREND_PULLBACK', marketRegime: 'Trending [Pullback Sweep Reversal]' };
     }
 
     // 5. SMC / Liquidity Sweep Reversal

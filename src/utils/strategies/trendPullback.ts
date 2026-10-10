@@ -1,5 +1,11 @@
 import { calculateEMA, calculateATR, calculateADX, calculateSMA } from '../indicators.js';
 import { allowTrendPullback, extractTrendPullbackRegimeMetrics, type TrendPullbackRegimeMetrics } from './strategyRegimeFilters.js';
+import {
+  evaluateTrendPullbackSweep,
+  extractTpsrRegime,
+  type TpsrMode
+} from './trendPullbackSweep/engine.js';
+import { tpsrToTrendPullbackResult } from './trendPullbackSweep/index.js';
 export { allowTrendPullback, extractTrendPullbackRegimeMetrics };
 export type { TrendPullbackRegimeMetrics };
 
@@ -115,6 +121,14 @@ export interface TrendPullbackOptions {
   retestContractionRatio?: number; // default 0.85 (retest vol vs impulse vol)
   continuationVolumeRatio?: number; // default 1.0 (continuation vol vs volSma20)
   entryMode?: 'RETEST_CONTINUATION'; // default 'RETEST_CONTINUATION'
+  // TPSR (Trend Pullback Sweep Reversal) integration options
+  useLegacyOnly?: boolean;
+  tpsrMode?: TpsrMode;
+  tpsrOverrides?: Record<string, any>;
+  tpsrRegime?: any;
+  dailyCandles?: Candle[];
+  btcCandles?: Candle[];
+  symbolRank?: number;
 }
 
 export type TrendPullbackStatus =
@@ -1590,6 +1604,44 @@ export function evaluateTrendPullbackDetailed(
       score: 0,
       result: null
     };
+  }
+
+  // Primary Strategy Evaluator: Trend Pullback Sweep Reversal (TPSR)
+  if (options.useLegacyOnly !== true && tradeCandles && tradeCandles.length >= 25) {
+    try {
+      const tpsrRes = evaluateTrendPullbackSweep({
+        symbol,
+        execCandles: tradeCandles,
+        isCandlesClosed: true,
+        directionCandles: htfCandles && htfCandles.length >= 20 ? htfCandles : undefined,
+        dailyCandles: options.dailyCandles,
+        btcCandles: options.btcCandles,
+        currentPrice,
+        mode: options.tpsrMode || 'balanced',
+        regime: options.tpsrRegime ? extractTpsrRegime(options.tpsrRegime) : undefined,
+        overrides: options.tpsrOverrides,
+        symbolRank: options.symbolRank
+      });
+
+      if (tpsrRes.status === 'ACTIVE' && tpsrRes.signal) {
+        const result = tpsrToTrendPullbackResult(tpsrRes, symbol, tradeTf, htf);
+        if (result) {
+          return {
+            success: true,
+            status: 'SIGNAL CONFIRMED',
+            stage: 'STAGE_B_TRADE_CONFIRMED',
+            state: 'CONTINUATION_CONFIRMED',
+            decision: 'TRADE_ALLOWED',
+            outcomeReason: 'TRADE_SIGNAL',
+            reason: result.reason,
+            score: result.score,
+            result
+          };
+        }
+      }
+    } catch (err) {
+      console.warn(`[TPSR] evaluateTrendPullbackSweep error for ${symbol}:`, err);
+    }
   }
 
   // 3. if (!timeframeAligned) reject("TIMEFRAME_MISMATCH")

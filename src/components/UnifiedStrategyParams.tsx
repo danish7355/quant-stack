@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AppSettings, NUMERIC_BOUNDS } from '../types';
 import { RangeStrategyConfigPanel } from './RangeStrategyConfigPanel';
 import { LiquiditySweepPanel } from './LiquiditySweepPanel';
+import { TrendPullbackSweepPanel } from './TrendPullbackSweepPanel';
 import { 
   Zap, ShieldCheck, Target, Sparkles, Activity, Flame, RotateCcw, 
   Layers, Compass, Check, SlidersHorizontal, Info, AlertTriangle, ChevronRight, Eye
@@ -378,45 +379,13 @@ export const UnifiedStrategyParams: React.FC<UnifiedStrategyParamsProps> = ({
         />
       )}
 
-      {/* STRATEGY 4: Trend Pullback (TREND_PULLBACK) */}
+      {/* STRATEGY 4: Trend Pullback Sweep Reversal (TREND_PULLBACK) */}
       {shouldShow('TREND_PULLBACK') && (
-        <div className="bg-[#161B22] rounded-xl p-5 sm:p-6 border border-blue-500/30 space-y-4 shadow-xl shadow-blue-950/10">
-          <div className="flex items-center justify-between border-b border-[#30363D] pb-3 flex-wrap gap-2">
-            <div>
-              <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
-                <Target className="w-4 h-4 text-blue-400" />
-                <span>4. Trend Pullback (HTF + MTF Retest) Parameters</span>
-              </h3>
-              <p className="text-xs text-gray-400 mt-0.5">Trend-following retest strategy with EMA20/50 alignment, ADX momentum, and volume surge filtering.</p>
-            </div>
-            <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/40">
-              TREND FOLLOWING
-            </span>
-          </div>
-
-          <div className="space-y-1">
-            <InputRow label="Fast Trend EMA Period" desc="Fast EMA period for dynamic pullback detection (default: 20)" value={settings.tpbEmaFast ?? 20} onChange={(v) => handleFieldChange('tpbEmaFast', v)} min={5} max={100} />
-            <InputRow label="Slow Baseline EMA Period" desc="Slow baseline EMA period for trend direction (default: 50)" value={settings.tpbEmaSlow ?? 50} onChange={(v) => handleFieldChange('tpbEmaSlow', v)} min={20} max={200} />
-            <InputRow label="Minimum ADX Momentum" desc="ADX must be above this threshold to confirm strong trend (default: 22)" value={settings.tpbAdxMin ?? 22} onChange={(v) => handleFieldChange('tpbAdxMin', v)} min={10} max={50} />
-            <InputRow label="EMA Slope Lookback (Bars)" desc="Bars back to compare Fast EMA for trend slope confirmation (default: 5)" value={settings.tpbSlopeLookbackBars ?? 5} onChange={(v) => handleFieldChange('tpbSlopeLookbackBars', v)} min={2} max={20} unit="bars" />
-            <InputRow label="Pullback Depth Tolerance (x ATR)" desc="Tolerance band around EMA 20 in ATR units (default: 0.25)" value={settings.tpbPullbackDepthAtr ?? 0.25} onChange={(v) => handleFieldChange('tpbPullbackDepthAtr', v)} step={0.05} min={0.05} max={1.5} unit="x" />
-            <InputRow label="Volume SMA Lookback Period" desc="Lookback period for baseline volume moving average (default: 20)" value={settings.tpbVolumeSmaPeriod ?? 20} onChange={(v) => handleFieldChange('tpbVolumeSmaPeriod', v)} min={5} max={50} unit="bars" />
-            <InputRow label="Min Volume Surge Ratio" desc="Retest bounce candle volume vs SMA ratio (default: 1.0x)" value={settings.tpbMinVolumeRatio ?? 1.0} onChange={(v) => handleFieldChange('tpbMinVolumeRatio', v)} step={0.1} min={0.5} max={5.0} unit="x" />
-            <InputRow label="Max Entry Distance from EMA (x ATR)" desc="Max allowable price extension from Fast EMA (default: 0.25)" value={settings.tpbMaxEntryDistanceAtr ?? 0.25} onChange={(v) => handleFieldChange('tpbMaxEntryDistanceAtr', v)} step={0.05} min={0.1} max={3.0} unit="x" />
-            <InputRow label="Min Stop Distance (x ATR)" desc="Minimum stop distance in ATR units to reject noise (default: 0.8)" value={settings.tpbMinStopDistanceAtr ?? 0.8} onChange={(v) => handleFieldChange('tpbMinStopDistanceAtr', v)} step={0.1} min={0.2} max={2.0} unit="x" />
-            <InputRow label="Max Stop Distance (x ATR)" desc="Maximum allowable stop distance in ATR units for timeframe (default: 3.0)" value={settings.tpbMaxStopDistanceAtr ?? 3.0} onChange={(v) => handleFieldChange('tpbMaxStopDistanceAtr', v)} step={0.1} min={1.0} max={6.0} unit="x" />
-            <InputRow label="Max Spread / Slippage (x ATR)" desc="Maximum allowable spread in ATR units before entry is blocked (default: 0.3)" value={settings.tpbMaxSpreadAtr ?? 0.3} onChange={(v) => handleFieldChange('tpbMaxSpreadAtr', v)} step={0.05} min={0.05} max={1.0} unit="x" />
-            <InputRow label="Minimum Risk-to-Reward Ratio" desc="Required minimum asymmetric target multiple (default: 1.5)" value={settings.tpbMinRrRatio ?? 1.5} onChange={(v) => handleFieldChange('tpbMinRrRatio', v)} step={0.1} min={1.0} max={5.0} unit=":1" />
-            <InputRow label="Min Confirmation Score" desc="Minimum 5-pillar confirmation score to enter trade (default: 8/10)" value={settings.tpbMinScore ?? 8} onChange={(v) => handleFieldChange('tpbMinScore', v)} min={5} max={10} unit="pts" />
-            <InputRow label="Stop Loss ATR Buffer" desc="Buffer added beyond recent swing low/high in ATR (default: 0.3)" value={settings.tpbAtrBuffer ?? 0.3} onChange={(v) => handleFieldChange('tpbAtrBuffer', v)} step={0.1} min={0.1} max={2.0} unit="x" />
-
-            <ToggleRow label="Allow Long Setups" desc="Enable bullish trend-pullback trade execution" checked={settings.tpbAllowLongs !== false} onChange={(v) => handleFieldChange('tpbAllowLongs', v)} accentColor="bg-blue-600" />
-            <ToggleRow label="Allow Short Setups" desc="Enable bearish trend-pullback trade execution" checked={settings.tpbAllowShorts !== false} onChange={(v) => handleFieldChange('tpbAllowShorts', v)} accentColor="bg-blue-600" />
-            <ToggleRow label="Allow Broad Structural Stops" desc="If unchecked, prefers Local Execution Stop and rejects distant HTF stops" checked={settings.tpbAllowBroadStop === true} onChange={(v) => handleFieldChange('tpbAllowBroadStop', v)} accentColor="bg-blue-600" />
-            <ToggleRow label="Unconfirmed Volume Mode" desc="Allow signal execution when exchange volume is unconfirmed" checked={settings.tpbAllowUnconfirmedVolume === true} onChange={(v) => handleFieldChange('tpbAllowUnconfirmedVolume', v)} accentColor="bg-blue-600" />
-            <ToggleRow label="Require Volume Surge" desc="Block retest setups that lack confirmed volume expansion" checked={settings.tpbRequireVolume !== false} onChange={(v) => handleFieldChange('tpbRequireVolume', v)} accentColor="bg-blue-600" />
-          </div>
-        </div>
+        <TrendPullbackSweepPanel
+          settings={settings}
+          onUpdateSetting={onUpdateSetting}
+          onSaveDirect={onSaveDirect}
+        />
       )}
 
       {/* STRATEGY 5: Trend Pullback Retest (TREND_PULLBACK_RETEST) */}

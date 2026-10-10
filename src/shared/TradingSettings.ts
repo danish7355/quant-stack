@@ -10,6 +10,12 @@ import {
   HABITATS as DEFAULT_SWEEP_HABITATS,
   REGIME_MAP as DEFAULT_SWEEP_REGIME_MAP
 } from '../utils/strategies/liquiditySweep/schema.js';
+import {
+  TpsrMode,
+  DEFAULT_REGIME_SCALERS as DEFAULT_TPSR_REGIME_SCALERS
+} from '../utils/strategies/trendPullbackSweep/schema.js';
+
+export type { TpsrMode };
 
 export type TradingMode = 'PAPER' | 'TESTNET' | 'LIVE';
 
@@ -410,6 +416,12 @@ export interface TradingSettings {
   lsrCooldownBarsAfterLoss?: number;
   lsrMaxPerSymbolPerDay?: number;
 
+  // Trend Pullback Sweep Reversal (TPSR) Settings
+  tpsrMode?: TpsrMode;
+  tpsrOverrides?: Record<string, any>;
+  tpsrPinnedKeys?: string[];
+  tpsrCustomScalers?: Record<string, any>;
+
   binanceApiKey?: string;
   binanceApiSecret?: string;
   binanceTestnet?: boolean;
@@ -734,6 +746,14 @@ export function validateTradingSettings(input: unknown): ValidationResult {
     }
   }
 
+  if (raw.tpsrMode !== undefined) {
+    if (['strict', 'balanced', 'aggressive'].includes(raw.tpsrMode)) {
+      sanitized.tpsrMode = raw.tpsrMode;
+    } else {
+      errors.push(`Invalid tpsrMode: ${raw.tpsrMode}`);
+    }
+  }
+
   if (raw.lsrConfirmEngulf !== undefined) {
     if (['range', 'body', 'close_through'].includes(raw.lsrConfirmEngulf)) {
       sanitized.lsrConfirmEngulf = raw.lsrConfirmEngulf;
@@ -798,6 +818,15 @@ export function validateTradingSettings(input: unknown): ValidationResult {
   }
   if (raw.liquiditySweepRegimeMap && typeof raw.liquiditySweepRegimeMap === 'object') {
     sanitized.liquiditySweepRegimeMap = { ...raw.liquiditySweepRegimeMap };
+  }
+  if (raw.tpsrOverrides && typeof raw.tpsrOverrides === 'object') {
+    sanitized.tpsrOverrides = { ...raw.tpsrOverrides };
+  }
+  if (raw.tpsrPinnedKeys && Array.isArray(raw.tpsrPinnedKeys)) {
+    sanitized.tpsrPinnedKeys = raw.tpsrPinnedKeys.filter((k: any) => typeof k === 'string');
+  }
+  if (raw.tpsrCustomScalers && typeof raw.tpsrCustomScalers === 'object') {
+    sanitized.tpsrCustomScalers = { ...raw.tpsrCustomScalers };
   }
 
   // Version and timestamps
@@ -1153,5 +1182,11 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   lsrTimeStopBars: 16,
   lsrCooldownBarsAfterLoss: 5,
   lsrMaxPerSymbolPerDay: 4,
+
+  // Trend Pullback Sweep Reversal (TPSR) Defaults
+  tpsrMode: 'balanced',
+  tpsrOverrides: {},
+  tpsrPinnedKeys: [],
+  tpsrCustomScalers: { ...DEFAULT_TPSR_REGIME_SCALERS },
 };
 
