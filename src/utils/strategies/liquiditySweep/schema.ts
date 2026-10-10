@@ -227,7 +227,7 @@ export const REGIME_MAP: Record<string, Habitat> = {
 };
 
 export type Resolved =
-  | { status: 'STANDBY'; habitat: Habitat; reason: RejectReason }
+  | { status: 'STANDBY'; habitat: Habitat; reason: RejectReason; config?: SweepConfig }
   | { status: 'ACTIVE'; habitat: Habitat; cfg: SweepConfig };
 
 export function merge<T>(base: T, patch: DeepPartial<T>): T {
@@ -246,28 +246,223 @@ export function resolveConfig(opts: {
   regimeConfidence: number; // from the regime engine
   regimeStableBars: number; // bars the current regime has held
   regimeMap?: Record<string, Habitat>;
+  habitats?: Record<Habitat, HabitatProfile>;
   uiOverrides?: DeepPartial<SweepConfig>;
 }): Resolved {
   const habitat = (opts.regimeMap ?? REGIME_MAP)[opts.regimeLabel] ?? 'transition';
-  const profile = HABITATS[habitat] ?? HABITATS.transition;
+  const profile = (opts.habitats ?? HABITATS)[habitat] ?? HABITATS.transition;
   if (!profile.enabledIn.includes(opts.mode)) {
-    return { status: 'STANDBY', habitat, reason: 'REGIME_STANDBY' };
+    return { status: 'STANDBY', habitat, reason: 'REGIME_STANDBY', config: getPresetConfig(opts.mode) };
   }
 
   let cfg = merge(merge(BASE, MODES[opts.mode]), profile.overrides);
   cfg = JSON.parse(JSON.stringify(cfg)) as SweepConfig; // detach from shared defaults
   cfg.risk.minRR = Math.round((cfg.risk.minRR + profile.adjust.minRRDelta) * 100) / 100;
-  cfg.risk.riskMult *= profile.adjust.riskMult;
+  cfg.risk.riskMult = Math.round(cfg.risk.riskMult * profile.adjust.riskMult * 1000) / 1000;
   cfg.exits.timeStopBars = Math.round(cfg.exits.timeStopBars * profile.adjust.timeStopMult);
   cfg = merge(cfg, opts.uiOverrides ?? {}); // the user's explicit values always win
 
   if (opts.regimeConfidence < cfg.regime.minConfidence) {
-    return { status: 'STANDBY', habitat, reason: 'REGIME_LOW_CONF' };
+    return { status: 'STANDBY', habitat, reason: 'REGIME_LOW_CONF', config: cfg };
   }
   if (opts.regimeStableBars < cfg.regime.stabilityBars) {
-    return { status: 'STANDBY', habitat, reason: 'REGIME_UNSTABLE' };
+    return { status: 'STANDBY', habitat, reason: 'REGIME_UNSTABLE', config: cfg };
   }
   return { status: 'ACTIVE', habitat, cfg };
+}
+
+/** Returns the raw preset SweepConfig for a mode without habitat adjust or overrides. */
+export function getPresetConfig(mode: Mode): SweepConfig {
+  const cfg = merge(BASE, MODES[mode]);
+  return JSON.parse(JSON.stringify(cfg)) as SweepConfig;
+}
+
+/** Computes the effective SweepConfig for a mode under the current regime, with habitat overrides and adjustments applied. */
+export function getEffectiveConfig(
+  mode: Mode,
+  regimeLabel: string,
+  habitats?: Record<Habitat, HabitatProfile>,
+  regimeMap?: Record<string, Habitat>
+): { cfg: SweepConfig; habitat: Habitat; active: boolean; reason?: RejectReason } {
+  const habitat = (regimeMap ?? REGIME_MAP)[regimeLabel] ?? 'transition';
+  const profile = (habitats ?? HABITATS)[habitat] ?? HABITATS.transition;
+  const active = profile.enabledIn.includes(mode);
+
+  let cfg = merge(merge(BASE, MODES[mode]), profile.overrides);
+  cfg = JSON.parse(JSON.stringify(cfg)) as SweepConfig;
+  cfg.risk.minRR = Math.round((cfg.risk.minRR + profile.adjust.minRRDelta) * 100) / 100;
+  cfg.risk.riskMult = Math.round(cfg.risk.riskMult * profile.adjust.riskMult * 1000) / 1000;
+  cfg.exits.timeStopBars = Math.round(cfg.exits.timeStopBars * profile.adjust.timeStopMult);
+
+  return {
+    cfg,
+    habitat,
+    active,
+    reason: active ? undefined : 'REGIME_STANDBY'
+  };
+}
+
+/** Safely extracts a nested property using dot-notation. */
+export function getNestedValue(obj: any, path: string): any {
+  if (!obj || typeof obj !== 'object') return undefined;
+  const parts = path.split('.');
+  let cur = obj;
+  for (const p of parts) {
+    if (cur === undefined || cur === null) return undefined;
+    cur = cur[p];
+  }
+  return cur;
+}
+
+/** Sets a nested property in a sparse override object, returning a new detached object. */
+export function setNestedOverride(overrides: DeepPartial<SweepConfig> | undefined, path: string, value: any): DeepPartial<SweepConfig> {
+  const root = JSON.parse(JSON.stringify(overrides || {}));
+  const parts = path.split('.');
+  let cur = root;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const p = parts[i];
+    if (!cur[p] || typeof cur[p] !== 'object' || Array.isArray(cur[p])) {
+      cur[p] = {};
+    }
+    cur = cur[p];
+  }
+  cur[parts[parts.length - 1]] = value;
+  return root;
+}
+
+/** Removes a property from a sparse override object, cleaning up empty parent objects. */
+export function deleteNestedOverride(overrides: DeepPartial<SweepConfig> | undefined, path: string): DeepPartial<SweepConfig> {
+  const root = JSON.parse(JSON.stringify(overrides || {}));
+  const parts = path.split('.');
+
+  function remove(obj: any, idx: number): boolean {
+    if (!obj || typeof obj !== 'object') return false;
+    const key = parts[idx];
+    if (idx === parts.length - 1) {
+      delete obj[key];
+      return Object.keys(obj).length === 0;
+    }
+    const shouldDeleteChild = remove(obj[key], idx + 1);
+    if (shouldDeleteChild) {
+      delete obj[key];
+    }
+    return Object.keys(obj).length === 0;
+  }
+
+  remove(root, 0);
+  return root;
+}
+
+export const TIMEFRAMES_MINUTES: Record<string, number> = {
+  '1m': 1,
+  '3m': 3,
+  '5m': 5,
+  '15m': 15,
+  '30m': 30,
+  '1h': 60,
+  '2h': 120,
+  '4h': 240,
+  '6h': 360,
+  '8h': 480,
+  '12h': 720,
+  '1d': 1440,
+  '3d': 4320,
+  '1w': 10080
+};
+
+export const SUPPORTED_TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '1d'] as const;
+
+export function isTimeframeHigher(htf: string, ltf: string): boolean {
+  const h = TIMEFRAMES_MINUTES[htf] ?? 0;
+  const l = TIMEFRAMES_MINUTES[ltf] ?? 0;
+  return h > l;
+}
+
+export interface SweepValidationResult {
+  valid: boolean;
+  errors: Record<string, string>;
+  globalErrors: string[];
+}
+
+/** Validates SweepConfig according to Contract Section 4. */
+export function validateSweepConfig(cfg: SweepConfig): SweepValidationResult {
+  const errors: Record<string, string> = {};
+  const globalErrors: string[] = [];
+
+  // 1. Timeframe hierarchy: Direction must be higher than execution
+  if (!isTimeframeHigher(cfg.timeframes.direction, cfg.timeframes.execution)) {
+    const msg = `Direction timeframe (${cfg.timeframes.direction}) must be higher than execution timeframe (${cfg.timeframes.execution}).`;
+    errors['timeframes.direction'] = msg;
+    globalErrors.push(msg);
+  }
+
+  // 2. Depths: minDepth < maxDepth
+  if (cfg.sweep.minDepthATR >= cfg.sweep.maxDepthATR) {
+    const msg = `Min sweep depth (${cfg.sweep.minDepthATR} ATR) must be strictly less than max sweep depth (${cfg.sweep.maxDepthATR} ATR).`;
+    errors['sweep.minDepthATR'] = msg;
+    errors['sweep.maxDepthATR'] = msg;
+    globalErrors.push(msg);
+  }
+
+  // 3. Stops: minStop < maxStop
+  if (cfg.risk.minStopATR >= cfg.risk.maxStopATR) {
+    const msg = `Min stop distance (${cfg.risk.minStopATR} ATR) must be strictly less than max stop distance (${cfg.risk.maxStopATR} ATR).`;
+    errors['risk.minStopATR'] = msg;
+    errors['risk.maxStopATR'] = msg;
+    globalErrors.push(msg);
+  }
+
+  // 4. Ratios between 0 and 1
+  if (cfg.trigger.minWickToRange < 0 || cfg.trigger.minWickToRange > 1) {
+    errors['trigger.minWickToRange'] = 'Must be between 0 and 1.';
+    globalErrors.push('Trigger min wick/range must be between 0 and 1.');
+  }
+  if (cfg.trigger.maxOppWickToRange < 0 || cfg.trigger.maxOppWickToRange > 1) {
+    errors['trigger.maxOppWickToRange'] = 'Must be between 0 and 1.';
+    globalErrors.push('Trigger max opposing wick/range must be between 0 and 1.');
+  }
+  if (cfg.trigger.maxBodyToRange < 0 || cfg.trigger.maxBodyToRange > 1) {
+    errors['trigger.maxBodyToRange'] = 'Must be between 0 and 1.';
+    globalErrors.push('Trigger max body/range must be between 0 and 1.');
+  }
+  if (cfg.trigger.minCloseLocation < 0 || cfg.trigger.minCloseLocation > 1) {
+    errors['trigger.minCloseLocation'] = 'Must be between 0 and 1.';
+    globalErrors.push('Trigger min close location must be between 0 and 1.');
+  }
+
+  // 5. Confirm window >= 1
+  if (cfg.confirm.windowBars < 1) {
+    errors['confirm.windowBars'] = 'Must be at least 1 bar.';
+    globalErrors.push('Confirm window bars must be >= 1.');
+  }
+
+  // 6. Reclaim bars >= 1
+  if (cfg.sweep.reclaimWithinBars < 1) {
+    errors['sweep.reclaimWithinBars'] = 'Must be at least 1 bar.';
+    globalErrors.push('Reclaim within bars must be >= 1.');
+  }
+
+  // 7. Close % between 0 and 100
+  if (cfg.exits.tp1.closePct < 0 || cfg.exits.tp1.closePct > 100) {
+    errors['exits.tp1.closePct'] = 'Must be between 0 and 100%.';
+    globalErrors.push('TP1 close percentage must be between 0% and 100%.');
+  }
+
+  // 8. Pool weights between 0 and 100
+  if (cfg.pools && cfg.pools.weights) {
+    for (const [poolKey, weight] of Object.entries(cfg.pools.weights)) {
+      if (typeof weight !== 'number' || weight < 0 || weight > 100) {
+        errors[`pools.weights.${poolKey}`] = 'Must be between 0 and 100.';
+        globalErrors.push(`Pool weight for ${poolKey} must be between 0 and 100.`);
+      }
+    }
+  }
+
+  return {
+    valid: globalErrors.length === 0,
+    errors,
+    globalErrors
+  };
 }
 
 /** Round-trip fee cost expressed in R. Compare against cfg.risk.maxFeeToRisk. */
@@ -299,9 +494,12 @@ export function getAppFeeRoundTripPct(settings?: { feeTakerPct?: number; feeGstP
  * Any slider, input, or toggle modified by the user immediately takes precedence
  * over the preset values in resolveConfig().
  */
-export function buildSweepUiOverrides(settings: any): DeepPartial<SweepConfig> {
+export function buildSweepUiOverrides(settings: any, currentMode?: Mode): DeepPartial<SweepConfig> {
   const overrides: DeepPartial<SweepConfig> = {};
   if (!settings || typeof settings !== 'object') return overrides;
+
+  const mode: Mode = (currentMode || settings.liquiditySweepMode || 'balanced') as Mode;
+  const sparseModeOverrides = (settings.liquiditySweepOverrides && settings.liquiditySweepOverrides[mode]) || {};
 
   // 1. Timeframes
   if (settings.lsrExecutionTf) {
@@ -427,7 +625,8 @@ export function buildSweepUiOverrides(settings: any): DeepPartial<SweepConfig> {
     overrides.frequency!.maxPerSymbolPerDay = settings.lsrMaxPerSymbolPerDay;
   }
 
-  // Merge direct nested settings.liquiditySweepConfig with explicit lsr* fields
-  return merge(settings.liquiditySweepConfig ?? {}, overrides);
+  // Merge direct nested settings.liquiditySweepConfig with explicit lsr* fields, and sparse per-mode overrides (highest precedence)
+  const mergedFlat = merge(settings.liquiditySweepConfig ?? {}, overrides);
+  return merge(mergedFlat, sparseModeOverrides);
 }
 

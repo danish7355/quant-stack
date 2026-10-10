@@ -5,7 +5,7 @@ import { COLLECTIONS } from '../dbCollections.js';
 import { doc, getDoc, setDoc, collection, query, where, getDocs, deleteDoc } from 'firebase/firestore';
 import { oms } from './OMS.js';
 import { positionMonitor } from './PositionMonitor.js';
-import { isQuotaExhausted, safeSetDoc, safeDeleteDoc, safeGetDoc, safeSetDocSettings, safeGetDocSettings, readLocalJson, writeLocalJson } from './firestoreSafe.js';
+import { isQuotaExhausted, safeSetDoc, safeUpdateDoc, safeDeleteDoc, safeGetDoc, safeSetDocSettings, safeGetDocSettings, readLocalJson, writeLocalJson } from './firestoreSafe.js';
 
 import { telegramService } from './TelegramService.js';
 import { riskManager } from './RiskManager.js';
@@ -2363,6 +2363,8 @@ export class AutoTrader {
           regimeLabel: this.settings.coindcxActiveRegime || 'RANGE',
           regimeConfidence: classification.confidence ?? 70,
           regimeStableBars: this.settings.lsrStabilityBars ?? 2,
+          regimeMap: this.settings.liquiditySweepRegimeMap,
+          habitats: this.settings.liquiditySweepHabitats as any,
           uiOverrides: buildSweepUiOverrides(this.settings),
           symbolRank: 1,
           symbolDailyTrades: 0,
@@ -2403,6 +2405,38 @@ export class AutoTrader {
             strategy: strat,
             marketRegime: reversalRes.habitat
           });
+
+          // Cancel pending setups when regime goes to standby
+          if (this.pendingSmcSetups.has(symbol)) {
+            console.log(`🤖 [LSR] Regime standby (${reversalRes.reason}) - cancelling pending setup for ${symbol}`);
+            this.pendingSmcSetups.delete(symbol);
+          }
+
+          // Open trades follow the on-exit behavior ('manage' | 'tighten' | 'close')
+          const openTrades = positionMonitor.getActivePositions().filter(p => p.symbol === symbol && (p.strategy === 'LIQUIDITY_SWEEP_REVERSAL' || p.strategy === 'SMC_LIQUIDITY_SWEEP'));
+          for (const pos of openTrades) {
+            const onExit = reversalRes.config?.regime?.onExit || 'manage';
+            if (onExit === 'close') {
+              console.log(`⚡ [LSR] Regime Standby (${reversalRes.reason}) -> Triggering immediate position CLOSE for ${symbol}`);
+              oms.closePosition(pos.id, currentPrice, 'REGIME_STANDBY').catch(err => {
+                console.error(`LSR: Error closing position ${pos.id} on standby:`, err);
+              });
+            } else if (onExit === 'tighten') {
+              const isLong = pos.direction === 'LONG';
+              const entryPrice = pos.entry_price;
+              let tightenedSl = pos.sl;
+              if (isLong && entryPrice > (pos.sl || 0)) {
+                tightenedSl = entryPrice; // Move SL to BE
+              } else if (!isLong && entryPrice < (pos.sl || Infinity)) {
+                tightenedSl = entryPrice; // Move SL to BE
+              }
+              if (tightenedSl !== pos.sl) {
+                console.log(`⚡ [LSR] Regime Standby (${reversalRes.reason}) -> Tightening SL to BE for ${symbol}: ${pos.sl} -> ${tightenedSl}`);
+                pos.sl = tightenedSl;
+                safeUpdateDoc(doc(db, COLLECTIONS.POSITIONS, pos.id), { sl: tightenedSl }).catch(() => {});
+              }
+            }
+          }
         }
 
         // Secondary fallback to legacy SMC
@@ -3400,6 +3434,8 @@ export class AutoTrader {
             regimeLabel: this.settings.coindcxActiveRegime || 'RANGE',
             regimeConfidence: classification.confidence ?? 70,
             regimeStableBars: this.settings.lsrStabilityBars ?? 2,
+            regimeMap: this.settings.liquiditySweepRegimeMap,
+            habitats: this.settings.liquiditySweepHabitats as any,
             uiOverrides: buildSweepUiOverrides(this.settings),
             symbolRank: 1,
             symbolDailyTrades: 0,

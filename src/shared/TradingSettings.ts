@@ -377,6 +377,7 @@ export interface TradingSettings {
 
   // Liquidity Sweep Reversal (LSR) Settings
   liquiditySweepMode?: LiquiditySweepMode;
+  liquiditySweepOverrides?: Partial<Record<LiquiditySweepMode, DeepPartial<SweepConfig>>>;
   liquiditySweepConfig?: DeepPartial<SweepConfig>;
   liquiditySweepBase?: SweepConfig;
   liquiditySweepModes?: Record<LiquiditySweepMode, DeepPartial<SweepConfig>>;
@@ -780,6 +781,9 @@ export function validateTradingSettings(input: unknown): ValidationResult {
   if (raw.rangeConfig && typeof raw.rangeConfig === 'object') {
     sanitized.rangeConfig = { ...raw.rangeConfig };
   }
+  if (raw.liquiditySweepOverrides && typeof raw.liquiditySweepOverrides === 'object') {
+    sanitized.liquiditySweepOverrides = { ...raw.liquiditySweepOverrides };
+  }
   if (raw.liquiditySweepConfig && typeof raw.liquiditySweepConfig === 'object') {
     sanitized.liquiditySweepConfig = { ...raw.liquiditySweepConfig };
   }
@@ -1114,6 +1118,11 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
 
   // Liquidity Sweep Reversal (LSR) Defaults
   liquiditySweepMode: 'balanced',
+  liquiditySweepOverrides: {
+    strict: {},
+    balanced: {},
+    aggressive: {}
+  },
   liquiditySweepBase: { ...DEFAULT_SWEEP_BASE },
   liquiditySweepModes: { ...DEFAULT_SWEEP_MODES },
   liquiditySweepHabitats: { ...DEFAULT_SWEEP_HABITATS },

@@ -423,9 +423,9 @@ export function buildLiquidityMap(opts: {
   }
 
   // 5. Range Edges
-  const edges = extractRangeEdges(execCandles, 60);
+  const edges = extractRangeEdges(execCandles, maxAgeBars);
   if (edges.rangeHigh !== undefined) {
-    const isUntouched = checkUntouched(execCandles, { level: edges.rangeHigh, side: 'HIGH', barIndex: Math.max(0, currentIdx - 60) }, currentIdx);
+    const isUntouched = checkUntouched(execCandles, { level: edges.rangeHigh, side: 'HIGH', barIndex: Math.max(0, currentIdx - maxAgeBars) }, currentIdx);
     pools.push({
       id: `rangeEdgeH_${edges.rangeHigh.toFixed(4)}`,
       type: 'rangeEdge',
@@ -433,14 +433,14 @@ export function buildLiquidityMap(opts: {
       side: 'HIGH',
       touches: 1,
       score: scorePool('rangeEdge', 1, weights, touchBonus),
-      barIndex: Math.max(0, currentIdx - 60),
-      time: execCandles[Math.max(0, currentIdx - 60)]?.time ?? 0,
-      ageBars: 60,
+      barIndex: Math.max(0, currentIdx - maxAgeBars),
+      time: execCandles[Math.max(0, currentIdx - maxAgeBars)]?.time ?? 0,
+      ageBars: maxAgeBars,
       isUntouched
     });
   }
   if (edges.rangeLow !== undefined) {
-    const isUntouched = checkUntouched(execCandles, { level: edges.rangeLow, side: 'LOW', barIndex: Math.max(0, currentIdx - 60) }, currentIdx);
+    const isUntouched = checkUntouched(execCandles, { level: edges.rangeLow, side: 'LOW', barIndex: Math.max(0, currentIdx - maxAgeBars) }, currentIdx);
     pools.push({
       id: `rangeEdgeL_${edges.rangeLow.toFixed(4)}`,
       type: 'rangeEdge',
@@ -448,9 +448,9 @@ export function buildLiquidityMap(opts: {
       side: 'LOW',
       touches: 1,
       score: scorePool('rangeEdge', 1, weights, touchBonus),
-      barIndex: Math.max(0, currentIdx - 60),
-      time: execCandles[Math.max(0, currentIdx - 60)]?.time ?? 0,
-      ageBars: 60,
+      barIndex: Math.max(0, currentIdx - maxAgeBars),
+      time: execCandles[Math.max(0, currentIdx - maxAgeBars)]?.time ?? 0,
+      ageBars: maxAgeBars,
       isUntouched
     });
   }

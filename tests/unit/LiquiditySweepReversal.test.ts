@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { describe, it, expect } from 'vitest';
 import {
   BASE,
@@ -6,9 +8,12 @@ import {
   REGIME_MAP,
   resolveConfig,
   buildSweepUiOverrides,
+  setNestedOverride,
+  deleteNestedOverride,
   feeCostInR,
   getAppFeeRoundTripPct,
   SweepConfig,
+  DeepPartial,
   Mode,
   Habitat
 } from '../../src/utils/strategies/liquiditySweep/schema.js';
@@ -396,6 +401,196 @@ describe('LIQUIDITY SWEEP REVERSAL: Config Contract & 8-Stage Pipeline', () => {
         expect(resolved.cfg.exits.timeStopBars).toBe(20);
         expect(resolved.cfg.frequency.cooldownBarsAfterLoss).toBe(6);
         expect(resolved.cfg.frequency.maxPerSymbolPerDay).toBe(5);
+      }
+    });
+  });
+
+  describe('6. Official Acceptance Test Suite', () => {
+    // Test 1: strict + range: min RR 2.0, time stop 15, TP1 basis range_mid, TP1 close 40%
+    it('Acceptance Test 1: strict + range -> min RR 2.0, time stop 15, TP1 basis range_mid, TP1 close 40%', () => {
+      const res = resolveConfig({
+        mode: 'strict',
+        regimeLabel: 'RANGE',
+        regimeConfidence: 75,
+        regimeStableBars: 5
+      });
+      expect(res.status).toBe('ACTIVE');
+      if (res.status === 'ACTIVE') {
+        expect(res.cfg.risk.minRR).toBe(2.0);
+        expect(res.cfg.exits.timeStopBars).toBe(15);
+        expect(res.cfg.exits.tp1.basis).toBe('range_mid');
+        expect(res.cfg.exits.tp1.closePct).toBe(40);
+      }
+    });
+
+    // Test 2: strict + trend: min RR 2.3, time stop 30
+    it('Acceptance Test 2: strict + trend -> min RR 2.3, time stop 30', () => {
+      const res = resolveConfig({
+        mode: 'strict',
+        regimeLabel: 'TREND_UP',
+        regimeConfidence: 75,
+        regimeStableBars: 5
+      });
+      expect(res.status).toBe('ACTIVE');
+      if (res.status === 'ACTIVE') {
+        expect(res.cfg.risk.minRR).toBe(2.3);
+        expect(res.cfg.exits.timeStopBars).toBe(30);
+      }
+    });
+
+    // Test 3: balanced + range: time stop 12. balanced + trend: min RR 1.9, time stop 24
+    it('Acceptance Test 3: balanced + range -> time stop 12; balanced + trend -> min RR 1.9, time stop 24', () => {
+      const resRange = resolveConfig({
+        mode: 'balanced',
+        regimeLabel: 'RANGE',
+        regimeConfidence: 75,
+        regimeStableBars: 5
+      });
+      expect(resRange.status).toBe('ACTIVE');
+      if (resRange.status === 'ACTIVE') {
+        expect(resRange.cfg.exits.timeStopBars).toBe(12);
+      }
+
+      const resTrend = resolveConfig({
+        mode: 'balanced',
+        regimeLabel: 'TREND_UP',
+        regimeConfidence: 75,
+        regimeStableBars: 5
+      });
+      expect(resTrend.status).toBe('ACTIVE');
+      if (resTrend.status === 'ACTIVE') {
+        expect(resTrend.cfg.risk.minRR).toBe(1.9);
+        expect(resTrend.cfg.exits.timeStopBars).toBe(24);
+      }
+    });
+
+    // Test 4: aggressive + compression: ACTIVE with risk multiplier 0.375, time stop 9
+    it('Acceptance Test 4: aggressive + compression -> ACTIVE with risk multiplier 0.375, time stop 9', () => {
+      const res = resolveConfig({
+        mode: 'aggressive',
+        regimeLabel: 'COMPRESSION',
+        regimeConfidence: 75,
+        regimeStableBars: 5
+      });
+      expect(res.status).toBe('ACTIVE');
+      if (res.status === 'ACTIVE') {
+        expect(res.cfg.risk.riskMult).toBe(0.375);
+        expect(res.cfg.exits.timeStopBars).toBe(9);
+      }
+    });
+
+    // Test 5: strict or balanced + compression, any mode + expansion, unknown labels: STANDBY
+    it('Acceptance Test 5: strict/balanced + compression, any mode + expansion, and unknown labels -> STANDBY', () => {
+      expect(resolveConfig({ mode: 'strict', regimeLabel: 'COMPRESSION', regimeConfidence: 75, regimeStableBars: 5 }).status).toBe('STANDBY');
+      expect(resolveConfig({ mode: 'balanced', regimeLabel: 'COMPRESSION', regimeConfidence: 75, regimeStableBars: 5 }).status).toBe('STANDBY');
+
+      for (const m of ['strict', 'balanced', 'aggressive'] as Mode[]) {
+        const resExp = resolveConfig({ mode: m, regimeLabel: 'EXPANSION', regimeConfidence: 75, regimeStableBars: 5 });
+        expect(resExp.status).toBe('STANDBY');
+        if (resExp.status === 'STANDBY') {
+          expect(resExp.reason).toBe('REGIME_STANDBY');
+        }
+      }
+
+      const resUnknown = resolveConfig({ mode: 'balanced', regimeLabel: 'UNKNOWN_OR_UNMAPPED', regimeConfidence: 75, regimeStableBars: 5 });
+      expect(resUnknown.status).toBe('STANDBY');
+      if (resUnknown.status === 'STANDBY') {
+        expect(resUnknown.reason).toBe('REGIME_STANDBY');
+        expect(resUnknown.habitat).toBe('transition');
+      }
+    });
+
+    // Test 6: Confidence below mode minimum: STANDBY with REGIME_LOW_CONF
+    it('Acceptance Test 6: Confidence below mode minimum -> STANDBY with REGIME_LOW_CONF', () => {
+      // strict min confidence is 70
+      const resStrict = resolveConfig({ mode: 'strict', regimeLabel: 'RANGE', regimeConfidence: 65, regimeStableBars: 5 });
+      expect(resStrict.status).toBe('STANDBY');
+      if (resStrict.status === 'STANDBY') {
+        expect(resStrict.reason).toBe('REGIME_LOW_CONF');
+      }
+
+      // balanced min confidence is 55
+      const resBalanced = resolveConfig({ mode: 'balanced', regimeLabel: 'RANGE', regimeConfidence: 50, regimeStableBars: 5 });
+      expect(resBalanced.status).toBe('STANDBY');
+      if (resBalanced.status === 'STANDBY') {
+        expect(resBalanced.reason).toBe('REGIME_LOW_CONF');
+      }
+
+      // aggressive min confidence is 40
+      const resAggressive = resolveConfig({ mode: 'aggressive', regimeLabel: 'RANGE', regimeConfidence: 35, regimeStableBars: 5 });
+      expect(resAggressive.status).toBe('STANDBY');
+      if (resAggressive.status === 'STANDBY') {
+        expect(resAggressive.reason).toBe('REGIME_LOW_CONF');
+      }
+    });
+
+    // Test 7: Edit one field, save, then inspect storage: only that single field is stored in overrides
+    it('Acceptance Test 7: Sparse override storage - only edited field is stored, modes are isolated', () => {
+      let overrides: Partial<Record<Mode, DeepPartial<SweepConfig>>> = {};
+
+      // 1. User edits single field in balanced mode
+      overrides.balanced = setNestedOverride(overrides.balanced, 'sweep.minDepthATR', 0.08);
+
+      // Verify sparse storage: only sweep.minDepthATR is present
+      expect(overrides.balanced).toEqual({ sweep: { minDepthATR: 0.08 } });
+      expect(Object.keys(overrides.balanced || {})).toEqual(['sweep']);
+      expect(Object.keys((overrides.balanced as any).sweep)).toEqual(['minDepthATR']);
+      expect((overrides.balanced as any).timeframes).toBeUndefined();
+      expect((overrides.balanced as any).risk).toBeUndefined();
+
+      // 2. Strict mode overrides remain undefined (no leak)
+      expect(overrides.strict).toBeUndefined();
+
+      // 3. User edits single field in strict mode
+      overrides.strict = setNestedOverride(overrides.strict, 'risk.minRR', 2.8);
+      expect(overrides.strict).toEqual({ risk: { minRR: 2.8 } });
+      // Balanced overrides remain untouched
+      expect(overrides.balanced).toEqual({ sweep: { minDepthATR: 0.08 } });
+
+      // 4. Overrides bridge loads mode's own overrides without cross-pollution
+      const balancedUiOverrides = buildSweepUiOverrides({
+        liquiditySweepMode: 'balanced',
+        liquiditySweepOverrides: overrides
+      }, 'balanced');
+      expect(balancedUiOverrides.sweep?.minDepthATR).toBe(0.08);
+      expect(balancedUiOverrides.risk?.minRR).toBeUndefined();
+
+      const strictUiOverrides = buildSweepUiOverrides({
+        liquiditySweepMode: 'strict',
+        liquiditySweepOverrides: overrides
+      }, 'strict');
+      expect(strictUiOverrides.risk?.minRR).toBe(2.8);
+      expect(strictUiOverrides.sweep?.minDepthATR).toBeUndefined();
+
+      // 5. Reset single field removes it cleanly
+      overrides.balanced = deleteNestedOverride(overrides.balanced, 'sweep.minDepthATR');
+      expect(overrides.balanced).toEqual({});
+    });
+
+    // Test 8: Grep src/utils/strategies/liquiditySweep/ for numeric threshold literals: must be 0
+    it('Acceptance Test 8: Zero hardcoded threshold constants in strategy code (Rule 2.1 & Runtime Rules)', () => {
+      const dirPath = path.resolve(__dirname, '../../src/utils/strategies/liquiditySweep');
+      const files = ['engine.ts', 'pools.ts'];
+
+      // Regex checking for hardcoded threshold literals like `const minDepth = 0.06` or `score >= 75` or `minRR = 1.6`
+      const forbiddenPatterns = [
+        /minDepthATR\s*===?\s*\d+(\.\d+)?/i,
+        /maxDepthATR\s*===?\s*\d+(\.\d+)?/i,
+        /minRR\s*===?\s*\d+(\.\d+)?/i,
+        /timeStopBars\s*===?\s*\d+/i,
+        /maxRank\s*===?\s*\d+/i,
+        /minConfidence\s*===?\s*\d+/i,
+        /hardcoded/i
+      ];
+
+      for (const fileName of files) {
+        const filePath = path.join(dirPath, fileName);
+        const content = fs.readFileSync(filePath, 'utf-8');
+
+        for (const pattern of forbiddenPatterns) {
+          const match = content.match(pattern);
+          expect(match, `Found hardcoded literal pattern ${pattern} in ${fileName}`).toBeNull();
+        }
       }
     });
   });

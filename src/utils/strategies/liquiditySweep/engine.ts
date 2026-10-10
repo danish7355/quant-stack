@@ -19,6 +19,7 @@
 import {
   Mode,
   Habitat,
+  HabitatProfile,
   PoolType,
   SweepConfig,
   RejectReason,
@@ -54,7 +55,7 @@ export interface SweepReversalSignal {
 
 export type SweepEvaluationResult =
   | { status: 'ACTIVE'; signal: SweepReversalSignal; cfg: SweepConfig; habitat: Habitat }
-  | { status: 'STANDBY'; reason: RejectReason; habitat: Habitat; details?: string };
+  | { status: 'STANDBY'; reason: RejectReason; habitat: Habitat; config?: SweepConfig; details?: string };
 
 /**
  * Calculates ATR on completed bars with configurable period.
@@ -128,6 +129,7 @@ export interface EvaluateSweepReversalInput {
   regimeConfidence?: number;
   regimeStableBars?: number;
   regimeMap?: Record<string, Habitat>;
+  habitats?: Record<Habitat, HabitatProfile>;
   uiOverrides?: DeepPartial<SweepConfig>;
   symbolRank?: number;
   btcEthMacro?: {
@@ -156,6 +158,7 @@ export function evaluateLiquiditySweepReversal(
     regimeConfidence = 60,
     regimeStableBars = 2,
     regimeMap,
+    habitats,
     uiOverrides,
     symbolRank = 1,
     btcEthMacro,
@@ -173,6 +176,7 @@ export function evaluateLiquiditySweepReversal(
     regimeConfidence,
     regimeStableBars,
     regimeMap,
+    habitats,
     uiOverrides
   });
 
@@ -181,6 +185,7 @@ export function evaluateLiquiditySweepReversal(
       status: 'STANDBY',
       reason: resolved.reason,
       habitat: resolved.habitat,
+      config: resolved.config,
       details: `Regime status: STANDBY (${resolved.reason})`
     };
   }
@@ -454,7 +459,7 @@ export function evaluateLiquiditySweepReversal(
 
       // Range edge check (for range habitats)
       if (habitat === 'range' || habitat === 'compression') {
-        const edges = extractRangeEdges(closedCandles, 60);
+        const edges = extractRangeEdges(closedCandles, cfg.pools.maxAgeBars);
         if (edges.rangeHigh && edges.rangeLow) {
           const totalRange = edges.rangeHigh - edges.rangeLow;
           if (totalRange > 0) {
@@ -563,7 +568,7 @@ export function evaluateLiquiditySweepReversal(
       // Take profit targets
       let tp1: number;
       if (cfg.exits.tp1.basis === 'range_mid') {
-        const edges = extractRangeEdges(closedCandles, 60);
+        const edges = extractRangeEdges(closedCandles, cfg.pools.maxAgeBars);
         tp1 = edges.rangeMid ?? (setupDir === 'LONG' ? entryPrice + (riskDist * cfg.exits.tp1.r) : entryPrice - (riskDist * cfg.exits.tp1.r));
       } else {
         // 'r_multiple'
@@ -577,7 +582,7 @@ export function evaluateLiquiditySweepReversal(
       const oppPool = allPools.find(p => p.side === oppSide && p.isUntouched);
 
       if (cfg.exits.tp2.basis === 'range_edge') {
-        const edges = extractRangeEdges(closedCandles, 60);
+        const edges = extractRangeEdges(closedCandles, cfg.pools.maxAgeBars);
         tp2 = (setupDir === 'LONG' ? edges.rangeHigh : edges.rangeLow) ?? (setupDir === 'LONG' ? entryPrice + (riskDist * cfg.risk.minRR) : entryPrice - (riskDist * cfg.risk.minRR));
       } else {
         // 'opposite_pool'
