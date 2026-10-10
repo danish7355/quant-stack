@@ -2,7 +2,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Adapter for Liquidity Sweep Reversal strategy conforming to core/StrategySignal.
 // ─────────────────────────────────────────────────────────────────────────────
-import { evaluateLiquiditySweepReversal } from './liquiditySweep/index.js';
+import { evaluateLiquiditySweepReversal, buildSweepUiOverrides } from './liquiditySweep/index.js';
 import { evaluateSmc } from './smcLiquidity.js';
 import { StrategySignal } from './core/StrategySignal.js';
 import { applyRiskBuffer, computeRiskQualityScore } from './core/riskManager.js';
@@ -24,14 +24,15 @@ export function evaluateSmcLiquidityAdapter(
   const reversalRes = evaluateLiquiditySweepReversal({
     symbol,
     execCandles: candles,
+    isCandlesClosed: settings.isCandlesClosed ?? false,
     directionCandles: htfCandles,
     liquidityCandles1D: settings.liquidityCandles1D || [],
     currentPrice,
     mode: settings.liquiditySweepMode || 'balanced',
     regimeLabel: settings.coindcxActiveRegime || settings.marketRegime || 'RANGE',
     regimeConfidence: settings.regimeConfidence ?? 70,
-    regimeStableBars: settings.regimeStableBars ?? 3,
-    uiOverrides: settings.liquiditySweepConfig,
+    regimeStableBars: settings.lsrStabilityBars ?? settings.regimeStableBars ?? 2,
+    uiOverrides: buildSweepUiOverrides(settings),
     symbolRank: settings.symbolRank ?? 1,
     btcEthMacro: settings.btcEthMacro,
     symbolDailyTrades: settings.symbolDailyTrades ?? 0,

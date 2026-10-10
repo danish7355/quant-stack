@@ -5,6 +5,7 @@ import {
   HABITATS,
   REGIME_MAP,
   resolveConfig,
+  buildSweepUiOverrides,
   feeCostInR,
   getAppFeeRoundTripPct,
   SweepConfig,
@@ -271,5 +272,132 @@ describe('LIQUIDITY SWEEP REVERSAL: Config Contract & 8-Stage Pipeline', () => {
         expect(['SWEEP_TOO_DEEP', 'TRIGGER_INVALID', 'POOL_WEAK']).toContain(res.reason);
       }
     });
+
+    it('evaluates successfully when isCandlesClosed is true without needing extra unclosed bar', () => {
+      const candles: Candle[] = [];
+      const baseTime = Date.UTC(2026, 8, 21, 10, 0);
+
+      for (let i = 0; i < 35; i++) {
+        let l = 99.0;
+        let h = 103.0;
+        if (i === 5) h = 112.0;
+        if (i === 15) l = 95.0;
+        candles.push(createCandle(baseTime + i * 900000, 100.0, h, l, 100.5, 1000));
+      }
+
+      // Bar 35: Rejection hammer sweeping bar 15 low (95.0)
+      candles.push(createCandle(baseTime + 35 * 900000, 97.0, 97.5, 94.2, 97.2, 2500));
+      // Bar 36: Bullish Confirmation Engulfing candle - this is the LAST candle in the array (already closed)
+      candles.push(createCandle(baseTime + 36 * 900000, 97.0, 99.2, 96.8, 98.8, 2000));
+
+      const res = evaluateLiquiditySweepReversal({
+        symbol: 'BTCUSDT',
+        execCandles: candles,
+        isCandlesClosed: true,
+        mode: 'balanced',
+        regimeLabel: 'RANGE',
+        regimeConfidence: 75,
+        regimeStableBars: 4,
+        appFeeSettings: { feeTakerPct: 0.05, feeGstPct: 18 }
+      });
+
+      expect(res.status).toBe('ACTIVE');
+      if (res.status === 'ACTIVE') {
+        expect(res.signal.direction).toBe('LONG');
+        expect(res.signal.entryPrice).toBe(98.8);
+      }
+    });
+  });
+
+  describe('5. UI Settings Bridge & Operator Customization Supremacy (Rule 1)', () => {
+    it('correctly maps all flat UI parameters to deep SweepConfig overrides', () => {
+      const flatUiSettings = {
+        lsrExecutionTf: '5m',
+        lsrDirectionTf: '30m',
+        lsrMinConfidence: 65,
+        lsrStabilityBars: 4,
+        lsrMaxRank: 50,
+        lsrMinPoolScore: 60,
+        lsrMinDepthAtr: 0.1,
+        lsrMaxDepthAtr: 2.2,
+        lsrReclaimWithinBars: 3,
+        lsrMinRelVolume: 1.5,
+        lsrMinWickToRange: 0.55,
+        lsrMaxOppWickToRange: 0.25,
+        lsrMaxBodyToRange: 0.35,
+        lsrMinCloseLocation: 0.65,
+        lsrMinRangeAtr: 0.6,
+        lsrConfirmWindowBars: 2,
+        lsrConfirmEngulf: 'close_through' as const,
+        lsrMinBodyAtr: 0.4,
+        lsrStopBufferAtr: 0.25,
+        lsrMinStopAtr: 0.6,
+        lsrMaxStopAtr: 3.0,
+        lsrMinRr: 2.0,
+        lsrMaxFeeToRisk: 0.15,
+        lsrTimeStopBars: 20,
+        lsrCooldownBarsAfterLoss: 6,
+        lsrMaxPerSymbolPerDay: 5
+      };
+
+      const overrides = buildSweepUiOverrides(flatUiSettings);
+
+      expect(overrides.timeframes?.execution).toBe('5m');
+      expect(overrides.timeframes?.direction).toBe('30m');
+      expect(overrides.regime?.minConfidence).toBe(65);
+      expect(overrides.regime?.stabilityBars).toBe(4);
+      expect(overrides.universe?.maxRank).toBe(50);
+      expect(overrides.pools?.minScore).toBe(60);
+      expect(overrides.sweep?.minDepthATR).toBe(0.1);
+      expect(overrides.sweep?.maxDepthATR).toBe(2.2);
+      expect(overrides.sweep?.reclaimWithinBars).toBe(3);
+      expect(overrides.sweep?.minRelVolume).toBe(1.5);
+      expect(overrides.trigger?.minWickToRange).toBe(0.55);
+      expect(overrides.trigger?.maxOppWickToRange).toBe(0.25);
+      expect(overrides.trigger?.maxBodyToRange).toBe(0.35);
+      expect(overrides.trigger?.minCloseLocation).toBe(0.65);
+      expect(overrides.trigger?.minRangeATR).toBe(0.6);
+      expect(overrides.confirm?.windowBars).toBe(2);
+      expect(overrides.confirm?.engulf).toBe('close_through');
+      expect(overrides.confirm?.minBodyATR).toBe(0.4);
+      expect(overrides.risk?.stopBufferATR).toBe(0.25);
+      expect(overrides.risk?.minStopATR).toBe(0.6);
+      expect(overrides.risk?.maxStopATR).toBe(3.0);
+      expect(overrides.risk?.minRR).toBe(2.0);
+      expect(overrides.risk?.maxFeeToRisk).toBe(0.15);
+      expect(overrides.exits?.timeStopBars).toBe(20);
+      expect(overrides.frequency?.cooldownBarsAfterLoss).toBe(6);
+      expect(overrides.frequency?.maxPerSymbolPerDay).toBe(5);
+
+      // Verify that resolveConfig adopts every single override
+      const resolved = resolveConfig({
+        mode: 'balanced',
+        regimeLabel: 'RANGE',
+        regimeConfidence: 75,
+        regimeStableBars: 5,
+        uiOverrides: overrides
+      });
+
+      expect(resolved.status).toBe('ACTIVE');
+      if (resolved.status === 'ACTIVE') {
+        expect(resolved.cfg.timeframes.execution).toBe('5m');
+        expect(resolved.cfg.timeframes.direction).toBe('30m');
+        expect(resolved.cfg.regime.minConfidence).toBe(65);
+        expect(resolved.cfg.regime.stabilityBars).toBe(4);
+        expect(resolved.cfg.universe.maxRank).toBe(50);
+        expect(resolved.cfg.pools.minScore).toBe(60);
+        expect(resolved.cfg.sweep.minDepthATR).toBe(0.1);
+        expect(resolved.cfg.sweep.maxDepthATR).toBe(2.2);
+        expect(resolved.cfg.sweep.reclaimWithinBars).toBe(3);
+        expect(resolved.cfg.sweep.minRelVolume).toBe(1.5);
+        expect(resolved.cfg.confirm.engulf).toBe('close_through');
+        expect(resolved.cfg.risk.minRR).toBe(2.0);
+        expect(resolved.cfg.risk.maxFeeToRisk).toBe(0.15);
+        expect(resolved.cfg.exits.timeStopBars).toBe(20);
+        expect(resolved.cfg.frequency.cooldownBarsAfterLoss).toBe(6);
+        expect(resolved.cfg.frequency.maxPerSymbolPerDay).toBe(5);
+      }
+    });
   });
 });
+

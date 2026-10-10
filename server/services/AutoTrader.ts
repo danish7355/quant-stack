@@ -24,7 +24,7 @@ import {
 import { evaluateVolatilityCompressionAdapter } from '../../src/utils/strategies/volatilityCompressionAdapter.js';
 import { evaluateTrendPullback, getHigherTimeframe } from '../../src/utils/strategies/trendPullback.js';
 import { evaluateSmc } from '../../src/utils/strategies/smcLiquidity.js';
-import { evaluateLiquiditySweepReversal } from '../../src/utils/strategies/liquiditySweep/index.js';
+import { evaluateLiquiditySweepReversal, buildSweepUiOverrides } from '../../src/utils/strategies/liquiditySweep/index.js';
 import { detectMacroRangeBreakout } from '../../src/utils/strategies/macroRange.js';
 import { evaluateEarlyCoilBreakout } from '../../src/utils/strategies/earlyCoilBreakout.js';
 import { evaluateTwoSidedCoilBreakout } from '../../src/utils/strategies/twoSidedCoilBreakout.js';
@@ -2355,14 +2355,15 @@ export class AutoTrader {
         const reversalRes = evaluateLiquiditySweepReversal({
           symbol,
           execCandles: closedKlines,
+          isCandlesClosed: true,
           directionCandles: closedHtf,
           liquidityCandles1D: dailyCandles,
           currentPrice,
           mode: this.settings.liquiditySweepMode || 'balanced',
           regimeLabel: this.settings.coindcxActiveRegime || 'RANGE',
           regimeConfidence: classification.confidence ?? 70,
-          regimeStableBars: 3,
-          uiOverrides: this.settings.liquiditySweepConfig,
+          regimeStableBars: this.settings.lsrStabilityBars ?? 2,
+          uiOverrides: buildSweepUiOverrides(this.settings),
           symbolRank: 1,
           symbolDailyTrades: 0,
           symbolInCooldown: this.isTradeInCooldown(symbol),
@@ -3391,14 +3392,15 @@ export class AutoTrader {
           const reversalRes = evaluateLiquiditySweepReversal({
             symbol,
             execCandles: closedKlines,
+            isCandlesClosed: true,
             directionCandles: closedHtf,
             liquidityCandles1D: dailyCandles,
             currentPrice,
             mode: this.settings.liquiditySweepMode || 'balanced',
             regimeLabel: this.settings.coindcxActiveRegime || 'RANGE',
             regimeConfidence: classification.confidence ?? 70,
-            regimeStableBars: 3,
-            uiOverrides: this.settings.liquiditySweepConfig,
+            regimeStableBars: this.settings.lsrStabilityBars ?? 2,
+            uiOverrides: buildSweepUiOverrides(this.settings),
             symbolRank: 1,
             symbolDailyTrades: 0,
             symbolInCooldown: this.isTradeInCooldown(symbol),

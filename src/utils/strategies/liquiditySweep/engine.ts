@@ -118,7 +118,8 @@ export function determineDirectionBias(
 
 export interface EvaluateSweepReversalInput {
   symbol: string;
-  execCandles: Candle[];          // Live / historical candles on execution TF
+  execCandles: Candle[];          // Live or closed candles on execution TF
+  isCandlesClosed?: boolean;       // Set true if execCandles is already closed (prevent double-slicing)
   directionCandles?: Candle[];     // Closed candles on direction TF
   liquidityCandles1D?: Candle[];   // Daily candles for prevDay / prevWeek pools
   currentPrice?: number;
@@ -205,7 +206,7 @@ export function evaluateLiquiditySweepReversal(
       details: 'Insufficient closed candles for execution timeframe'
     };
   }
-  const closedCandles = execCandles.slice(0, -1);
+  const closedCandles = input.isCandlesClosed ? execCandles : execCandles.slice(0, -1);
   const n = closedCandles.length;
   if (n < cfg.atrPeriod + 10) {
     return {

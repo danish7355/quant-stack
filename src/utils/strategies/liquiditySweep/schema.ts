@@ -290,3 +290,144 @@ export function getAppFeeRoundTripPct(settings?: { feeTakerPct?: number; feeGstP
   const roundTripPct = (takerPct * 2) * (1 + gstPct / 100);
   return roundTripPct; // e.g., 0.118 (as %)
 }
+
+/**
+ * Maps the flat operator settings from the UI (TradingSettings.lsr*) into
+ * a typed DeepPartial<SweepConfig> override structure.
+ *
+ * Honors Rule 1: Absolute Synchronization Between Frontend and Backend.
+ * Any slider, input, or toggle modified by the user immediately takes precedence
+ * over the preset values in resolveConfig().
+ */
+export function buildSweepUiOverrides(settings: any): DeepPartial<SweepConfig> {
+  const overrides: DeepPartial<SweepConfig> = {};
+  if (!settings || typeof settings !== 'object') return overrides;
+
+  // 1. Timeframes
+  if (settings.lsrExecutionTf) {
+    overrides.timeframes = overrides.timeframes || {} as any;
+    overrides.timeframes!.execution = settings.lsrExecutionTf;
+  }
+  if (settings.lsrDirectionTf) {
+    overrides.timeframes = overrides.timeframes || {} as any;
+    overrides.timeframes!.direction = settings.lsrDirectionTf;
+  }
+
+  // 2. Regime
+  if (typeof settings.lsrMinConfidence === 'number') {
+    overrides.regime = overrides.regime || {} as any;
+    overrides.regime!.minConfidence = settings.lsrMinConfidence;
+  }
+  if (typeof settings.lsrStabilityBars === 'number') {
+    overrides.regime = overrides.regime || {} as any;
+    overrides.regime!.stabilityBars = settings.lsrStabilityBars;
+  }
+
+  // 3. Universe
+  if (typeof settings.lsrMaxRank === 'number') {
+    overrides.universe = overrides.universe || {} as any;
+    overrides.universe!.maxRank = settings.lsrMaxRank;
+  }
+
+  // 4. Pools
+  if (typeof settings.lsrMinPoolScore === 'number') {
+    overrides.pools = overrides.pools || {} as any;
+    overrides.pools!.minScore = settings.lsrMinPoolScore;
+  }
+
+  // 5. Sweep
+  if (typeof settings.lsrMinDepthAtr === 'number') {
+    overrides.sweep = overrides.sweep || {} as any;
+    overrides.sweep!.minDepthATR = settings.lsrMinDepthAtr;
+  }
+  if (typeof settings.lsrMaxDepthAtr === 'number') {
+    overrides.sweep = overrides.sweep || {} as any;
+    overrides.sweep!.maxDepthATR = settings.lsrMaxDepthAtr;
+  }
+  if (typeof settings.lsrReclaimWithinBars === 'number') {
+    overrides.sweep = overrides.sweep || {} as any;
+    overrides.sweep!.reclaimWithinBars = settings.lsrReclaimWithinBars;
+  }
+  if (typeof settings.lsrMinRelVolume === 'number') {
+    overrides.sweep = overrides.sweep || {} as any;
+    overrides.sweep!.minRelVolume = settings.lsrMinRelVolume;
+  }
+
+  // 6. Trigger
+  if (typeof settings.lsrMinWickToRange === 'number') {
+    overrides.trigger = overrides.trigger || {} as any;
+    overrides.trigger!.minWickToRange = settings.lsrMinWickToRange;
+  }
+  if (typeof settings.lsrMaxOppWickToRange === 'number') {
+    overrides.trigger = overrides.trigger || {} as any;
+    overrides.trigger!.maxOppWickToRange = settings.lsrMaxOppWickToRange;
+  }
+  if (typeof settings.lsrMaxBodyToRange === 'number') {
+    overrides.trigger = overrides.trigger || {} as any;
+    overrides.trigger!.maxBodyToRange = settings.lsrMaxBodyToRange;
+  }
+  if (typeof settings.lsrMinCloseLocation === 'number') {
+    overrides.trigger = overrides.trigger || {} as any;
+    overrides.trigger!.minCloseLocation = settings.lsrMinCloseLocation;
+  }
+  if (typeof settings.lsrMinRangeAtr === 'number') {
+    overrides.trigger = overrides.trigger || {} as any;
+    overrides.trigger!.minRangeATR = settings.lsrMinRangeAtr;
+  }
+
+  // 7. Confirm
+  if (typeof settings.lsrConfirmWindowBars === 'number') {
+    overrides.confirm = overrides.confirm || {} as any;
+    overrides.confirm!.windowBars = settings.lsrConfirmWindowBars;
+  }
+  if (settings.lsrConfirmEngulf) {
+    overrides.confirm = overrides.confirm || {} as any;
+    overrides.confirm!.engulf = settings.lsrConfirmEngulf;
+  }
+  if (typeof settings.lsrMinBodyAtr === 'number') {
+    overrides.confirm = overrides.confirm || {} as any;
+    overrides.confirm!.minBodyATR = settings.lsrMinBodyAtr;
+  }
+
+  // 8. Risk
+  if (typeof settings.lsrStopBufferAtr === 'number') {
+    overrides.risk = overrides.risk || {} as any;
+    overrides.risk!.stopBufferATR = settings.lsrStopBufferAtr;
+  }
+  if (typeof settings.lsrMinStopAtr === 'number') {
+    overrides.risk = overrides.risk || {} as any;
+    overrides.risk!.minStopATR = settings.lsrMinStopAtr;
+  }
+  if (typeof settings.lsrMaxStopAtr === 'number') {
+    overrides.risk = overrides.risk || {} as any;
+    overrides.risk!.maxStopATR = settings.lsrMaxStopAtr;
+  }
+  if (typeof settings.lsrMinRr === 'number') {
+    overrides.risk = overrides.risk || {} as any;
+    overrides.risk!.minRR = settings.lsrMinRr;
+  }
+  if (typeof settings.lsrMaxFeeToRisk === 'number') {
+    overrides.risk = overrides.risk || {} as any;
+    overrides.risk!.maxFeeToRisk = settings.lsrMaxFeeToRisk;
+  }
+
+  // 9. Exits
+  if (typeof settings.lsrTimeStopBars === 'number') {
+    overrides.exits = overrides.exits || {} as any;
+    overrides.exits!.timeStopBars = settings.lsrTimeStopBars;
+  }
+
+  // 10. Frequency
+  if (typeof settings.lsrCooldownBarsAfterLoss === 'number') {
+    overrides.frequency = overrides.frequency || {} as any;
+    overrides.frequency!.cooldownBarsAfterLoss = settings.lsrCooldownBarsAfterLoss;
+  }
+  if (typeof settings.lsrMaxPerSymbolPerDay === 'number') {
+    overrides.frequency = overrides.frequency || {} as any;
+    overrides.frequency!.maxPerSymbolPerDay = settings.lsrMaxPerSymbolPerDay;
+  }
+
+  // Merge direct nested settings.liquiditySweepConfig with explicit lsr* fields
+  return merge(settings.liquiditySweepConfig ?? {}, overrides);
+}
+
