@@ -368,71 +368,113 @@ export const UnifiedStrategyParams: React.FC<UnifiedStrategyParamsProps> = ({
         </div>
       )}
 
-      {/* STRATEGY 3: Smart Money Concepts Liquidity Sweep (SMC_LIQUIDITY_SWEEP) */}
-      {shouldShow('SMC_LIQUIDITY_SWEEP') && (
+      {/* STRATEGY 3: Liquidity Sweep Reversal & SMC (SMC_LIQUIDITY_SWEEP / LIQUIDITY_SWEEP_REVERSAL) */}
+      {(shouldShow('SMC_LIQUIDITY_SWEEP') || shouldShow('LIQUIDITY_SWEEP_REVERSAL')) && (
         <div className="bg-[#161B22] rounded-xl p-5 sm:p-6 border border-purple-500/30 space-y-4 shadow-xl shadow-purple-950/10">
           <div className="flex items-center justify-between border-b border-[#30363D] pb-3 flex-wrap gap-2">
             <div>
               <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-purple-400" />
-                <span>3. Smart Money Concepts (SMC) Liquidity Sweep Parameters</span>
+                <span>3. Liquidity Sweep Reversal (8-Stage Regime-Gated)</span>
               </h3>
-              <p className="text-xs text-gray-400 mt-0.5">High-probability institutional price-action algorithm targeting liquidity sweeps, MSS displacement, and FVG/OB confluence.</p>
+              <p className="text-xs text-gray-400 mt-0.5">Strict regime-gated reversal algorithm harvesting stop runs on key pools (weekly/daily highs, equal HL, range edges) with engulf confirmation.</p>
             </div>
-            <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40">
-              INSTITUTIONAL
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                REGIME GATED
+              </span>
+            </div>
           </div>
 
-          <div className="space-y-1">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between py-3 border-b border-gray-800/50 gap-4">
-              <div className="flex flex-col">
-                <span className="text-xs sm:text-sm font-semibold text-gray-200">Higher-Timeframe (HTF) Resolution</span>
-                <span className="text-[11px] text-gray-500 mt-0.5">Resolution used to establish institutional HTF market structure & trend direction</span>
+          <div className="space-y-4">
+            {/* Mode Presets: strict | balanced | aggressive */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between py-2 border-b border-gray-800/50 gap-3">
+              <div>
+                <span className="text-xs sm:text-sm font-semibold text-gray-200">Execution Mode Preset</span>
+                <p className="text-[11px] text-gray-500 mt-0.5">Preconfigured parameter matrix (Strict: 15m/4h, Balanced: 15m/1h, Aggressive: 5m/1h)</p>
               </div>
               <div className="flex bg-gray-900 rounded-lg p-1 border border-gray-700">
-                {['15m', '1h', '4h', '1d'].map((res) => (
+                {(['strict', 'balanced', 'aggressive'] as const).map((m) => (
                   <button
-                    key={res}
+                    key={m}
                     type="button"
-                    onClick={() => handleFieldChange('smcHtfResolution', res)}
-                    className={`px-3 py-1 rounded text-xs font-bold transition-all cursor-pointer ${
-                      (settings.smcHtfResolution || '1h') === res
+                    onClick={() => handleFieldChange('liquiditySweepMode', m)}
+                    className={`px-3 py-1 rounded text-xs font-bold capitalize transition-all cursor-pointer ${
+                      (settings.liquiditySweepMode || 'balanced') === m
                         ? 'bg-purple-600 text-white shadow'
                         : 'text-gray-400 hover:text-gray-200'
                     }`}
                   >
-                    {res}
+                    {m}
                   </button>
                 ))}
               </div>
             </div>
 
-            <InputRow label="Structure Pivot Length (Bars)" desc="Bars on left/right to confirm Swing High/Low pivot" value={settings.smcStructureLen ?? 10} onChange={(v) => handleFieldChange('smcStructureLen', v)} min={3} max={50} unit="bars" />
-            <InputRow label="Min Sweep Wick/Body Ratio" desc="Minimum ratio of wick extension to candle body size for stop hunt" value={settings.smcWickRatio ?? 0.6} onChange={(v) => handleFieldChange('smcWickRatio', v)} step={0.1} min={0.2} max={2.0} />
-            <InputRow label="Min Sweep Extension (%)" desc="Percentage beyond swing pivot required (e.g. 0.0015 = 0.15%)" value={settings.smcMinSweepWickPct ?? 0.0015} onChange={(v) => handleFieldChange('smcMinSweepWickPct', v)} step={0.0005} min={0.0005} max={0.05} />
-            <InputRow label="MSS Displacement ATR Multiplier" desc="Displacement candle body must exceed this multiple of ATR" value={settings.smcDispAtrMult ?? 0.5} onChange={(v) => handleFieldChange('smcDispAtrMult', v)} step={0.1} min={0.2} max={5.0} unit="x" />
-            <InputRow label="Sweep-to-MSS Max Bars Window" desc="Max candles allowed between liquidity sweep and displacement MSS" value={settings.smcSweepConfirmWindow ?? 10} onChange={(v) => handleFieldChange('smcSweepConfirmWindow', v)} min={3} max={50} unit="bars" />
-            <InputRow label="MSS Volume Multiplier" desc="Displacement candle volume vs 20 SMA multiplier" value={settings.smcVolMult ?? 1.5} onChange={(v) => handleFieldChange('smcVolMult', v)} step={0.1} min={1.0} max={5.0} unit="x" />
-            <InputRow label="MSS-to-FVG Max Bars Window" desc="Max candles after MSS displacement to find Fair Value Gap" value={settings.smcFvgAfterMssWindow ?? 5} onChange={(v) => handleFieldChange('smcFvgAfterMssWindow', v)} min={2} max={30} unit="bars" />
-            <InputRow label="Order Block Lookback Bars" desc="Candles searched back from MSS to detect origin Order Block" value={settings.smcObLookback ?? 30} onChange={(v) => handleFieldChange('smcObLookback', v)} min={10} max={100} unit="bars" />
-            <InputRow label="Stop Loss ATR Multiplier" desc="Protective stop buffer beyond sweep extreme in multiples of ATR" value={settings.smcAtrStopMult ?? 1.5} onChange={(v) => handleFieldChange('smcAtrStopMult', v)} step={0.1} min={0.5} max={5.0} unit="x" />
-            <InputRow label="Target Risk:Reward Ratio" desc="Fixed structural take-profit target multiple vs initial risk" value={settings.smcRrRatio ?? 3.0} onChange={(v) => handleFieldChange('smcRrRatio', v)} step={0.5} min={1.5} max={10.0} unit=":1" />
+            {/* Stage 1 & 2: Regime & Direction Gates */}
+            <div className="space-y-1">
+              <div className="text-xs font-bold text-purple-400 uppercase tracking-wider py-1">Stage 1 & 2: Regime & Direction Gates</div>
+              <InputRow label="Min Regime Confidence (%)" desc="Minimum regime confidence score from regime engine to activate" value={settings.lsrMinConfidence ?? 55} onChange={(v) => handleFieldChange('lsrMinConfidence', v)} min={10} max={95} step={5} unit="%" />
+              <InputRow label="Regime Stability Bars" desc="Consecutive closed bars the current regime must persist before trading" value={settings.lsrStabilityBars ?? 2} onChange={(v) => handleFieldChange('lsrStabilityBars', v)} min={1} max={10} step={1} unit="bars" />
+              <InputRow label="Max Universe Rank" desc="Only scan and trade coins ranked within this top universe cutoff" value={settings.lsrMaxRank ?? 60} onChange={(v) => handleFieldChange('lsrMaxRank', v)} min={10} max={100} step={5} unit="rank" />
+            </div>
 
-            <ToggleRow
-              label="Session Kill Zone Filter"
-              desc="Restrict execution to London (07-10 UTC) and NY (12-15 UTC) high-liquidity hours"
-              checked={Boolean(settings.smcUseKillZone)}
-              onChange={(v) => handleFieldChange('smcUseKillZone', v)}
-              accentColor="bg-purple-600"
-            />
-            <ToggleRow
-              label="Strict HTF Structure Alignment"
-              desc="Block Longs in Bearish HTF and Shorts in Bullish HTF"
-              checked={Boolean(settings.smcStrictHtfRegime)}
-              onChange={(v) => handleFieldChange('smcStrictHtfRegime', v)}
-              accentColor="bg-purple-600"
-            />
+            {/* Stage 3 & 4: Liquidity Pools & Sweep Criteria */}
+            <div className="space-y-1">
+              <div className="text-xs font-bold text-purple-400 uppercase tracking-wider py-1">Stage 3 & 4: Pools & Sweep Detection</div>
+              <InputRow label="Min Pool Score" desc="Minimum untouched pool quality score (0-100) to qualify for sweep" value={settings.lsrMinPoolScore ?? 55} onChange={(v) => handleFieldChange('lsrMinPoolScore', v)} min={20} max={95} step={5} />
+              <InputRow label="Min Sweep Depth (ATR)" desc="Minimum penetration beyond pool price in ATR to count as real sweep" value={settings.lsrMinDepthAtr ?? 0.06} onChange={(v) => handleFieldChange('lsrMinDepthAtr', v)} min={0.01} max={0.5} step={0.01} unit="ATR" />
+              <InputRow label="Max Sweep Depth (ATR)" desc="Maximum penetration allowed (deeper indicates breakout, not sweep)" value={settings.lsrMaxDepthAtr ?? 1.8} onChange={(v) => handleFieldChange('lsrMaxDepthAtr', v)} min={0.5} max={4.0} step={0.1} unit="ATR" />
+              <InputRow label="Reclaim Within Bars" desc="Max bars for price to close back inside the swept level" value={settings.lsrReclaimWithinBars ?? 2} onChange={(v) => handleFieldChange('lsrReclaimWithinBars', v)} min={1} max={5} step={1} unit="bars" />
+              <InputRow label="Min Relative Volume" desc="Sweep candle volume vs 20 SMA volume multiplier" value={settings.lsrMinRelVolume ?? 1.2} onChange={(v) => handleFieldChange('lsrMinRelVolume', v)} min={0.5} max={3.0} step={0.1} unit="x" />
+            </div>
+
+            {/* Stage 5 & 6: Rejection Candle & Confirmation */}
+            <div className="space-y-1">
+              <div className="text-xs font-bold text-purple-400 uppercase tracking-wider py-1">Stage 5 & 6: Rejection & Engulf Confirmation</div>
+              <InputRow label="Min Wick/Range Ratio" desc="Rejection wick must comprise at least this proportion of the candle range" value={settings.lsrMinWickToRange ?? 0.5} onChange={(v) => handleFieldChange('lsrMinWickToRange', v)} min={0.2} max={0.8} step={0.05} />
+              <InputRow label="Max Opposing Wick/Range" desc="Maximum permitted opposite wick proportion (prevent indecision candles)" value={settings.lsrMaxOppWickToRange ?? 0.3} onChange={(v) => handleFieldChange('lsrMaxOppWickToRange', v)} min={0.1} max={0.5} step={0.05} />
+              <InputRow label="Max Body/Range Ratio" desc="Maximum allowable candle body proportion for hammer/star trigger" value={settings.lsrMaxBodyToRange ?? 0.4} onChange={(v) => handleFieldChange('lsrMaxBodyToRange', v)} min={0.2} max={0.6} step={0.05} />
+              <InputRow label="Min Close Location" desc="Close position from the swept extreme (0.6 = close in top 40% for long)" value={settings.lsrMinCloseLocation ?? 0.6} onChange={(v) => handleFieldChange('lsrMinCloseLocation', v)} min={0.4} max={0.9} step={0.05} />
+              <InputRow label="Min Rejection Range (ATR)" desc="Rejection candle range must be at least this multiple of ATR" value={settings.lsrMinRangeAtr ?? 0.5} onChange={(v) => handleFieldChange('lsrMinRangeAtr', v)} min={0.2} max={2.0} step={0.1} unit="ATR" />
+              <InputRow label="Confirm Window (Bars)" desc="Candles allowed for confirmation engulf after rejection candle" value={settings.lsrConfirmWindowBars ?? 1} onChange={(v) => handleFieldChange('lsrConfirmWindowBars', v)} min={1} max={3} step={1} unit="bars" />
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between py-2 border-b border-gray-800/50 gap-3">
+                <div>
+                  <span className="text-xs sm:text-sm font-semibold text-gray-200">Confirmation Engulf Mode</span>
+                  <p className="text-[11px] text-gray-500 mt-0.5">Range = closes beyond rejection high/low; Body = engulfs body; Close Through = closes beyond body top</p>
+                </div>
+                <div className="flex bg-gray-900 rounded-lg p-1 border border-gray-700">
+                  {(['range', 'body', 'close_through'] as const).map((em) => (
+                    <button
+                      key={em}
+                      type="button"
+                      onClick={() => handleFieldChange('lsrConfirmEngulf', em)}
+                      className={`px-2.5 py-1 rounded text-xs font-bold transition-all cursor-pointer ${
+                        (settings.lsrConfirmEngulf || 'body') === em
+                          ? 'bg-purple-600 text-white shadow'
+                          : 'text-gray-400 hover:text-gray-200'
+                      }`}
+                    >
+                      {em}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <InputRow label="Min Confirm Body (ATR)" desc="Confirmation candle body must be at least this multiple of ATR" value={settings.lsrMinBodyAtr ?? 0.35} onChange={(v) => handleFieldChange('lsrMinBodyAtr', v)} min={0.1} max={1.0} step={0.05} unit="ATR" />
+            </div>
+
+            {/* Stage 7 & 8: Risk Gates & Exits */}
+            <div className="space-y-1">
+              <div className="text-xs font-bold text-purple-400 uppercase tracking-wider py-1">Stage 7 & 8: Risk Gates, Fees & Exits</div>
+              <InputRow label="Stop Buffer (ATR)" desc="Protective cushion added beyond sweep extreme in ATR" value={settings.lsrStopBufferAtr ?? 0.2} onChange={(v) => handleFieldChange('lsrStopBufferAtr', v)} min={0.05} max={0.5} step={0.05} unit="ATR" />
+              <InputRow label="Min Stop Distance (ATR)" desc="Minimum distance between entry and stop loss" value={settings.lsrMinStopAtr ?? 0.5} onChange={(v) => handleFieldChange('lsrMinStopAtr', v)} min={0.2} max={1.5} step={0.1} unit="ATR" />
+              <InputRow label="Max Stop Distance (ATR)" desc="Maximum distance between entry and stop loss" value={settings.lsrMaxStopAtr ?? 2.5} onChange={(v) => handleFieldChange('lsrMaxStopAtr', v)} min={1.0} max={5.0} step={0.1} unit="ATR" />
+              <InputRow label="Min Risk:Reward Target" desc="Minimum structural target R:R required for trade execution" value={settings.lsrMinRr ?? 1.6} onChange={(v) => handleFieldChange('lsrMinRr', v)} min={1.0} max={4.0} step={0.1} unit=":1" />
+              <InputRow label="Max Fee Cost (in R)" desc="Maximum round-trip fee drag relative to stop loss risk (e.g. 0.2 = 20% of 1R)" value={settings.lsrMaxFeeToRisk ?? 0.2} onChange={(v) => handleFieldChange('lsrMaxFeeToRisk', v)} min={0.05} max={0.5} step={0.01} unit="R" />
+              <InputRow label="Time Stop (Bars)" desc="Maximum bars to hold position before mandatory close on lack of momentum" value={settings.lsrTimeStopBars ?? 16} onChange={(v) => handleFieldChange('lsrTimeStopBars', v)} min={4} max={48} step={2} unit="bars" />
+              <InputRow label="Cooldown Bars After Loss" desc="Bars to pause trading the symbol after a losing trade" value={settings.lsrCooldownBarsAfterLoss ?? 5} onChange={(v) => handleFieldChange('lsrCooldownBarsAfterLoss', v)} min={1} max={20} step={1} unit="bars" />
+              <InputRow label="Daily Cap Per Symbol" desc="Maximum executed trades per symbol within a rolling 24-hour window" value={settings.lsrMaxPerSymbolPerDay ?? 4} onChange={(v) => handleFieldChange('lsrMaxPerSymbolPerDay', v)} min={1} max={10} step={1} unit="trades" />
+            </div>
           </div>
         </div>
       )}

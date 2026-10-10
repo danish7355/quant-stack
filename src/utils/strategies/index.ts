@@ -139,6 +139,31 @@ export {
 } from './rangeMeanReversion.js';
 export * from './rangeRegime/index.js';
 export {
+  evaluateLiquiditySweepReversal,
+  type Mode as LiquiditySweepMode,
+  type Habitat as LiquiditySweepHabitat,
+  type PoolType as LiquidityPoolType,
+  type EngulfMode as LiquidityEngulfMode,
+  type SweepConfig,
+  type DeepPartial,
+  type RejectReason as LiquidityRejectReason,
+  type HabitatProfile as LiquidityHabitatProfile,
+  type Resolved as LiquidityResolved,
+  type LiquidityPool,
+  type SweepReversalSignal,
+  type SweepEvaluationResult,
+  type EvaluateSweepReversalInput,
+  BASE as SWEEP_BASE,
+  MODES as SWEEP_MODES,
+  HABITATS as SWEEP_HABITATS,
+  REGIME_MAP as SWEEP_REGIME_MAP,
+  REJECT_REASONS as SWEEP_REJECT_REASONS,
+  resolveConfig as resolveSweepConfig,
+  feeCostInR,
+  getAppFeeRoundTripPct,
+  buildLiquidityMap
+} from './liquiditySweep/index.js';
+export {
   detectEarlyCoilBreakout,
   type EarlyCoilConfig,
   type EarlyCoilSignal,

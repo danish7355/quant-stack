@@ -7,6 +7,35 @@ import { calculateATR } from '../indicators.js';
 import { allowSMCLiquidity, extractSmcRegimeMetrics, type SmcRegimeMetrics } from './strategyRegimeFilters.js';
 export { allowSMCLiquidity, extractSmcRegimeMetrics };
 export type { SmcRegimeMetrics };
+export type {
+  Mode,
+  Habitat,
+  PoolType,
+  EngulfMode,
+  SweepConfig,
+  DeepPartial,
+  RejectReason,
+  HabitatProfile,
+  Resolved,
+  LiquidityPool,
+  SweepReversalSignal,
+  SweepEvaluationResult,
+  EvaluateSweepReversalInput
+} from './liquiditySweep/index.js';
+export {
+  BASE,
+  MODES,
+  HABITATS,
+  REGIME_MAP,
+  REJECT_REASONS,
+  merge,
+  resolveConfig,
+  feeCostInR,
+  getAppFeeRoundTripPct,
+  evaluateLiquiditySweepReversal,
+  buildLiquidityMap
+} from './liquiditySweep/index.js';
+import { evaluateLiquiditySweepReversal as evalSweepReversal } from './liquiditySweep/index.js';
 
 export interface Candle {
   time: number;
@@ -637,6 +666,61 @@ export function evaluateSmc(
   const sweepConfirmWindow = options.sweepConfirmWindow ?? 10;
   const fvgAfterMssWindow = options.fvgAfterMssWindow ?? 5;
   const symbol = options.symbol || 'BTCUSDT';
+
+  // 0. Primary evaluation via Liquidity Sweep Reversal (8-stage pipeline)
+  try {
+    const reversalRes = evalSweepReversal({
+      symbol,
+      execCandles: klines,
+      directionCandles: htfCandles ? [...htfCandles] : [],
+      currentPrice,
+      mode: (options as any).liquiditySweepMode || 'balanced',
+      regimeLabel: (options as any).coindcxActiveRegime || 'RANGE',
+      regimeConfidence: (options as any).regimeConfidence ?? 70,
+      regimeStableBars: (options as any).regimeStableBars ?? 2,
+      uiOverrides: (options as any).liquiditySweepConfig,
+      symbolRank: (options as any).symbolRank ?? 1,
+      appFeeSettings: {
+        feeTakerPct: (options as any).feeTakerPct,
+        feeGstPct: (options as any).feeGstPct,
+        feeRoundTripPct: (options as any).feeRoundTripPct
+      }
+    });
+
+    if (reversalRes.status === 'ACTIVE') {
+      const sig = reversalRes.signal;
+      return {
+        direction: sig.direction,
+        score: sig.score,
+        sl: sig.sl,
+        tp1: sig.tp1,
+        tp2: sig.tp2,
+        tp3: sig.tp3,
+        entryZoneMin: sig.entryPrice * 0.999,
+        entryZoneMax: sig.entryPrice * 1.001,
+        entryPrice: sig.entryPrice,
+        reason: sig.reason,
+        signalTime: sig.signalTime,
+        fvgTop: sig.entryPrice,
+        fvgBottom: sig.entryPrice,
+        obTop: sig.entryPrice,
+        obBottom: sig.entryPrice,
+        htfRegime: 'BULLISH',
+        risk: sig.risk,
+        rrRatio: sig.rrRatio,
+        confluence: true,
+        inKillZone: true,
+        details: {
+          sweptLevel: sig.sweptPool.level,
+          sweepPrice: sig.entryPrice,
+          brokenStructureLevel: sig.sweptPool.level,
+          displacementAtr: sig.risk,
+          volumeRatio: 1.5,
+          regimeFilterPassed: true
+        }
+      };
+    }
+  } catch (err) {}
 
   // 1. HTF REGIME FILTER
   let htfRegime: HtfRegime = 'CHOP';

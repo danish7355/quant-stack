@@ -24,6 +24,7 @@ import {
 import { evaluateVolatilityCompressionAdapter } from '../../src/utils/strategies/volatilityCompressionAdapter.js';
 import { evaluateTrendPullback, getHigherTimeframe } from '../../src/utils/strategies/trendPullback.js';
 import { evaluateSmc } from '../../src/utils/strategies/smcLiquidity.js';
+import { evaluateLiquiditySweepReversal } from '../../src/utils/strategies/liquiditySweep/index.js';
 import { detectMacroRangeBreakout } from '../../src/utils/strategies/macroRange.js';
 import { evaluateEarlyCoilBreakout } from '../../src/utils/strategies/earlyCoilBreakout.js';
 import { evaluateTwoSidedCoilBreakout } from '../../src/utils/strategies/twoSidedCoilBreakout.js';
@@ -754,6 +755,11 @@ export class AutoTrader {
     const cooldownSecs = this.settings.tradeCooldownSeconds !== undefined ? this.settings.tradeCooldownSeconds : 60;
     if (cooldownSecs <= 0) return;
     this.tradeCooldowns.set(symbol, Date.now() + cooldownSecs * 1000);
+  }
+
+  public isTradeInCooldown(symbol: string): boolean {
+    if (this.settings.bypassTradeCooldown) return false;
+    return (this.tradeCooldowns.get(symbol) || 0) > Date.now();
   }
 
   public async saveSettings(newSettings: Partial<ServerBotSettings>, source: 'FRONTEND' | 'API' | 'SYSTEM' = 'FRONTEND'): Promise<ServerBotSettings> {
@@ -2333,14 +2339,74 @@ export class AutoTrader {
       return { ...signal, strategy: 'TREND_PULLBACK', marketRegime: 'Trending [EMA Pullback]' };
     }
 
-    // 5. SMC Liquidity Sweep
+    // 5. SMC / Liquidity Sweep Reversal
     if (strat === 'SMC_LIQUIDITY_SWEEP' || strat === 'LIQUIDITY_SWEEP_REVERSAL') {
       try {
-        const htf = this.settings.smcHtfResolution || '1h';
-        const htfCandles = await this.getKlines(symbol, htf);
-        const closedHtf = htfCandles ? htfCandles.slice(0, -1) : null;
+        const dirTf = this.settings.lsrDirectionTf || this.settings.smcHtfResolution || '1h';
+        const htfCandles = await this.getKlines(symbol, dirTf);
+        const closedHtf = htfCandles ? htfCandles.slice(0, -1) : [];
+        let dailyCandles: any[] = [];
+        try {
+          const rawDaily = await this.getKlines(symbol, '1d');
+          if (rawDaily) dailyCandles = rawDaily.slice(0, -1);
+        } catch (_) {}
+
+        // Primary: 8-Stage Regime-Gated Liquidity Sweep Reversal
+        const reversalRes = evaluateLiquiditySweepReversal({
+          symbol,
+          execCandles: closedKlines,
+          directionCandles: closedHtf,
+          liquidityCandles1D: dailyCandles,
+          currentPrice,
+          mode: this.settings.liquiditySweepMode || 'balanced',
+          regimeLabel: this.settings.coindcxActiveRegime || 'RANGE',
+          regimeConfidence: classification.confidence ?? 70,
+          regimeStableBars: 3,
+          uiOverrides: this.settings.liquiditySweepConfig,
+          symbolRank: 1,
+          symbolDailyTrades: 0,
+          symbolInCooldown: this.isTradeInCooldown(symbol),
+          appFeeSettings: {
+            feeTakerPct: (this.settings as any).feeTakerPct,
+            feeGstPct: (this.settings as any).feeGstPct,
+            feeRoundTripPct: (this.settings as any).feeRoundTripPct
+          }
+        });
+
+        if (reversalRes.status === 'ACTIVE') {
+          const sig = reversalRes.signal;
+          const effectiveThreshold = this.settings.autoTradeThreshold ?? 70;
+          const threshold = (this.isGateDisabled('RISK_threshold') && effectiveThreshold <= 50) ? 50 : effectiveThreshold;
+          if (sig.score >= threshold) {
+            return {
+              direction: sig.direction,
+              score: sig.score,
+              atr: sig.risk,
+              sl: sig.sl,
+              tp1: sig.tp1,
+              tp2: sig.tp2,
+              tp3: sig.tp3,
+              strategy: strat as any,
+              marketRegime: `Liquidity Sweep Reversal [${reversalRes.habitat}]`,
+              reason: sig.reason,
+              signalTime: sig.signalTime
+            };
+          } else {
+            this.logScanResult(symbol, sig.direction, false, `Gate Failed: Score ${sig.score} < threshold ${threshold}`, currentPrice, sig.sl, sig.tp1, sig.score, {
+              strategy: strat,
+              marketRegime: reversalRes.habitat
+            });
+          }
+        } else if (reversalRes.status === 'STANDBY') {
+          this.logScanResult(symbol, 'NEUTRAL', false, `LSR Standby: ${reversalRes.reason}`, currentPrice, 0, 0, 0, {
+            strategy: strat,
+            marketRegime: reversalRes.habitat
+          });
+        }
+
+        // Secondary fallback to legacy SMC
         const sig = evaluateSmc(closedKlines, closedHtf, currentPrice, {
-          htfResolution: htf,
+          htfResolution: dirTf,
           structureLen: this.settings.smcStructureLen,
           wickRatio: this.settings.smcWickRatio,
           minSweepWickPct: this.settings.smcMinSweepWickPct,
@@ -2359,7 +2425,6 @@ export class AutoTrader {
         const effectiveThreshold = this.settings.autoTradeThreshold ?? 70;
         const smcThreshold = (this.isGateDisabled('RISK_threshold') && effectiveThreshold <= 50) ? 50 : effectiveThreshold;
         if (sig && sig.score >= smcThreshold) {
-          // If price is currently inside the FVG+OB entry zone, execute immediately!
           const inZone = currentPrice >= sig.entryZoneMin * 0.999 && currentPrice <= sig.entryZoneMax * 1.001;
           if (inZone) {
             const risk = Math.abs(currentPrice - sig.sl);
@@ -2371,14 +2436,12 @@ export class AutoTrader {
               tp1: sig.tp1,
               tp2: sig.tp2,
               tp3: sig.tp3 || (sig.direction === 'LONG' ? currentPrice + (risk * 5) : currentPrice - (risk * 5)),
-              strategy: 'SMC_LIQUIDITY_SWEEP',
+              strategy: strat as any,
               marketRegime: `SMC Confluence (${sig.htfRegime})`,
               reason: sig.reason,
               signalTime: sig.signalTime
             };
           }
-
-          // Otherwise add to pending limits for retracement to FVG midpoint
           const expiryTime = Date.now() + (15 * 60 * 1000 * 6);
           this.pendingSmcSetups.set(symbol, { ...sig, expiryTime });
         }
@@ -3315,39 +3378,82 @@ export class AutoTrader {
 
       if ((candidate.id === 'SMC_LIQUIDITY_SWEEP' || candidate.id === 'LIQUIDITY_SWEEP_REVERSAL') && (currentRegime.startsWith('EXHAUSTION') || currentRegime === 'RANGING' || currentRegime.startsWith('TRENDING'))) {
         try {
-          const htf = this.settings.smcHtfResolution || '1h';
-          const htfCandles = await this.getKlines(symbol, htf);
+          const dirTf = this.settings.lsrDirectionTf || this.settings.smcHtfResolution || '1h';
+          const htfCandles = await this.getKlines(symbol, dirTf);
           const closedHtf = htfCandles && htfCandles.length > 1 ? htfCandles.slice(0, -1) : (htfCandles || []);
-          const smcSig = evaluateSmc(closedKlines, closedHtf, currentPrice, {
-            htfResolution: htf,
-            structureLen: this.settings.smcStructureLen,
-            wickRatio: this.settings.smcWickRatio,
-            minSweepWickPct: this.settings.smcMinSweepWickPct,
-            dispAtrMult: this.settings.smcDispAtrMult,
-            sweepConfirmWindow: this.settings.smcSweepConfirmWindow,
-            volMult: this.settings.smcVolMult,
-            fvgAfterMssWindow: this.settings.smcFvgAfterMssWindow,
-            obLookback: this.settings.smcObLookback,
-            useKillZone: this.settings.smcUseKillZone,
-            atrStopMult: this.settings.smcAtrStopMult,
-            rrRatio: this.settings.smcRrRatio,
-            strictHtfRegime: this.settings.smcStrictHtfRegime,
-            enforceRegimeFilter: !this.settings.bypassRegimeStandAside && !this.isGateDisabled('SMC_g1') && ((this.settings as any).smcEnforceRegimeFilter === true),
-            symbol
+          let dailyCandles: any[] = [];
+          try {
+            const rawDaily = await this.getKlines(symbol, '1d');
+            if (rawDaily) dailyCandles = rawDaily.slice(0, -1);
+          } catch (_) {}
+
+          // Primary: 8-Stage Regime-Gated Liquidity Sweep Reversal
+          const reversalRes = evaluateLiquiditySweepReversal({
+            symbol,
+            execCandles: closedKlines,
+            directionCandles: closedHtf,
+            liquidityCandles1D: dailyCandles,
+            currentPrice,
+            mode: this.settings.liquiditySweepMode || 'balanced',
+            regimeLabel: this.settings.coindcxActiveRegime || 'RANGE',
+            regimeConfidence: classification.confidence ?? 70,
+            regimeStableBars: 3,
+            uiOverrides: this.settings.liquiditySweepConfig,
+            symbolRank: 1,
+            symbolDailyTrades: 0,
+            symbolInCooldown: this.isTradeInCooldown(symbol),
+            appFeeSettings: {
+              feeTakerPct: (this.settings as any).feeTakerPct,
+              feeGstPct: (this.settings as any).feeGstPct,
+              feeRoundTripPct: (this.settings as any).feeRoundTripPct
+            }
           });
-          if (smcSig && (!candidate.direction || smcSig.direction === candidate.direction)) {
-            const risk = Math.abs(currentPrice - smcSig.sl);
+
+          if (reversalRes.status === 'ACTIVE' && (!candidate.direction || reversalRes.signal.direction === candidate.direction)) {
+            const sig = reversalRes.signal;
             pendingSignal = {
-              direction: smcSig.direction,
-              score: smcSig.score,
-              atr: risk,
-              sl: smcSig.sl,
-              tp1: smcSig.tp1,
-              tp2: smcSig.tp2,
-              tp3: smcSig.tp3 || (smcSig.direction === 'LONG' ? currentPrice + (risk * 5) : currentPrice - (risk * 5)),
-              signalTime: smcSig.signalTime || lastClosed.time,
-              reason: smcSig.reason
+              direction: sig.direction,
+              score: sig.score,
+              atr: sig.risk,
+              sl: sig.sl,
+              tp1: sig.tp1,
+              tp2: sig.tp2,
+              tp3: sig.tp3,
+              signalTime: sig.signalTime || lastClosed.time,
+              reason: sig.reason
             };
+          } else {
+            const smcSig = evaluateSmc(closedKlines, closedHtf, currentPrice, {
+              htfResolution: dirTf,
+              structureLen: this.settings.smcStructureLen,
+              wickRatio: this.settings.smcWickRatio,
+              minSweepWickPct: this.settings.smcMinSweepWickPct,
+              dispAtrMult: this.settings.smcDispAtrMult,
+              sweepConfirmWindow: this.settings.smcSweepConfirmWindow,
+              volMult: this.settings.smcVolMult,
+              fvgAfterMssWindow: this.settings.smcFvgAfterMssWindow,
+              obLookback: this.settings.smcObLookback,
+              useKillZone: this.settings.smcUseKillZone,
+              atrStopMult: this.settings.smcAtrStopMult,
+              rrRatio: this.settings.smcRrRatio,
+              strictHtfRegime: this.settings.smcStrictHtfRegime,
+              enforceRegimeFilter: !this.settings.bypassRegimeStandAside && !this.isGateDisabled('SMC_g1') && ((this.settings as any).smcEnforceRegimeFilter === true),
+              symbol
+            });
+            if (smcSig && (!candidate.direction || smcSig.direction === candidate.direction)) {
+              const risk = Math.abs(currentPrice - smcSig.sl);
+              pendingSignal = {
+                direction: smcSig.direction,
+                score: smcSig.score,
+                atr: risk,
+                sl: smcSig.sl,
+                tp1: smcSig.tp1,
+                tp2: smcSig.tp2,
+                tp3: smcSig.tp3 || (smcSig.direction === 'LONG' ? currentPrice + (risk * 5) : currentPrice - (risk * 5)),
+                signalTime: smcSig.signalTime || lastClosed.time,
+                reason: smcSig.reason
+              };
+            }
           }
         } catch (e) {
           console.error(`HTF fetch failed for ${symbol} SMC sweep:`, e);

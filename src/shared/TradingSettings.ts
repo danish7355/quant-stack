@@ -1,5 +1,15 @@
 import { StrategyBucketItem, Timeframe } from '../types.js';
 import { RangeConfig, DEFAULTS as DEFAULT_RANGE_CONFIG } from '../utils/strategies/rangeRegime/schema.js';
+import {
+  Mode as LiquiditySweepMode,
+  SweepConfig,
+  DeepPartial,
+  Habitat,
+  BASE as DEFAULT_SWEEP_BASE,
+  MODES as DEFAULT_SWEEP_MODES,
+  HABITATS as DEFAULT_SWEEP_HABITATS,
+  REGIME_MAP as DEFAULT_SWEEP_REGIME_MAP
+} from '../utils/strategies/liquiditySweep/schema.js';
 
 export type TradingMode = 'PAPER' | 'TESTNET' | 'LIVE';
 
@@ -365,6 +375,40 @@ export interface TradingSettings {
   smcRrRatio?: number;
   smcStrictHtfRegime?: boolean;
 
+  // Liquidity Sweep Reversal (LSR) Settings
+  liquiditySweepMode?: LiquiditySweepMode;
+  liquiditySweepConfig?: DeepPartial<SweepConfig>;
+  liquiditySweepBase?: SweepConfig;
+  liquiditySweepModes?: Record<LiquiditySweepMode, DeepPartial<SweepConfig>>;
+  liquiditySweepHabitats?: Record<Habitat, any>;
+  liquiditySweepRegimeMap?: Record<string, Habitat>;
+  lsrExecutionTf?: string;
+  lsrDirectionTf?: string;
+  lsrMinConfidence?: number;
+  lsrStabilityBars?: number;
+  lsrMaxRank?: number;
+  lsrMinPoolScore?: number;
+  lsrMinDepthAtr?: number;
+  lsrMaxDepthAtr?: number;
+  lsrReclaimWithinBars?: number;
+  lsrMinRelVolume?: number;
+  lsrMinWickToRange?: number;
+  lsrMaxOppWickToRange?: number;
+  lsrMaxBodyToRange?: number;
+  lsrMinCloseLocation?: number;
+  lsrMinRangeAtr?: number;
+  lsrConfirmWindowBars?: number;
+  lsrConfirmEngulf?: 'range' | 'body' | 'close_through';
+  lsrMinBodyAtr?: number;
+  lsrStopBufferAtr?: number;
+  lsrMinStopAtr?: number;
+  lsrMaxStopAtr?: number;
+  lsrMinRr?: number;
+  lsrMaxFeeToRisk?: number;
+  lsrTimeStopBars?: number;
+  lsrCooldownBarsAfterLoss?: number;
+  lsrMaxPerSymbolPerDay?: number;
+
   binanceApiKey?: string;
   binanceApiSecret?: string;
   binanceTestnet?: boolean;
@@ -522,6 +566,31 @@ export const NUMERIC_BOUNDS: Record<string, { min: number; max: number; step?: n
   eev2Tp2MinR: { min: 2.0, max: 8.0, step: 0.1, label: 'EMA5 V2: TP2 Min R' },
   eev2FallbackTpR: { min: 1.5, max: 6.0, step: 0.1, label: 'EMA5 V2: Fallback TP (R)' },
   eev2MaxHoldHours: { min: 1, max: 72, step: 1, label: 'EMA5 V2: Max Hold Hours' },
+
+  // Liquidity Sweep Reversal (LSR) Bounds
+  lsrMinConfidence: { min: 10, max: 95, step: 5, label: 'LSR Min Regime Confidence (%)' },
+  lsrStabilityBars: { min: 1, max: 10, step: 1, label: 'LSR Regime Stability Bars' },
+  lsrMaxRank: { min: 1, max: 100, step: 1, label: 'LSR Max Universe Rank' },
+  lsrMinPoolScore: { min: 20, max: 95, step: 5, label: 'LSR Min Pool Score' },
+  lsrMinDepthAtr: { min: 0.01, max: 1.0, step: 0.01, label: 'LSR Min Sweep Depth (ATR)' },
+  lsrMaxDepthAtr: { min: 0.5, max: 5.0, step: 0.1, label: 'LSR Max Sweep Depth (ATR)' },
+  lsrReclaimWithinBars: { min: 1, max: 10, step: 1, label: 'LSR Reclaim Within Bars' },
+  lsrMinRelVolume: { min: 0.5, max: 4.0, step: 0.1, label: 'LSR Min Relative Volume' },
+  lsrMinWickToRange: { min: 0.2, max: 0.8, step: 0.05, label: 'LSR Min Wick/Range Ratio' },
+  lsrMaxOppWickToRange: { min: 0.1, max: 0.5, step: 0.05, label: 'LSR Max Opposing Wick/Range' },
+  lsrMaxBodyToRange: { min: 0.2, max: 0.7, step: 0.05, label: 'LSR Max Body/Range Ratio' },
+  lsrMinCloseLocation: { min: 0.4, max: 0.95, step: 0.05, label: 'LSR Min Close Location Ratio' },
+  lsrMinRangeAtr: { min: 0.2, max: 2.0, step: 0.1, label: 'LSR Min Rejection Range (ATR)' },
+  lsrConfirmWindowBars: { min: 1, max: 5, step: 1, label: 'LSR Confirm Window Bars' },
+  lsrMinBodyAtr: { min: 0.1, max: 1.5, step: 0.05, label: 'LSR Min Confirm Body (ATR)' },
+  lsrStopBufferAtr: { min: 0.05, max: 1.0, step: 0.05, label: 'LSR Stop Buffer (ATR)' },
+  lsrMinStopAtr: { min: 0.2, max: 2.0, step: 0.1, label: 'LSR Min Stop Distance (ATR)' },
+  lsrMaxStopAtr: { min: 1.0, max: 6.0, step: 0.1, label: 'LSR Max Stop Distance (ATR)' },
+  lsrMinRr: { min: 1.0, max: 5.0, step: 0.1, label: 'LSR Min Risk:Reward Target' },
+  lsrMaxFeeToRisk: { min: 0.05, max: 0.5, step: 0.01, label: 'LSR Max Fee Cost in R' },
+  lsrTimeStopBars: { min: 4, max: 50, step: 1, label: 'LSR Time Stop Bars' },
+  lsrCooldownBarsAfterLoss: { min: 1, max: 20, step: 1, label: 'LSR Cooldown Bars After Loss' },
+  lsrMaxPerSymbolPerDay: { min: 1, max: 20, step: 1, label: 'LSR Max Trades Per Symbol Per Day' },
 };
 
 export interface ValidationResult {
@@ -656,12 +725,27 @@ export function validateTradingSettings(input: unknown): ValidationResult {
     }
   }
 
+  if (raw.liquiditySweepMode !== undefined) {
+    if (['strict', 'balanced', 'aggressive'].includes(raw.liquiditySweepMode)) {
+      sanitized.liquiditySweepMode = raw.liquiditySweepMode;
+    } else {
+      errors.push(`Invalid liquiditySweepMode: ${raw.liquiditySweepMode}`);
+    }
+  }
+
+  if (raw.lsrConfirmEngulf !== undefined) {
+    if (['range', 'body', 'close_through'].includes(raw.lsrConfirmEngulf)) {
+      sanitized.lsrConfirmEngulf = raw.lsrConfirmEngulf;
+    }
+  }
+
   // Pass-through other known fields
   const stringKeys = [
     'activeStrategy', 'timeframe', 'theme', 'globalFilterSymbol',
     'telegramBotToken', 'telegramChatId', 'binanceApiKey', 'binanceApiSecret',
     'githubPat', 'githubRepoUrl', 'customWatchlist', 'alertFormat',
-    'smcHtfResolution', 'coindcxActiveRegime', 'coindcxRegimeSymbol', 'htfTimeframe'
+    'smcHtfResolution', 'coindcxActiveRegime', 'coindcxRegimeSymbol', 'htfTimeframe',
+    'lsrExecutionTf', 'lsrDirectionTf'
   ];
   for (const sKey of stringKeys) {
     if (raw[sKey] !== undefined && typeof raw[sKey] === 'string') {
@@ -695,6 +779,21 @@ export function validateTradingSettings(input: unknown): ValidationResult {
   }
   if (raw.rangeConfig && typeof raw.rangeConfig === 'object') {
     sanitized.rangeConfig = { ...raw.rangeConfig };
+  }
+  if (raw.liquiditySweepConfig && typeof raw.liquiditySweepConfig === 'object') {
+    sanitized.liquiditySweepConfig = { ...raw.liquiditySweepConfig };
+  }
+  if (raw.liquiditySweepBase && typeof raw.liquiditySweepBase === 'object') {
+    sanitized.liquiditySweepBase = { ...raw.liquiditySweepBase };
+  }
+  if (raw.liquiditySweepModes && typeof raw.liquiditySweepModes === 'object') {
+    sanitized.liquiditySweepModes = { ...raw.liquiditySweepModes };
+  }
+  if (raw.liquiditySweepHabitats && typeof raw.liquiditySweepHabitats === 'object') {
+    sanitized.liquiditySweepHabitats = { ...raw.liquiditySweepHabitats };
+  }
+  if (raw.liquiditySweepRegimeMap && typeof raw.liquiditySweepRegimeMap === 'object') {
+    sanitized.liquiditySweepRegimeMap = { ...raw.liquiditySweepRegimeMap };
   }
 
   // Version and timestamps
@@ -1012,5 +1111,38 @@ export const CANONICAL_DEFAULT_SETTINGS: TradingSettings = {
   smcStrictHtfRegime: false,
 
   rangeConfig: { ...DEFAULT_RANGE_CONFIG },
+
+  // Liquidity Sweep Reversal (LSR) Defaults
+  liquiditySweepMode: 'balanced',
+  liquiditySweepBase: { ...DEFAULT_SWEEP_BASE },
+  liquiditySweepModes: { ...DEFAULT_SWEEP_MODES },
+  liquiditySweepHabitats: { ...DEFAULT_SWEEP_HABITATS },
+  liquiditySweepRegimeMap: { ...DEFAULT_SWEEP_REGIME_MAP },
+  lsrExecutionTf: '15m',
+  lsrDirectionTf: '1h',
+  lsrMinConfidence: 55,
+  lsrStabilityBars: 2,
+  lsrMaxRank: 60,
+  lsrMinPoolScore: 55,
+  lsrMinDepthAtr: 0.06,
+  lsrMaxDepthAtr: 1.8,
+  lsrReclaimWithinBars: 2,
+  lsrMinRelVolume: 1.2,
+  lsrMinWickToRange: 0.5,
+  lsrMaxOppWickToRange: 0.3,
+  lsrMaxBodyToRange: 0.4,
+  lsrMinCloseLocation: 0.6,
+  lsrMinRangeAtr: 0.5,
+  lsrConfirmWindowBars: 1,
+  lsrConfirmEngulf: 'body',
+  lsrMinBodyAtr: 0.35,
+  lsrStopBufferAtr: 0.2,
+  lsrMinStopAtr: 0.5,
+  lsrMaxStopAtr: 2.5,
+  lsrMinRr: 1.6,
+  lsrMaxFeeToRisk: 0.2,
+  lsrTimeStopBars: 16,
+  lsrCooldownBarsAfterLoss: 5,
+  lsrMaxPerSymbolPerDay: 4,
 };
 
