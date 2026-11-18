@@ -3,9 +3,9 @@ import path from "path";
 import fs from "fs";
 import expressWs from "express-ws";
 import { WebSocket } from "ws";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 import { db } from "./server/firebase.js";
 import { collection, query, where, getDocs, orderBy, limit, writeBatch, deleteDoc, doc } from "firebase/firestore";
 import { oms } from "./server/services/OMS.js";
@@ -1271,12 +1271,21 @@ async function startServer() {
     }
   });
 
+  let isGitPushInProgress = false;
+
   app.post("/api/git/push", async (req, res) => {
+    if (isGitPushInProgress) {
+      return res.status(409).json({
+        success: false,
+        error: "A GitHub push is already in progress. Please wait for it to finish."
+      });
+    }
+
     const { token, repoUrl, commitMessage = "Auto-commit from Trading Bot Settings UI", force = false } = req.body;
     const curSettings = autoTrader.getSettings();
     const rawToken = (token && typeof token === 'string' && token.trim() && !token.startsWith('••••'))
       ? token.trim()
-      : (curSettings.githubPat || '');
+      : (curSettings.githubPat || process.env.GITHUB_PAT || '');
 
     if (!rawToken) {
       return res.status(400).json({
@@ -1286,100 +1295,149 @@ async function startServer() {
     }
 
     const cleanToken = rawToken.trim();
+    const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };
+    const runGit = (args: string[], timeoutMs = 120_000) =>
+      execFileAsync('git', args, {
+        cwd: process.cwd(),
+        env: gitEnv,
+        maxBuffer: 20 * 1024 * 1024,
+        timeout: timeoutMs
+      });
 
+    const formatGitError = (err: any): string => {
+      const combined = [err?.stderr, err?.stdout, err?.message]
+        .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+        .join('\n')
+        .trim();
+      return combined || String(err);
+    };
+
+    const sanitizeToken = (msg: string): string =>
+      cleanToken
+        ? msg
+            .replace(new RegExp(cleanToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '***')
+            .replace(new RegExp(encodeURIComponent(cleanToken).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '***')
+        : msg;
+
+    // Clean and format the repository URL
+    const rawRepo = (repoUrl || curSettings.githubRepoUrl || 'https://github.com/danish7355/quant-stack.git').trim();
+    let cleanRepo = rawRepo.replace(/^https?:\/\//i, '').replace(/^[^/@]+@/i, '');
+    if (!cleanRepo.startsWith('github.com/')) {
+      cleanRepo = `github.com/${cleanRepo.replace(/^\/+/, '')}`;
+    }
+    if (!cleanRepo.endsWith('.git')) {
+      cleanRepo = `${cleanRepo}.git`;
+    }
+    const cleanHttpsUrl = `https://${cleanRepo}`;
+    const authRepoUrl = `https://x-access-token:${encodeURIComponent(cleanToken)}@${cleanRepo}`;
+
+    isGitPushInProgress = true;
     try {
-      // 1. Ensure git global configuration is set universally
-      await execAsync('git config --global --add safe.directory "*"').catch(() => {});
-      await execAsync('git config --global user.name "AI Studio Bot"').catch(() => {});
-      await execAsync('git config --global user.email "bot@aistudio.local"').catch(() => {});
+      // 1. Ensure git global configuration & safe postBuffer are set
+      await runGit(['config', '--global', '--add', 'safe.directory', '*']).catch(() => {});
+      await runGit(['config', '--global', 'user.name', 'AI Studio Bot']).catch(() => {});
+      await runGit(['config', '--global', 'user.email', 'bot@aistudio.local']).catch(() => {});
 
       // 2. Ensure repository is initialized
       try {
-        await execAsync('git rev-parse --is-inside-work-tree');
+        await runGit(['rev-parse', '--is-inside-work-tree']);
       } catch {
-        await execAsync('git init -b main');
+        await runGit(['init', '-b', 'main']);
       }
 
-      await execAsync('git config user.name "AI Studio Bot"').catch(() => {});
-      await execAsync('git config user.email "bot@aistudio.local"').catch(() => {});
-      await execAsync('git branch -M main').catch(() => {});
+      await runGit(['config', 'user.name', 'AI Studio Bot']).catch(() => {});
+      await runGit(['config', 'user.email', 'bot@aistudio.local']).catch(() => {});
+      await runGit(['config', 'http.postBuffer', '524288000']).catch(() => {});
+      await runGit(['branch', '-M', 'main']).catch(() => {});
 
       // 3. Stage all files (respecting .gitignore and untracking data/)
-      await execAsync('git rm -r --cached data/ 2>/dev/null || true').catch(() => {});
-      await execAsync('git add -A');
+      await runGit(['rm', '-r', '--cached', '--ignore-unmatch', 'data/']).catch(() => {});
+      await runGit(['add', '-A']);
 
       // 4. Commit changes if working tree is dirty, or ensure initial commit exists
-      const statusRes = await execAsync('git status --porcelain').catch(() => ({ stdout: '' }));
-      const hasChanges = statusRes.stdout && statusRes.stdout.trim().length > 0;
-      
+      const statusRes = await runGit(['status', '--porcelain']).catch(() => ({ stdout: '' }));
+      const hasChanges = Boolean(statusRes.stdout && statusRes.stdout.trim().length > 0);
+
       if (hasChanges) {
-        const safeCommitMsg = commitMessage.replace(/"/g, '\\"');
-        await execAsync(`git commit -m "${safeCommitMsg}"`);
+        const msg = (typeof commitMessage === 'string' && commitMessage.trim())
+          ? commitMessage.trim()
+          : 'Auto-commit from Trading Bot Settings UI';
+        await runGit(['commit', '-m', msg]);
       } else {
-        const hasCommits = await execAsync('git rev-parse --verify HEAD').then(() => true).catch(() => false);
+        const hasCommits = await runGit(['rev-parse', '--verify', 'HEAD']).then(() => true).catch(() => false);
         if (!hasCommits) {
-          await execAsync('git commit --allow-empty -m "Initial commit from Trading Bot"');
+          await runGit(['commit', '--allow-empty', '-m', 'Initial commit from Trading Bot']);
         }
       }
 
-      // 5. Clean and format the repository URL with token authentication
-      let rawRepo = (repoUrl || 'https://github.com/danish7355/quant-stack.git').trim();
-      // Remove protocol and any existing embedded credentials
-      let cleanRepo = rawRepo.replace(/^https?:\/\//i, '').replace(/^[^\/@]+@/i, '');
-      if (!cleanRepo.startsWith('github.com/')) {
-        cleanRepo = `github.com/${cleanRepo.replace(/^\/+/, '')}`;
-      }
-      if (!cleanRepo.endsWith('.git')) {
-        cleanRepo = `${cleanRepo}.git`;
-      }
-
-      const authRepoUrl = `https://${encodeURIComponent(cleanToken)}@${cleanRepo}`;
-
-      // 6. Set origin remote
+      // 5. Configure origin remote temporarily with credentials for push
       try {
-        await execAsync(`git remote add origin ${authRepoUrl}`);
+        await runGit(['remote', 'add', 'origin', authRepoUrl]);
       } catch {
-        await execAsync(`git remote set-url origin ${authRepoUrl}`);
+        await runGit(['remote', 'set-url', 'origin', authRepoUrl]);
       }
 
-      // 7. Execute push with smart conflict resolution
-      const pushCommand = force ? 'git push -u origin main --force' : 'git push -u origin main';
-      
+      // 6. Execute push with transport retry & smart conflict resolution
+      const pushArgs = force
+        ? ['-c', 'http.postBuffer=524288000', 'push', '-u', 'origin', 'main', '--force']
+        : ['-c', 'http.postBuffer=524288000', 'push', '-u', 'origin', 'main'];
+
       try {
-        await execAsync(pushCommand);
+        await runGit(pushArgs);
       } catch (pushErr: any) {
-        const errStr = pushErr.message || String(pushErr);
-        if (errStr.includes('fetch first') || errStr.includes('non-fast-forward') || errStr.includes('Updates were rejected')) {
-          if (force) {
-            throw pushErr;
-          }
+        let errStr = formatGitError(pushErr);
+
+        // Retry once with HTTP/1.1 if Cloud Run / proxy HTTP/2 framing failed
+        if (
+          errStr.includes('RPC failed') ||
+          errStr.includes('HTTP 400') ||
+          errStr.includes('Recv failure') ||
+          errStr.includes('Send failure') ||
+          errStr.includes('Connection reset') ||
+          errStr.includes('unexpected disconnect')
+        ) {
           try {
-            // Attempt to merge remote history with -s ours so local workspace code takes precedence without blocking conflicts
-            await execAsync('git fetch origin main');
-            await execAsync('git merge origin/main -s ours -m "Sync remote repository" --no-edit');
-            await execAsync('git push -u origin main');
-          } catch (mergeErr: any) {
-            await execAsync('git merge --abort').catch(() => {});
-            throw new Error('Remote repository has divergent commits that could not be automatically reconciled: ' + (mergeErr.message || mergeErr));
+            await runGit(['-c', 'http.version=HTTP/1.1', ...pushArgs]);
+            errStr = '';
+          } catch (retryErr: any) {
+            errStr = formatGitError(retryErr);
           }
-        } else if (errStr.includes('GH013') || errStr.includes('Repository rule violations') || errStr.includes('push protection')) {
-          throw new Error('GitHub Push Rejected (GH013): A repository rule or secret protection policy blocked the push. Ensure force-push is allowed on main or that branch protection rules are satisfied.');
-        } else if (errStr.includes('Authentication failed') || errStr.includes('Invalid username or personal access token')) {
-          throw new Error('GitHub Authentication failed: Please verify your Personal Access Token has the "repo" scope selected.');
-        } else if (errStr.includes('Repository not found')) {
-          throw new Error(`Repository not found or access denied: Please check that the repository exists on GitHub and your token has permission to access it.`);
-        } else {
-          throw pushErr;
+        }
+
+        if (errStr) {
+          if (errStr.includes('fetch first') || errStr.includes('non-fast-forward') || errStr.includes('Updates were rejected')) {
+            if (force) {
+              throw new Error(`Force push rejected by remote: ${errStr}`);
+            }
+            try {
+              await runGit(['fetch', 'origin', 'main']);
+              await runGit(['merge', 'origin/main', '-s', 'ours', '-m', 'Sync remote repository', '--no-edit']);
+              await runGit(['-c', 'http.postBuffer=524288000', 'push', '-u', 'origin', 'main']);
+            } catch (mergeErr: any) {
+              await runGit(['merge', '--abort']).catch(() => {});
+              throw new Error('Remote repository has divergent commits that could not be automatically reconciled: ' + formatGitError(mergeErr));
+            }
+          } else if (errStr.includes('GH013') || errStr.includes('Repository rule violations') || errStr.includes('push protection')) {
+            throw new Error('GitHub Push Rejected (GH013): A repository rule or secret protection policy blocked the push. Ensure force-push is allowed on main or that branch protection rules are satisfied.');
+          } else if (errStr.includes('Authentication failed') || errStr.includes('Invalid username') || errStr.includes('could not read Username')) {
+            throw new Error('GitHub Authentication failed: Please verify your Personal Access Token has "repo" / "Contents: Read and write" permission.');
+          } else if (errStr.includes('Repository not found')) {
+            throw new Error('Repository not found or access denied: Please check that the repository exists on GitHub and your token has permission to access it.');
+          } else {
+            throw new Error(errStr);
+          }
         }
       }
 
       res.json({ success: true, message: "Code successfully pushed to GitHub main branch!" });
     } catch (error: any) {
-      // Sanitize token from error messages before sending to client or logs
-      const rawError = error.message || String(error);
-      const sanitized = rawError.replace(new RegExp(cleanToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '***');
+      const sanitized = sanitizeToken(formatGitError(error));
       console.error('Git push error:', sanitized);
       res.status(500).json({ success: false, error: sanitized });
+    } finally {
+      // Strip PAT from .git/config after push completes or fails
+      await runGit(['remote', 'set-url', 'origin', cleanHttpsUrl]).catch(() => {});
+      isGitPushInProgress = false;
     }
   });
 
