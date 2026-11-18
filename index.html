@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en" translate="no">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="google" content="notranslate" />
+    <title>Crypto Futures Trading Dashboard</title>
+    <meta name="description" content="An algorithmic crypto futures paper-trading dashboard featuring multi-strategy execution (Two-Sided Coil Breakout, Multicoin Scalper PRO, Robust Trend-Pullback, Liquidity Sweep Reversal LSR), confluence synergy scoring, automated trade execution, and real-time Binance scanning." />
+    <meta property="og:title" content="Crypto Futures Trading Dashboard" />
+    <meta property="og:description" content="An algorithmic crypto futures paper-trading dashboard featuring multi-strategy execution (Two-Sided Coil Breakout, Multicoin Scalper PRO, Robust Trend-Pullback, Liquidity Sweep Reversal LSR), confluence synergy scoring, automated trade execution, and real-time Binance scanning." />
+    <script>
+      // Gracefully prevent benign proxy WebSocket disconnection errors & Vite HMR transport errors from bubbling as uncaught exceptions
+      function isBenignError(msg, stack, file) {
+        var str = (String(msg || '') + ' ' + String(stack || '') + ' ' + String(file || '')).toLowerCase();
+        return (
+          str.includes('websocket') ||
+          str.includes('ws') ||
+          str.includes('module-runner') ||
+          str.includes('modulerunner') ||
+          str.includes('createwebsocket') ||
+          str.includes('@vite/client') ||
+          str.includes('client.mjs') ||
+          str.includes('transport') ||
+          str.includes('failed to fetch dynamically imported module')
+        );
+      }
+
+      window.addEventListener('unhandledrejection', function(event) {
+        if (event && event.reason) {
+          var msg = event.reason.message || event.reason;
+          var stack = event.reason.stack || '';
+          if (isBenignError(msg, stack, '')) {
+            event.preventDefault();
+            if (typeof event.stopImmediatePropagation === 'function') {
+              event.stopImmediatePropagation();
+            }
+          }
+        }
+      }, true);
+
+      window.addEventListener('error', function(event) {
+        if (event) {
+          var msg = event.message || '';
+          var file = event.filename || '';
+          var stack = (event.error && event.error.stack) || '';
+          if (isBenignError(msg, stack, file)) {
+            event.preventDefault();
+            if (typeof event.stopImmediatePropagation === 'function') {
+              event.stopImmediatePropagation();
+            }
+            return true;
+          }
+        }
+      }, true);
+
+      var prevOnError = window.onerror;
+      window.onerror = function(msg, url, lineNo, columnNo, error) {
+        var stack = (error && error.stack) || '';
+        if (isBenignError(msg, stack, url)) {
+          return true;
+        }
+        if (typeof prevOnError === 'function') {
+          return prevOnError.apply(this, arguments);
+        }
+      };
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

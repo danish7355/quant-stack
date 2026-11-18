@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+@theme {
+  --color-surface-bg: #0E1117;
+  --color-surface-card: #161B22;
+  --color-surface-elevated: #1F242C;
+  --color-surface-border: #30363D;
+  --color-surface-border-subtle: #21262D;
+
+  --color-trade-long: #10B981;
+  --color-trade-short: #F43F5E;
+  --color-trade-caution: #F59E0B;
+  --color-trade-info: #3B82F6;
+  --color-trade-indigo: #6366F1;
+}
+
+@layer base {
+  body {
+    background-color: #0E1117;
+    color: #E6EDF3;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+}
+
+/* Tabular numbers for live financial data */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Custom scrollbars for trading terminal look */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0E1117;
+}
+::-webkit-scrollbar-thumb {
+  background: #30363D;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #484F58;
+}
+
+/* Live data flash animations for price / PnL changes */
+@keyframes flashGreen {
+  0% { background-color: rgba(16, 185, 129, 0.35); }
+  100% { background-color: transparent; }
+}
+
+@keyframes flashRed {
+  0% { background-color: rgba(244, 63, 94, 0.35); }
+  100% { background-color: transparent; }
+}
+
+.flash-green {
+  animation: flashGreen 1.2s ease-out;
+}
+
+.flash-red {
+  animation: flashRed 1.2s ease-out;
+}
+
+/* Focus ring styles */
+:focus-visible {
+  outline: 2px solid #6366F1;
+  outline-offset: 1px;
+}
